@@ -9,6 +9,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      platforms:
+        description: "Which builds"
+        type: choice
+        options: [all, macos, linux, windows]
+        default: all
       mac_deps:
         description: "Mac: build OpenColorIO, FFmpeg and ncnn too (off = a quick compile check, far fewer minutes)"
         type: boolean
@@ -16,6 +21,7 @@ on:
 
 jobs:
   linux:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'linux'
     # AlmaLinux 8 (glibc 2.28) with a current GCC: the result runs on Rocky / Alma 8 and 9,
     # RHEL, Ubuntu 20.04+, Debian 11+ - what studios run.
     runs-on: ubuntu-latest
@@ -29,7 +35,8 @@ jobs:
           dnf install -y nasm || dnf --enablerepo=powertools install -y nasm || true
           git config --global --add safe.directory '*'
           pipx install cmake || true; pipx install ninja || true
-          echo "/root/.local/bin" >> "$GITHUB_PATH"
+          pipx environment --value PIPX_BIN_DIR >> "$GITHUB_PATH" 2>/dev/null || echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          dnf install -y ninja-build || true
       - uses: actions/cache@v4
         with:
           path: ../deps
@@ -37,14 +44,15 @@ jobs:
       - name: dependencies (OpenColorIO, FFmpeg, ncnn)
         run: |
           D=$(cd .. && pwd)/deps
-          [ -f $D/ocio-linux/lib/libOpenColorIO.a ] || tools/build_ocio.sh $D/src $D/ocio-linux
-          [ -f $D/ffmpeg-linux/lib/libavcodec.a ] || tools/build_ffmpeg.sh $D/src $D/ffmpeg-linux "" $D/ocio-linux
+          which cmake ninja gcc g++ git python3 || true; gcc --version | head -1
+          [ -f $D/ocio-linux/lib/libOpenColorIO.a ] || tools/ci_run.sh OpenColorIO tools/build_ocio.sh $D/src $D/ocio-linux
+          [ -f $D/ffmpeg-linux/lib/libavcodec.a ] || tools/ci_run.sh FFmpeg tools/build_ffmpeg.sh $D/src $D/ffmpeg-linux "" $D/ocio-linux
           if [ ! -f $D/ncnn-linux/lib/cmake/ncnn/ncnnConfig.cmake ]; then
             [ -d $D/src/ncnn ] || { git clone -q --depth 1 --branch 20250916 https://github.com/Tencent/ncnn.git $D/src/ncnn &&
                                     git -C $D/src/ncnn submodule update --init --depth 1 glslang; }
-            tools/build_ncnn.sh $D/src/ncnn $D/ncnn-linux
+            tools/ci_run.sh ncnn tools/build_ncnn.sh $D/src/ncnn $D/ncnn-linux
           fi
-      - run: tools/package_linux.sh
+      - run: tools/ci_run.sh "Linux package" tools/package_linux.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -53,7 +61,7 @@ jobs:
   macos:
     # Mac minutes cost 10x on private repositories: only for version tags and when run by hand
     # (Actions > build > Run workflow). Free and unlimited once the repository is public.
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    if: (github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'macos')) || startsWith(github.ref, 'refs/tags/v')
     strategy:
       matrix:
         include:
@@ -72,13 +80,14 @@ jobs:
           STRATA_BUILD_DEPS: ${{ (github.event_name == 'workflow_dispatch' && !inputs.mac_deps) && '0' || '1' }}
           # signing / notarization, once there is an Apple Developer account (repository secrets):
           MAC_SIGN_ID: ${{ secrets.MAC_SIGN_ID }}
-        run: tools/package_macos.sh
+        run: tools/ci_run.sh "macOS package" tools/package_macos.sh
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
           path: "dist/*.zip"
 
   windows:
+    if: github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'windows'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +107,7 @@ jobs:
                                     git -C $D/src/ncnn submodule update --init --depth 1 glslang; }
             tools/build_ncnn.sh $D/src/ncnn $D/ncnn-win --windows
           fi
-      - run: tools/package_windows.sh
+      - run: tools/ci_run.sh "Windows package" tools/package_windows.sh
       - uses: actions/upload-artifact@v4
         with:
           name: windows
