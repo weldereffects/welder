@@ -23,7 +23,8 @@ clone madler/zlib v1.3.1 zlib
 clone zlib-ng/minizip-ng 4.0.7 minizip-ng
 
 COMMON=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$OUT" -DCMAKE_PREFIX_PATH="$OUT"
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_LIBDIR=lib)
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_LIBDIR=lib
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5)  # CMake 4 refuses older projects' minimums without it
 [ "$WIN" = "--windows" ] && COMMON+=(-DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/mingw-w64-x86_64.cmake")
 B="$OUT/build"
 mkdir -p "$B"

@@ -45,7 +45,7 @@ else
   echo "(no ncnn: $NCNN_MAC - packaging without the RIFE node)"
 fi
 
-cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release "${ARGS[@]}"
+cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release ${ARGS[@]+"${ARGS[@]}"}
 cmake --build "$BUILD" -j"$NCPU"
 
 echo "== engine tests"
