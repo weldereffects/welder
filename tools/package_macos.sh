@@ -53,20 +53,21 @@ echo "== engine tests"
 echo "== EXR tests"
 "$BUILD/strata_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
 
-# ---- Strata.app: the editor and the command-line renderer side by side in Contents/MacOS
+# ---- Strata.app: programs in Contents/MacOS, everything else in Contents/Resources (as signing requires)
 rm -rf "$STAGE"
 APP="$STAGE/Strata.app"
 MAC="$APP/Contents/MacOS"
-mkdir -p "$MAC" "$APP/Contents/Resources" "$STAGE/docs" "$STAGE/tools"
+RES="$APP/Contents/Resources"
+mkdir -p "$MAC" "$RES" "$STAGE/docs" "$STAGE/tools"
 cp "$BUILD/strata_ui" "$BUILD/strata" "$MAC/"
-mkdir -p "$MAC/fonts" && cp "$ROOT/third_party/imgui/fonts/Roboto-Medium.ttf" "$MAC/fonts/"
-[ "$HAVE_NCNN" = 1 ] && mkdir -p "$MAC/models" && cp -r "$ROOT/models/rife" "$MAC/models/rife"
-mkdir -p "$MAC/ml"
-cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/setup-ml.sh" "$MAC/ml/"
-find "$MAC/ml" -name __pycache__ -prune -exec rm -rf {} +
-cp "$ROOT/tools/nk2strata.py" "$MAC/"
+mkdir -p "$RES/fonts" && cp "$ROOT/third_party/imgui/fonts/Roboto-Medium.ttf" "$RES/fonts/"
+[ "$HAVE_NCNN" = 1 ] && mkdir -p "$RES/models" && cp -r "$ROOT/models/rife" "$RES/models/rife"
+mkdir -p "$RES/ml"
+cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/setup-ml.sh" "$RES/ml/"
+find "$RES/ml" -name __pycache__ -prune -exec rm -rf {} +
+mkdir -p "$RES/tools" && cp "$ROOT/tools/nk2strata.py" "$RES/tools/"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
-[ -f "$ROOT/tools/macos/Strata.icns" ] && cp "$ROOT/tools/macos/Strata.icns" "$APP/Contents/Resources/"
+[ -f "$ROOT/tools/macos/Strata.icns" ] && cp "$ROOT/tools/macos/Strata.icns" "$RES/"
 sed "s/@VERSION@/$VERSION/g" "$ROOT/tools/macos/Info.plist" > "$APP/Contents/Info.plist"
 cp "$BUILD/strata_tests" "$BUILD/strata_exr_tests" "$STAGE/"   # self-tests, outside the app
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
@@ -82,9 +83,11 @@ if [ -n "${MAC_SIGN_ID:-}" ]; then
            --sign "$MAC_SIGN_ID" "$MAC/strata" "$MAC/strata_ui"
   codesign --force --options runtime --timestamp --entitlements "$ROOT/tools/macos/entitlements.plist" \
            --sign "$MAC_SIGN_ID" "$APP"
-else
-  codesign --force --deep --sign - "$APP"
+else  # ad hoc: the programs, then the bundle (which seals Resources)
+  codesign --force --sign - "$MAC/strata" "$MAC/strata_ui"
+  codesign --force --sign - "$APP"
 fi
+codesign --verify --strict --verbose=2 "$APP"
 
 cd "$ROOT/dist"
 rm -f "$TOP.zip"

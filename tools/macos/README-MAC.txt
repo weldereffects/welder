@@ -14,7 +14,7 @@ WHAT IT NEEDS
   - macOS 11 (Big Sur) or later.
   - Optional: Python 3 (python.org or Homebrew) for the Nuke importer
     (File > Import .nk, pasting nodes copied in Nuke) and, after
-    Strata.app/Contents/MacOS/ml/setup-ml.sh, the AI nodes.
+    Strata.app/Contents/Resources/ml/setup-ml.sh, the AI nodes.
   - Optional: GPU processing uses Vulkan through MoltenVK
     (brew install molten-vk); without it everything runs on the CPU.
 

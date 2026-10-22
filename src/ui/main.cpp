@@ -175,7 +175,7 @@ bool savePng(const std::string& path, int w, int h) {
 }
 
 std::string findFont(const std::string& exeDir) {
-    for (fs::path p : {fs::path(exeDir) / "fonts", fs::path(exeDir) / ".." / "fonts",
+    for (fs::path p : {fs::path(exeDir) / "fonts", fs::path(exeDir) / ".." / "fonts", fs::path(exeDir) / ".." / "Resources" / "fonts",
                        fs::path(STRATA_SOURCE_DIR) / "third_party" / "imgui" / "fonts"}) {
         std::error_code ec;
         if (fs::exists(p / "Roboto-Medium.ttf", ec)) return (p / "Roboto-Medium.ttf").string();
@@ -235,6 +235,9 @@ int main(int argc, char** argv) {
 
     App app;
     app.exeDir = fs::path(absolutePath(argv[0])).parent_path().string();
+#if defined(__APPLE__)
+    setenv("PYTHONDONTWRITEBYTECODE", "1", 0);  // Python helpers run from inside the signed app: write nothing there
+#endif
     // settings (the disk cache size); screenshots run without a disk cache
     app.settingsPath = (fs::path(configDir()) / "settings.json").string();
     if (opt.screenshot.empty()) app.loadSettings();

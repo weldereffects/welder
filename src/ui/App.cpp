@@ -2232,6 +2232,7 @@ bool App::save(const std::string& path, std::string* err) {
 
 std::string App::toolsDir() const {
     for (fs::path p : {fs::path(exeDir) / ".." / "tools", fs::path(exeDir) / "tools", fs::path(exeDir) / ".." / ".." / "tools",
+                       fs::path(exeDir) / ".." / "Resources" / "tools",  // macOS app
                        fs::path(STRATA_SOURCE_DIR) / "tools"}) {
         std::error_code ec;
         if (fs::exists(p / "nk2strata.py", ec)) return fs::weakly_canonical(p, ec).string();

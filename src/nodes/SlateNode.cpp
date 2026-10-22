@@ -72,7 +72,10 @@ std::shared_ptr<const Font> loadFont(const std::string& want, std::string* used)
                           "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"})
         tries.push_back(p);
     const auto exe = platform::executableDir();
-    if (!exe.empty()) tries.push_back((exe / "fonts" / "Roboto-Medium.ttf").string());
+    if (!exe.empty()) {
+        tries.push_back((exe / "fonts" / "Roboto-Medium.ttf").string());
+        tries.push_back((exe.parent_path() / "Resources" / "fonts" / "Roboto-Medium.ttf").string());  // macOS app
+    }
 #ifdef STRATA_SOURCE_DIR
     tries.push_back(std::string(STRATA_SOURCE_DIR) + "/third_party/imgui/fonts/Roboto-Medium.ttf");
 #endif

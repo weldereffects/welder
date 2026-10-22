@@ -50,6 +50,7 @@ static std::vector<fs::path> searchDirs() {
     if (!exe.empty()) {
         d.push_back(exe / "models" / "rife");
         d.push_back(exe.parent_path() / "models" / "rife");
+        d.push_back(exe.parent_path() / "Resources" / "models" / "rife");  // macOS app
     }
 #ifdef STRATA_RIFE_MODEL_DIR
     d.push_back(fromU8(STRATA_RIFE_MODEL_DIR));

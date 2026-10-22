@@ -222,6 +222,7 @@ std::string packageDir() {
         if (!gAppDir.empty()) {
             c.push_back(S(P(gAppDir) / "ml"));
             c.push_back(S(P(gAppDir) / ".." / "ml"));
+            c.push_back(S(P(gAppDir) / ".." / "Resources" / "ml"));  // macOS app
         }
     }
 #ifdef STRATA_ML_SOURCE_DIR
@@ -280,6 +281,10 @@ std::string installDir() {
     }
     if (const char* e = std::getenv("STRATA_ML_INSTALL_DIR"); e && *e) return e;
     if (app.empty()) return S(P(home()) / "models");
+#if defined(__APPLE__)
+    // inside Welder.app nothing may be written (it would break the app's signature): the user's folder
+    if (app.find(".app/Contents/") != std::string::npos) return S(P(home()) / "models");
+#endif
     return S(fs::weakly_canonical(P(app) / ".." / "models"));
 }
 
