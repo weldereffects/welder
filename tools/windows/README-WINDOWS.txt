@@ -5,21 +5,21 @@ No install needed. Unzip anywhere. The download comes in up to five zips
 that all unpack into the same welder-0.1.0-win64 folder: unzip them into
 the same place.
   welder-0.1.0-win64.zip              the app (required)
-  welder-0.1.0-win64-python.zip       Python for the Nuke importer (python\):
+  welder-0.1.0-win64-python.zip       Python for the .nk importer (python\):
                                       importing .nk scripts and pasting nodes
-                                      copied in Nuke (or have Python 3 installed)
+                                      copied in another .nk app (or have Python 3 installed)
   welder-0.1.0-win64-rife-models.zip  the RIFE node's networks (bin\models\rife)
   welder-0.1.0-win64-tests.zip        self-tests (optional)
   welder-0.1.0-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
 
 THE EDITOR
   Double-click Welder.bat (or bin\welder_ui.exe).
-  Drag a .weld comp or a Nuke .nk script onto Welder.bat to open it.
+  Drag a .weld comp or a .nk script onto Welder.bat to open it.
 
   Layout: viewer top-left with the timeline under it, node graph below,
   properties on the right, node toolbar on the far left.
 
-  Hotkeys follow Nuke's defaults, and like Nuke the panel under the mouse
+  Hotkeys follow the classic defaults, and, as is standard the panel under the mouse
   decides what a key does (B over the graph = Blur, over the viewer = blue
   channel). Help > Keyboard Shortcuts lists them all; the most used:
 
@@ -37,8 +37,8 @@ THE EDITOR
     S                   Project Settings
     D                   disable / enable;  N rename;  I node info
     Ctrl+C/X/V          copy / cut / paste;  Alt+C duplicate;  Alt+B duplicate+branch
-                        Ctrl+V also pastes nodes copied in Nuke (its clipboard text),
-                        and nodes copied in Welder paste straight into Nuke
+                        Ctrl+V also pastes nodes copied in another .nk app (its clipboard text),
+                        and nodes copied in Welder paste straight into .nk apps
     Ctrl+G              group the selected nodes;  Ctrl+Alt+G expand a group
     Ctrl+Enter          open the selected group (nothing selected: back up a level)
     Ctrl+D              disconnect;  Shift+X swap A/B;  Ctrl+A select all
@@ -72,7 +72,7 @@ THE EDITOR
     to pull it out of its pipes: what fed it now feeds what it fed. Several
     selected nodes shake out together, keeping the pipes between them.
     Nudging a node about slowly never counts as a shake.
-    Dragged nodes snap into line, as in Nuke: within a few pixels of
+    Dragged nodes snap into line, as is standard: within a few pixels of
     straight under / over another node (or level with one) they line up,
     connected nodes first, with a guide line; drag on past and they let go.
     Hold Ctrl while dragging to place a node freely.
@@ -93,7 +93,7 @@ THE EDITOR
     frame; right-click it for more. Animated knobs turn blue.
     Alt+click in a value box (or on its slider) sets a keyframe there too, at
     the value shown, for all of the knob's values (x and y, r g b a...).
-    =  over a knob opens its expression (Nuke's language: frame, sin(),
+    =  over a knob opens its expression (the classic language: frame, sin(),
     Blur1.size, Transform1.translate.x, parent.amount, [value Node.knob]...).
     Expression-driven knobs turn purple, red when the expression fails
     (hover it for the error).
@@ -104,14 +104,14 @@ THE EDITOR
     width and height; the crosshair next to Transform's center picks it in
     the viewer, and Center Image puts it in the middle of the input.
     Channel rows (Merge, Grade...) have a layer menu and a box per channel.
-    Panels carry Nuke's knobs, names, order and tabs: the Read has Frame
+    Panels carry the classic knobs, names, order and tabs: the Read has Frame
     Range with before / after (hold, loop, bounce, black), Frame (expression,
     start at, offset), Original Range, Missing Frames, Premultiplied / Auto
-    Alpha and a Metadata tab; the Transform has skew X / Y, every Nuke filter,
+    Alpha and a Metadata tab; the Transform has skew X / Y, every classic filter,
     clamp, black outside and motion blur with shutter; every node has the
     Node tab (label - [value knob] shows in the graph - font size, tile
     colour, hide input, disable, lifetime). Vector knobs split per channel
-    with the 2 / 1 button, as in Nuke.
+    with the 2 / 1 button, as is standard.
 
   PLAYBACK
     While playing, frames ahead of the playhead are rendered several at a time
@@ -121,7 +121,7 @@ THE EDITOR
     Playback cache). Edits still go through at once: read-ahead stands aside.
     The viewer's display transform (OCIO, exposure, gamma) already runs on the
     GPU; the limit on a first pass is reading and decoding the files. PIZ EXRs
-    are the slowest to decode (as in Nuke); plates on a network drive are
+    are the slowest to decode (as in .nk apps); plates on a network drive are
     limited by the network, so copy them locally for real-time first passes.
 
   STYLIZE (the Sty group in the toolbar, or Tab)
@@ -256,11 +256,11 @@ THE EDITOR
     multiply 0.2 -> Math sine -> Math multiply 200 -> Transform translate.x:
     a swing left and right.
     A node with an exposed knob that's connected counts as animated (it
-    re-renders per frame). Export to Nuke writes driven knobs as curves with
+    re-renders per frame). Export to .nk apps writes driven knobs as curves with
     a key per frame.
 
   FLOW MAPS AND MOTION VECTORS
-    VectorGenerator (Time): the plate's motion as channels, like Nuke's:
+    VectorGenerator (Time): the plate's motion as channels, as is standard:
       forward.u / .v (where each pixel goes on the next frame) and
       backward.u / .v (the previous one), in pixels per frame. Use them in
       VectorBlur, IDistort, FlowMap (advect), or write them into an EXR for
@@ -294,7 +294,7 @@ THE EDITOR
               so playing forward is quick; jumping far ahead works through
               the frames in between.
 
-  TRANSFORMS CONCATENATE (like Nuke)
+  TRANSFORMS CONCATENATE (as is standard)
     A chain of Transform, Position, CornerPin2D, Tracker, PlanarTracker and
     WarpStabilize nodes (and a Reformat at the end of one) is worked out as
     one transform and the image is resampled once, with the last node's
@@ -313,7 +313,7 @@ THE EDITOR
 
   POSTAGE STAMPS
     Read nodes show a thumbnail of the current frame in the node graph (as
-    Nuke's postage stamps), rendered in the background at about 200 px and
+    the classic postage stamps), rendered in the background at about 200 px and
     left as they are during playback. Turn it off per node on the Node tab
     ("postage stamp").
 
@@ -321,7 +321,7 @@ THE EDITOR
     Drag an unconnected node onto a pipe: the pipe lights up orange, and on
     release the node is inserted between the two nodes using its default
     (first) input. Ctrl+click a pipe (an orange diamond shows where) to add a
-    Dot there, and keep dragging to move the Dot, as in Nuke.
+    Dot there, and keep dragging to move the Dot, as is standard.
     Drag files from Explorer (or anywhere else) onto the window. Images and
     movies become Reads (several frames of one sequence make one Read, and a
     folder brings in every sequence and movie inside it). .nk scripts are
@@ -330,7 +330,7 @@ THE EDITOR
     OCIOFileTransform, .gizmo -> the gizmo. New nodes land under the mouse.
 
   RENDER (Render > Render All F5 / Render Selected F7, or a Write's Render)
-    Nuke's dialog: Frame range - input (what the Writes' Reads cover, the
+    the classic dialog: Frame range - input (what the Writes' Reads cover, the
     default), global, in-out, visible or custom; type ranges like 1040-1105,
     1-100x2 or 1,5,9. Use proxy renders at the project's proxy scale.
     Render using frame server: several background processes render at once
@@ -339,7 +339,7 @@ THE EDITOR
     elapsed / remaining time and Cancel.
 
   FILE BROWSER (R in the node graph, a Read's file button, File > Open...)
-    Laid out like Nuke's: new folder / up / back / forward; Home, Root,
+    Laid out, as is standard: new folder / up / back / forward; Home, Root,
     Current (the comp's folder), your favourites (+ adds this folder, edit,
     -) and the drives on the left; Name / Size / Modified (click a header
     to sort). Numbered files show as one sequence row (name_####.exr 1-100,
@@ -357,7 +357,7 @@ THE EDITOR
     cache's size limit. Put it on a fast drive with room. WELDER_CACHE_DIR
     overrides it.
 
-  TIMELINE (laid out like Nuke's; fixed height - only the viewer and node
+  TIMELINE (laid out, as is standard; fixed height - only the viewer and node
   graph resize, and when it's narrow less-used buttons hide, nothing is cut)
     Ruler: a tick per frame (every 2 / 5... when zoomed out), the current
     frame marked above it with its number, in / out brackets, keyframes of
@@ -378,7 +378,7 @@ THE EDITOR
   range).
 
   SHUFFLE
-    Laid out like Nuke's: input layers on the left (In B/A + layer menu),
+    Laid out, as is standard: input layers on the left (In B/A + layer menu),
     output layers on the right, one wire per output channel.
     Drag from a dot on one side to a dot on the other to route a channel;
     drag a wire off an output to make it black; 0 / 1 set black / white;
@@ -409,7 +409,7 @@ THE EDITOR
     Z / Shift+Z smooth / cusp the selected points;  Delete removes them
     Ctrl+A      select every point
     Paint       drag to paint with the brush settings in the panel (colour,
-                size, hardness, opacity, lifetime: this frame only - Nuke's
+                size, hardness, opacity, lifetime: this frame only - the classic
                 default - or all frames). Shift+drag sizes the brush.
                 Eraser restores the background, Clone copies it (Ctrl+click
                 the source first; later strokes keep the same offset),
@@ -423,11 +423,11 @@ THE EDITOR
     invert, blend mode, colour, shape keys, transform (translate, rotate,
     scale, centre, with keys) and lifetime (all, single frame, range,
     start to frame, frame to end).
-    Roto outputs the alpha channel by default (like Nuke): press A in the
+    Roto outputs the alpha channel by default (as is standard): press A in the
     viewer to see it, or set output to rgba. RotoPaint outputs rgba.
     While a Roto is open, Q over the viewer picks the select tool instead
     of toggling overlays.
-    Nuke scripts: Roto and RotoPaint shapes and strokes are imported.
+    .nk scripts: Roto and RotoPaint shapes and strokes are imported.
 
   TRACKING (Tracker in the Tra toolbar group)
     Open the Tracker's properties, then in the viewer:
@@ -449,11 +449,11 @@ THE EDITOR
     Export: Transform (match-move or stabilize, baked keys), CornerPin2D
     (four tracks), and in a Roto panel: transform > "match-move from
     tracker" bakes a tracker onto a shape.
-    Nuke scripts: Tracker4 and CornerPin2D are imported.
+    .nk scripts: Tracker4 and CornerPin2D are imported.
 
   PLANAR TRACKING (PlanarTracker in the Tra toolbar group)
     Tracks a flat surface (a screen, a wall, a sign) with perspective, like
-    Mocha or NukeX's planar tracker. Open its properties, then in the viewer:
+    Mocha or the advanced edition's planar tracker. Open its properties, then in the viewer:
     Ctrl+Alt+click   start drawing the region (blue): click points around
                      a flat, textured area; click the first point or press
                      Enter to close it. Backspace removes the last point,
@@ -470,7 +470,7 @@ THE EDITOR
     Export: CornerPin2D (match-move or stabilize). In a Roto panel,
     transform > "match-move from tracker" bakes the planar track onto a
     shape's points (with perspective).
-    Nuke scripts: NukeX PlanarTracker nodes are imported.
+    .nk scripts: advanced-edition PlanarTracker nodes are imported.
 
   3D (the 3D toolbar group)
     Nodes: Card, Cube, Sphere, Cylinder, ReadGeo (OBJ models) - plug an
@@ -502,7 +502,7 @@ THE EDITOR
     (W move, E rotate, Shift+R scale; R stays the red channel).
 
   2D TRANSFORM HANDLES
-    With a Transform's properties open, the viewer shows Nuke's jack: drag
+    With a Transform's properties open, the viewer shows the classic jack: drag
     the centre to translate, Ctrl+drag it to move the pivot (the image
     stays put), drag the arm to rotate, the circle to scale, its small
     squares to scale x or y. Position: drag its handle. CornerPin2D: drag
@@ -513,7 +513,7 @@ THE EDITOR
     Ctrl+Shift+A over the bin) closes them all.
 
   3D CAMERA TRACKING (CameraTracker in the 3D toolbar group)
-    Like NukeX's CameraTracker: works out the real camera's move from the
+    Like the advanced edition's CameraTracker: works out the real camera's move from the
     plate, so you can put things into the shot.
     1. Connect the plate to the CameraTracker's Source and open its properties.
        Moving things (people, cars, reflections) confuse the solve: roto them
@@ -540,7 +540,7 @@ THE EDITOR
        distance and "= distance" to set the scale.
     5. Export: "Camera" (a Camera node with keys), "Card3D on selection" (a
        card on the plane of the selected points, ready for an image in its
-       img input), or files: Nuke .nk (a Camera2), .chan, and a Blender
+       img input), or files: .nk (a Camera2), .chan, and a Blender
        script (Scripting > Open > Run Script) that builds the camera and the
        point cloud in Blender.
     6. Rough geometry: "Mesh from points" (export section, geometry row)
@@ -559,7 +559,7 @@ THE EDITOR
        ray, so the projection still lines up), "max point error" (leave
        out badly solved points). The panel says how many points and
        triangles went in. "Export OBJ..." writes it (with UVs and normals)
-       for Houdini, Blender, Maya or Nuke's ReadGeo.
+       for Houdini, Blender, Maya or a .nk app's ReadGeo.
        "reach" sets how far points connect: no edge longer (in 3D) than
        that many times the typical edge between neighbouring points - lower
        joins only close neighbours (more gaps), higher bridges wider gaps,
@@ -614,7 +614,7 @@ THE EDITOR
     Card3D renders an image on a card through a Camera or a CameraTracker.
     Not yet: zoom shots, pure tripod pans (the camera must move a little for
     3D), hand-placed tracks.
-    Nuke scripts: Camera and Card3D nodes are imported.
+    .nk scripts: Camera and Card3D nodes are imported.
 
   AI NODES (the AI toolbar group; full notes in docs\ML.md)
     AlphaGen       a matte for a clip without a green screen (LTX Alpha Gen)
@@ -676,7 +676,7 @@ THE EDITOR
 
   RETIMING (OFlow and RIFE in the Tim toolbar group)
     Slow motion, speed ramps and frame-rate changes with real in-between
-    frames, like Nuke's OFlow / Kronos.
+    frames, like the classic OFlow / Kronos.
     timing        output speed (0.5 = half speed, negative = backwards),
                   input speed, or frame: animate "frame" to choose which
                   input frame each output frame shows (speed ramps).
@@ -697,7 +697,7 @@ THE EDITOR
     the CPU. The panel shows the device. "resolution: auto" runs plates
     larger than ~2K at half or quarter size. Add other ncnn RIFE models by
     copying their folder into bin\models\rife.
-    Nuke scripts: OFlow2 and Kronos are imported as OFlow.
+    .nk scripts: OFlow2 and Kronos are imported as OFlow.
 
   KEYING (the Key toolbar group)
     ScreenKeyer   Keylight-style colour-difference keyer. Press "pick" next to
@@ -712,16 +712,16 @@ THE EDITOR
     IBKGimme      plate; connect it to IBKGimme's c input for an even key on
                   an unevenly lit screen.
     ChromaKeyer   key by chroma distance from a picked screen colour.
-    Keyer         Nuke's Keyer: luminance / channel / saturation / greenscreen
+    Keyer         the classic Keyer: luminance / channel / saturation / greenscreen
                   value through the A B C D range.
-                  Its panel has Nuke's range graph: a histogram of what the
+                  Its panel has the classic range graph: a histogram of what the
                   operation measures in the input frame, with the key curve
                   over it - drag a corner (A, B, C, D), the top (B and C
                   together) or either side (A + B, C + D).
-    HueKeyer, Difference, Despill   as in Nuke.
+    HueKeyer, Difference, Despill  , as is standard.
     Every colour knob has a "pick" button (samples what the viewer shows).
     Esc over the viewer stops picking.
-    Nuke scripts: Keylight, IBKColour / IBKGimme, Keyer, Difference,
+    .nk scripts: Keylight, IBKColour / IBKGimme, Keyer, Difference,
     ChromaKeyer and HueKeyer are translated (Keylight -> ScreenKeyer).
 
   CREATIVE NODES
@@ -788,8 +788,7 @@ THE EDITOR
     panel can add knobs of its own ("add knob..."); nodes inside read them
     with expressions like parent.amount. "save as gizmo" keeps the group in
     %APPDATA%\Welder\gizmos; Gizmos in the right-click menu (and Tab) lists
-    those and the Nuke .gizmo files on NUKE_PATH, WELDER_GIZMO_PATH and in
-    %USERPROFILE%\.nuke.
+    those and the .gizmo files on WELDER_GIZMO_PATH.
     Right-click > Backdrop around selection frames nodes in a coloured box:
     drag its title bar to move it with what's on it, its corner to resize.
     Sticky notes are in the same menu.
@@ -803,11 +802,11 @@ THE EDITOR
     a selection to scale it in time.
 
   PROJECT SETTINGS (S over the node graph, or Edit > Project Settings)
-    frame range and lock range, fps (with presets), full size format (Nuke's
+    frame range and lock range, fps (with presets), full size format (the classic
     named formats: HD_1080, UHD_4K, 2K_DCP, ...), pixel aspect, proxy mode and
     proxy scale, project directory (where relative file paths resolve).
     The timeline's first/last fields also edit the frame range unless it's
-    locked. Imported Nuke scripts bring their Root settings along.
+    locked. Imported .nk scripts bring their Root settings along.
     The first media in a new script: when the first Read gets its file
     (from the file browser, a drag and drop, or typing the path), Welder
     asks whether to set the project's frame range and resolution to the
@@ -824,7 +823,7 @@ THE EDITOR
 
 QUICK TOUR (command line)
   Double-click try-it.bat. It runs the self-tests, renders the demo comps,
-  and translates + renders the sample Nuke script.
+  and translates + renders the sample .nk script.
 
 SLATE (Image group)
   A delivery slate, laid out like a studio slate-generator gizmo: plug the
@@ -842,21 +841,21 @@ SLATE (Image group)
     date empty for the automatic text (shown above them), or type over it.
   - The slate is fitted to the plate's width, centred. It's the same picture
     on every frame.
-  Your studio's defaults - the slate art, vendor, show, artist, and the Nuke
+  Your studio's defaults - the slate art, vendor, show, artist, and the .nk
   gizmo your slates come from - go in studio.json in %APPDATA%\Welder:
     {"slate": {"background": "\\\\server\\share\\slate\\art.exr",
                "vendor": "My Studio", "show": "My Show", "artist": "Me"},
-     "nuke":  {"slate_gizmos": ["MY_SLATE_GIZMO"],
+     "nk":    {"slate_gizmos": ["MY_SLATE_GIZMO"],
                "slate_gizmo_export": "MY_SLATE_GIZMO"}}
-  Nuke scripts with that gizmo (or a Group of that name) then import as a
+  .nk scripts with that gizmo (or a Group of that name) then import as a
   Slate with its notes, mattes, names and image placement, and a Slate
-  exports to Nuke as the gizmo.
+  exports to .nk apps as the gizmo.
 
 OPEN RECENT
   File > Open Recent lists the last 10 scripts opened or saved, newest
   first (hover one for its full path; ones that can't be found right now -
   a drive not mapped - are greyed out). Alt+Shift+1 ... Alt+Shift+9, 0 open
-  them by number, as in Nuke. Unsaved changes are asked about first.
+  them by number, as is standard. Unsaved changes are asked about first.
   Clear Recent empties the list.
 
 NETWORK DRIVES (UNC PATHS)
@@ -930,14 +929,14 @@ FILE FORMATS
   MJPEG, MPEG-4, FFV1 (lossless 16-bit) or PNG. Writing H.264 isn't
   included (it needs a GPL encoder).
 
-NUKE SCRIPTS (the importer runs on the Python in python\ - the -python zip -
+.NK SCRIPTS (the importer runs on the Python in python\ - the -python zip -
 or on an installed Python 3)
-  In the editor: File > Import Nuke Script (Ctrl+I), or drag the .nk onto Welder.bat.
-  Copy nodes in Nuke and press Ctrl+V over Welder's node graph to paste them;
-  copy in Welder and paste in Nuke the same way. File > Export Nuke Script
+  In the editor: File > Import .nk Script (Ctrl+I), or drag the .nk onto Welder.bat.
+  Copy nodes in .nk apps and press Ctrl+V over Welder's node graph to paste them;
+  copy in Welder and paste in another .nk app the same way. File > Export .nk Script
   writes a whole comp as a .nk (also: bin\welder.exe nk comp.weld -o shot.nk).
-  Welder nodes Nuke has no node for (Twirl, Kaleidoscope, GradientMap, ...)
-  arrive in Nuke as labelled NoOps that pass their input through.
+  Welder nodes the .nk format has no node for (Twirl, Kaleidoscope, GradientMap, ...)
+  arrive in .nk apps as labelled NoOps that pass their input through.
   Command line:  python\python.exe tools\nk2strata.py C:\path\to\shot.nk
   Groups stay groups (with their knobs), gizmos come in as groups when their
   .gizmo file is on the gizmo path, backdrops and sticky notes come along, and

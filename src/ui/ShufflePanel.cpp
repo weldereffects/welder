@@ -1,4 +1,4 @@
-// Shuffle properties, laid out like Nuke's Shuffle: input layers on the left,
+// Shuffle properties, laid out like the classic Shuffle: input layers on the left,
 // output layers on the right, one wire per output channel. Drag from a dot on
 // one side to a dot on the other to route a channel; right-click an output
 // channel for a list of sources (including black and white).
@@ -82,7 +82,7 @@ int channelRank(const std::string& ch) {
     return 4;
 }
 
-// Channels of a layer. rgba always shows its four channels (Nuke does too).
+// Channels of a layer. rgba always shows its four channels (as is standard).
 std::vector<std::string> channelsOfLayer(const Node* n, const std::string& layer, const ChannelSet& cs) {
     if (layer == "none" || layer.empty()) return {};
     if (layer == "rgba") return {"R", "G", "B", "A"};
@@ -546,7 +546,7 @@ void drawShufflePanel(App& app, UiState& ui, Node* n) {
                 std::string src = g_drag.fromIn ? g_drag.id : hovered->id;
                 setSource(out, src);
             } else if (!hovered && !g_drag.fromIn) {
-                setSource(g_drag.id, "0");  // pulled a wire off an output: black, like Nuke
+                setSource(g_drag.id, "0");  // pulled a wire off an output: black, as is standard
             }
             g_drag.active = false;
         }

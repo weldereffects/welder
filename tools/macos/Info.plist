@@ -21,7 +21,7 @@
       <key>CFBundleTypeRole</key><string>Editor</string>
     </dict>
     <dict>
-      <key>CFBundleTypeName</key><string>Nuke script</string>
+      <key>CFBundleTypeName</key><string>.nk script</string>
       <key>CFBundleTypeExtensions</key><array><string>nk</string></array>
       <key>CFBundleTypeRole</key><string>Viewer</string>
     </dict>

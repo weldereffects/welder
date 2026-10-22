@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-nk2strata — translate a Nuke script (.nk) into a Welder comp (.weld).
+nk2strata — translate a .nk script (.nk) into a Welder comp (.weld).
 
     python3 tools/nk2strata.py shot.nk -o shot.weld [--report report.json]
-    python3 tools/nk2strata.py clip.nk --fragment -o nodes.json   (Nuke's clipboard -> {"strata_nodes": [...]})
+    python3 tools/nk2strata.py clip.nk --fragment -o nodes.json   (the classic clipboard -> {"strata_nodes": [...]})
 
 What it does
-  * Parses the .nk TCL subset Nuke writes: node blocks, the node stack
+  * Parses the .nk TCL subset the .nk format writes: node blocks, the node stack
     (set / push / [stack 0]), clones, layers, groups (as Welder groups, with
     their user knobs), gizmos (from .gizmo files on the gizmo path), backdrops,
     sticky notes, knob values including animation curves ({curve x1 0 x10 1})
-    and expressions (Nuke's expression language; node and knob names are
+    and expressions (the classic expression language; node and knob names are
     rewritten to the Welder ones; TCL beyond [frame] / [value] is reported).
-  * Maps each Nuke node class to the matching Welder node and knob names to
+  * Maps each .nk node class to the matching Welder node and knob names to
     Welder params. OFX nodes (OFX<plugin.id>_v<major>) become Welder OFX nodes
     with their knobs passed through as plugin parameter values.
   * Anything it can't translate faithfully is reported, never silently dropped:
@@ -33,9 +33,9 @@ import sys
 # ----------------------------------------------------------------------------
 
 
-# Nuke colour-space names (nuke-default config, ACES 1.x configs) -> names in
+# .nk colour-space names (the default config, ACES 1.x configs) -> names in
 # OCIO's studio config (which also knows the ACES 1.x names as aliases).
-NUKE_DEFAULT_SPACES = {
+NK_DEFAULT_SPACES = {
     "linear": "working", "scene_linear": "working", "srgb": "sRGB Encoded Rec.709 (sRGB)",
     "rec709": "Camera Rec.709", "gamma1.8": "Gamma 1.8 Encoded Rec.709", "gamma2.2": "Gamma 2.2 Encoded Rec.709",
     "gamma2.4": "Gamma 2.4 Encoded Rec.709", "raw": "Raw", "alexav3logc": "ARRI LogC3 (EI800)",
@@ -47,8 +47,8 @@ UNSUPPORTED_SPACES = ("cineon", "panalog", "viperlog", "redlog", "ploglin", "slo
                       "bmdfilm", "protune", "clog", "log3g10")
 
 
-def nuke_movie_codec(k, warn):
-    """Nuke's mov64 / ffmpeg codec knobs -> a Welder movie codec."""
+def nk_movie_codec(k, warn):
+    """the classic mov64 / ffmpeg codec knobs -> a Welder movie codec."""
     codec = str(k.get("mov64_codec", k.get("codec", k.get("mov.codec", "")))).lower()
     prof = " ".join(str(k.get(x, "")) for x in ("mov_prores_codec_profile", "mov64_dnxhd_codec_profile",
                                                   "mov64_dnxhr_codec_profile", "dnxhd_codec_profile")).lower()
@@ -86,14 +86,14 @@ def nuke_movie_codec(k, warn):
     return "prores 422 hq"
 
 
-def nuke_colorspace(cs):
+def nk_colorspace(cs):
     """A Read / Write / OCIO knob value -> a Welder colour space ("default" stays)."""
     cs = cs.strip().strip('"')
     if not cs or cs.startswith("default"):
         return "default"
     low = cs.lower()
-    if low in NUKE_DEFAULT_SPACES:
-        return NUKE_DEFAULT_SPACES[low]
+    if low in NK_DEFAULT_SPACES:
+        return NK_DEFAULT_SPACES[low]
     return cs  # ACES / studio names and aliases pass through
 
 
@@ -231,8 +231,8 @@ def studio_config():
 
 
 def slate_gizmos():
-    """Nuke classes / Group names that are the studio's slate generator (imported as Slate nodes)."""
-    v = (studio_config().get("nuke") or {}).get("slate_gizmos") or []
+    """.nk classes / Group names that are the studio's slate generator (imported as Slate nodes)."""
+    v = (studio_config().get("nk") or {}).get("slate_gizmos") or []
     return [v] if isinstance(v, str) else [g for g in v if isinstance(g, str) and g]
 
 
@@ -360,7 +360,7 @@ def expr_value(word):
     return out[0] if len(out) == 1 else out
 
 
-# Nuke knob -> Welder param, where they differ, by Welder node type (references
+# .nk knob -> Welder param, where they differ, by Welder node type (references
 # in expressions; knobs the script itself sets are learned while translating).
 KNOB_RENAMES = {
     ("Grade", "white"): "gain", ("Grade", "black"): "lift", ("Grade", "add"): "offset",
@@ -368,7 +368,7 @@ KNOB_RENAMES = {
     ("Transform", "translate"): "translate", ("Merge", "mix"): "mix",
 }
 
-# Nuke's addUserKnob type codes -> Welder group knob types
+# the classic addUserKnob type codes -> Welder group knob types
 USER_KNOB_TYPES = {1: "string", 2: "string", 3: "int", 4: "choice", 6: "bool", 7: "float", 8: "float",
                    12: "xy", 13: "xyz", 14: "xy", 15: "box", 16: "float", 18: "color", 19: "color",
                    20: "divider", 26: "divider", 41: "link"}
@@ -409,7 +409,7 @@ def parse_user_knobs(text):
 FILTERS = ("impulse", "cubic", "keys", "simon", "rifman", "mitchell", "parzen", "notch", "lanczos4", "lanczos6", "sinc4")
 
 
-def nuke_filter(name, warn):
+def nk_filter(name, warn):
     f = name.strip('"').lower()
     if f in FILTERS:
         return f
@@ -419,7 +419,7 @@ def nuke_filter(name, warn):
     return "cubic"
 
 
-def nuke_color(v):
+def nk_color(v):
     """tile_color (0xRRGGBBAA as an int or hex) -> [r, g, b] in 0..1, or None."""
     try:
         s = str(v)
@@ -469,7 +469,7 @@ CHAN_SUFFIX = {"red": "R", "green": "G", "blue": "B", "alpha": "A"}
 
 
 def channel_name(nk):
-    """Nuke channel 'rgba.red' -> 'R'; 'diffuse.red' -> 'diffuse.R'; 'depth.Z' stays."""
+    """.nk channel 'rgba.red' -> 'R'; 'diffuse.red' -> 'diffuse.R'; 'depth.Z' stays."""
     nk = str(nk).lstrip("-")
     if nk in ("red", "green", "blue", "alpha"):
         return CHAN_SUFFIX[nk]
@@ -481,7 +481,7 @@ def channel_name(nk):
 
 
 def channel_set(value):
-    """Nuke channel-set knob -> Welder selection ('rgb', 'rgba', 'alpha', 'all', layer or list)."""
+    """.nk channel-set knob -> Welder selection ('rgb', 'rgba', 'alpha', 'all', layer or list)."""
     words = [str(w) for w in split_words(str(value))] if getattr(value, "kind", "") == "brace" else str(value).split()
     words = [w for w in words if not w.startswith("-")]
     if len(words) == 1:
@@ -524,7 +524,7 @@ COMPRESSION = {"none": "none", "Zip (1 scanline)": "zips", "Zip (16 scanlines)":
 
 
 # ----------------------------------------------------------------------------
-# Roto / RotoPaint "curves" knob (Nuke 7+ serialisation)
+# Roto / RotoPaint "curves" knob (version 7+ serialisation)
 # ----------------------------------------------------------------------------
 # The knob holds a tree of brace groups: layers ({layer Name {f ..} {t ..} {a ..} items..})
 # containing curve groups ({cubiccurve|curvegroup Name flags type {{cc ..} {cc ..|idem}} {tx ..} {a ..}}).
@@ -923,7 +923,7 @@ def roto_shapes(text, warn):
                 walk(e, parent)
 
     walk(tree, None)
-    # Nuke lists the top of the stack first; Welder draws first to last.
+    # the .nk format lists the top of the stack first; Welder draws first to last.
     out.reverse()
     return out
 
@@ -1042,7 +1042,7 @@ def tracker_tracks(text, warn):
 
 
 def planar_from_curves(text, warn):
-    """(region, surface, reference_frame, keys) of a NukeX PlanarTracker's curves knob.
+    """(region, surface, reference_frame, keys) of a advanced-edition PlanarTracker's curves knob.
     The corner-pin track is stored as pt1x..pt4y attributes (animated) on the tracked layer."""
     try:
         tree = roto_tokenize(text)
@@ -1115,11 +1115,11 @@ class Translator:
         self.path = path
         self.scope = ""          # the Welder group being filled ("" = top level)
         self.scope_parent = {}   # group -> its enclosing group
-        self.scope_names = {}    # (group, Nuke name) -> Welder name
-        self.node_class = {}     # Welder name -> Nuke class
-        self.class_knobs = {}    # Nuke class -> {Nuke knob: Welder param}
+        self.scope_names = {}    # (group, .nk name) -> Welder name
+        self.node_class = {}     # Welder name -> .nk class
+        self.class_knobs = {}    # .nk class -> {.nk knob: Welder param}
         self.pending_exprs = []  # (params, key, group, components) to resolve names in
-        self.pending_links = []  # (ReferenceLink node, group, Nuke name of what it links to)
+        self.pending_links = []  # (ReferenceLink node, group, .nk name of what it links to)
         self.links = []          # (group node, user knob, target "Node.knob") to wire up
         self.gizmo_paths = list(gizmo_paths or [])
         self.gizmo_cache = {}
@@ -1292,7 +1292,7 @@ class Translator:
         return output, i
 
     def group(self, klass, knobs, block_texts, popped, sub, gizmo=None, with_consumed=False):
-        """A Nuke Group / gizmo -> a Welder Group node (its contents inside it)."""
+        """A .nk Group / gizmo -> a Welder Group node (its contents inside it)."""
         name = str(knobs.get("name", klass + "1"))
         n_main = len(popped)
         params = {}
@@ -1310,7 +1310,7 @@ class Translator:
                 continue
             kd = {"name": d["name"], "label": label, "type": t}
             if d["code"] == 20 and not knob_defs and d["name"] == "User":
-                continue  # Nuke's default first tab
+                continue  # the classic default first tab
             if t == "divider":
                 kd["name"] = "_div_" + d["name"]
                 knob_defs.append(kd)
@@ -1422,7 +1422,7 @@ class Translator:
         number("mainBlur", "mix", "extra_mix")
         number("mainMix", "mix", "mix")
         number("mainKeyer", "range", "range")
-        # knobs Nuke didn't write are at their first choice
+        # knobs the script didn't write are at their first choice
         for knob, dest, first in (("op", "operation", "over"), ("bboxc", "bbox", "A")):
             if knob not in knobs:
                 p.setdefault(dest, first)
@@ -1440,10 +1440,10 @@ class Translator:
         if klass in self.gizmo_cache:
             return self.gizmo_cache[klass]
         dirs = [self.base] + self.gizmo_paths
-        for var in ("STRATA_GIZMO_PATH", "NUKE_PATH"):
+        for var in ("WELDER_GIZMO_PATH", "STRATA_GIZMO_PATH"):
             dirs += [d for d in os.environ.get(var, "").split(os.pathsep) if d]
         home = os.path.expanduser("~")
-        dirs += [os.path.join(home, ".nuke"), os.path.join(home, ".welder", "gizmos"), os.path.join(home, ".strata", "gizmos")]
+        dirs += [os.path.join(home, ".welder", "gizmos"), os.path.join(home, ".strata", "gizmos")]
         found = None
         want = klass.lower() + ".gizmo"
         for d in dirs:
@@ -1473,11 +1473,11 @@ class Translator:
 
     # ------------------------------------------------------------- expressions: names
 
-    def resolve(self, scope, nuke_name):
+    def resolve(self, scope, script_name):
         """The Welder name of a node, seen from inside `scope` (then its parents)."""
         while True:
-            if (scope, nuke_name) in self.scope_names:
-                return self.scope_names[(scope, nuke_name)]
+            if (scope, script_name) in self.scope_names:
+                return self.scope_names[(scope, script_name)]
             if scope == "":
                 return None
             scope = self.scope_parent.get(scope, "")
@@ -1571,7 +1571,7 @@ class Translator:
         return n
 
     def knobs(self, brace_word):
-        """Knob lines of a node block -> {name: Word}. Nuke writes one
+        """Knob lines of a node block -> {name: Word}. the .nk format writes one
         'name value' pair per line and always quotes/braces multi-word values,
         so words are read as pairs; this also accepts several pairs on one
         line ("Constant { inputs 0 name C }"). Repeated knobs keep the last value."""
@@ -1591,7 +1591,7 @@ class Translator:
         if klass in ("Read", "Constant", "CheckerBoard2", "ColorBars", "Ramp", "Radial", "Rectangle",
                      "BackdropNode", "StickyNote", "Camera", "Camera2", "Camera3", "Axis", "Axis2", "Axis3",
                      "Input", "ColorWheel", "Noise", "Text2", "Text", "Roto", "RotoPaint"):
-            # Roto/RotoPaint/Noise/Text take an optional input; Nuke writes "inputs 0" when unconnected.
+            # Roto/RotoPaint/Noise/Text take an optional input; the .nk format writes "inputs 0" when unconnected.
             return (0, 0) if klass not in ("Roto", "RotoPaint", "Noise", "Text2", "Text") else (1, 0)
         if klass == "Glow_Exponential":
             return 2, 0  # img, mask
@@ -1639,13 +1639,13 @@ class Translator:
             custom = str(k.get("customOCIOConfigPath", ""))
             if str(k.get("OCIO_config", "")) == "custom" and custom:
                 color["config"] = custom
-            work = nuke_colorspace(str(k.get("workingSpaceLUT", "scene_linear")))
+            work = nk_colorspace(str(k.get("workingSpaceLUT", "scene_linear")))
             color["working"] = "ACEScg" if work in ("working", "scene_linear") else work
-            i8 = nuke_colorspace(str(k.get("int8Lut", "")))
+            i8 = nk_colorspace(str(k.get("int8Lut", "")))
             color["integer"] = i8 if i8 not in ("", "working") else "sRGB Encoded Rec.709 (sRGB)"
             color["display"] = ""
             color["view"] = ""
-        else:  # nuke-default: linear sRGB primaries, sRGB viewer
+        else:  # the default config: linear sRGB primaries, sRGB viewer
             color["working"] = "Linear Rec.709 (sRGB)"
             color["integer"] = "sRGB Encoded Rec.709 (sRGB)"
             color["view"] = "Un-tone-mapped"
@@ -1655,7 +1655,7 @@ class Translator:
 
     def emit(self, nk_name, klass, stype, inputs, params, knobs):
         if str(knobs.get("disable", "")) == "true":
-            params["disable"] = True  # kept disabled, like in Nuke (D toggles it)
+            params["disable"] = True  # kept disabled, like in .nk apps (D toggles it)
         name = self.unique(nk_name)
         node = {"name": name, "type": stype, "inputs": [n["name"] if n else None for n in inputs], "params": params}
         while node["inputs"] and node["inputs"][-1] is None:
@@ -1667,8 +1667,8 @@ class Translator:
                     ui[k[0]] = int(float(str(knobs[k])))
                 except ValueError:
                     pass
-        node["ui"] = dict(ui, nuke_class=klass)
-        tc = nuke_color(knobs["tile_color"]) if "tile_color" in knobs else None
+        node["ui"] = dict(ui, nk_class=klass)
+        tc = nk_color(knobs["tile_color"]) if "tile_color" in knobs else None
         if tc and stype not in ("Backdrop", "StickyNote"):
             node["ui"]["tile_color"] = tc
         if stype not in ("Backdrop", "StickyNote"):  # the Node tab
@@ -1785,7 +1785,7 @@ class Translator:
                 params["auto_alpha"] = True
             if flag("raw"):
                 params["raw"] = True
-            cs = nuke_colorspace(str(k.get("colorspace", "")))
+            cs = nk_colorspace(str(k.get("colorspace", "")))
             if cs != "default":
                 params["colorspace"] = cs
                 if cs.lower() in UNSUPPORTED_SPACES:
@@ -1812,7 +1812,7 @@ class Translator:
                 params["tiff_compression"] = {"none": "none", "packbits": "packbits", "lzw": "lzw",
                                               "deflate": "zip"}.get(str(k["compression"]).lower(), "zip")
             if ftype in ("mov", "mov64", "mp4", "ffmpeg") or ext in (".mov", ".mp4", ".mkv", ".avi", ".mxf"):
-                params["codec"] = nuke_movie_codec(k, warn)
+                params["codec"] = nk_movie_codec(k, warn)
             if ftype not in ("dpx", "tiff", "tif", "png", "mov", "mov64", "mp4", "ffmpeg"):
                 params["datatype"] = "float" if "32" in dt else "half"
             if ftype in ("dpx", "tiff", "tif", "png", "mov", "mov64", "mp4", "ffmpeg"):
@@ -1834,7 +1834,7 @@ class Translator:
                 params["data_window"] = "bbox"
             if flag("disable"):
                 params["disable"] = True
-            cs = nuke_colorspace(str(k.get("colorspace", "")))
+            cs = nk_colorspace(str(k.get("colorspace", "")))
             if cs != "default":
                 params["colorspace"] = cs
             if flag("raw"):
@@ -1963,7 +1963,7 @@ class Translator:
             if c is None:
                 c = num("focal_point")
             if isinstance(c, (int, float)):
-                # Nuke's center is in the depth channel's units: 1/z for far = 0
+                # the classic center is in the depth channel's units: 1/z for far = 0
                 params["focus_plane"] = (1.0 / c if c else 1e6) if params["math"] == "1/z" else c
             for knob, dest in (("dof", "depth_of_field"), ("size", "size"), ("max_size", "maximum"),
                                ("blades", "blades"), ("aspect", "aspect"), ("layers", "layers")):
@@ -2008,7 +2008,7 @@ class Translator:
         if klass in ("OCIOColorSpace", "OCIODisplay", "OCIOLookTransform", "OCIOFileTransform", "OCIOCDLTransform"):
             def cs_knob(knob, dest):
                 if knob in k:
-                    v = nuke_colorspace(str(k[knob]))
+                    v = nk_colorspace(str(k[knob]))
                     params[dest] = "working" if v == "default" else v
             if klass == "OCIOColorSpace":
                 cs_knob("in_colorspace", "in_colorspace")
@@ -2202,7 +2202,7 @@ class Translator:
                 if klass == "CornerPin2D" and flag("invert"):
                     params["transform"] = "stabilize"
                 if "filter" in k:
-                    params["filter"] = nuke_filter(str(k["filter"]), warn)
+                    params["filter"] = nk_filter(str(k["filter"]), warn)
                 if "black_outside" in k:
                     params["black_outside"] = flag("black_outside", True)
                 num("motionblur", dest="motionblur")
@@ -2218,7 +2218,7 @@ class Translator:
                 return node
 
         # ---------------------------------------------------- glows
-        if klass == "Glow_Exponential":  # the Nuke Survival Toolkit's / SPIN VFX's gizmo -> ExpoGlow
+        if klass == "Glow_Exponential":  # the Survival Toolkit's / SPIN VFX's gizmo -> ExpoGlow
             for kn in ("size", "intensity", "falloff", "range", "saturation", "core_color", "falloff_color", "threshold",
                        "aspect", "overscan", "mix"):
                 num(kn, dest=kn)
@@ -2242,7 +2242,7 @@ class Translator:
                 params["skew_order"] = "YX" if str(k["skew_order"]) == "YX" else "XY"
             num("center", dest="center")
             if "filter" in k:
-                params["filter"] = nuke_filter(str(k["filter"]), warn)
+                params["filter"] = nk_filter(str(k["filter"]), warn)
             if flag("invert_matrix"):
                 params["invert"] = True
             if flag("clamp"):
@@ -2290,7 +2290,7 @@ class Translator:
                 if flag(knob):
                     params[knob] = True
             if "filter" in k:
-                params["filter"] = nuke_filter(str(k["filter"]), warn)
+                params["filter"] = nk_filter(str(k["filter"]), warn)
             self.translated += 1
             return self.emit(nk_name, klass, "Reformat", main[:1], params, k)
 
@@ -2430,7 +2430,7 @@ class Translator:
             return self.emit(nk_name, klass, "TimeOffset", main[:1], params, k)
 
         if klass in ("OFlow2", "OFlow", "Kronos"):
-            # Nuke's optical-flow retimers -> OFlow (same knobs, Welder names)
+            # the classic optical-flow retimers -> OFlow (same knobs, Welder names)
             m = str(k.get("method", k.get("interpolation", "Motion"))).strip('"').lower()
             if m in ("motion", "blend", "frame"):
                 params["method"] = m
@@ -2465,7 +2465,7 @@ class Translator:
             return self.emit(nk_name, klass, "OFlow", main[:1], params, k)
 
         if klass in ("VectorGenerator", "VectorGenerator2"):
-            # Nuke's motion vectors -> VectorGenerator (forward.u/v, backward.u/v)
+            # the classic motion vectors -> VectorGenerator (forward.u/v, backward.u/v)
             for knob, dest in (("vectorDetail", "vector_detail"), ("vectorDetailReg", "vector_detail"),
                                ("smoothness", "smoothness"), ("smoothnessReg", "smoothness")):
                 if knob in k and dest not in params:
@@ -2586,8 +2586,8 @@ class Translator:
             return self.emit(nk_name, klass, "Card3D", main[:2], params, k)
 
         if klass == "CameraTracker":
-            warn("NukeX CameraTracker: the node is created without its tracks or solve; track and solve it again "
-                 "(or export the camera from Nuke as a Camera node)")
+            warn("advanced-edition CameraTracker: the node is created without its tracks or solve; track and solve it again "
+                 "(or export the camera from .nk apps as a Camera node)")
             self.translated += 1
             return self.emit(nk_name, klass, "CameraTracker", main[:2], {}, k)
 
@@ -2603,7 +2603,7 @@ class Translator:
             if "note_font_size" in k and is_number(str(k["note_font_size"])):
                 params["note_font_size"] = float(str(k["note_font_size"]))
             if klass == "BackdropNode":
-                c = nuke_color(k["tile_color"]) if "tile_color" in k else None
+                c = nk_color(k["tile_color"]) if "tile_color" in k else None
                 params["color"] = (c or [0.45, 0.45, 0.45]) + [1]
                 if "z_order" in k and is_number(str(k["z_order"])):
                     params["z_order"] = float(str(k["z_order"]))
@@ -2643,14 +2643,14 @@ class Translator:
                     params["surface"] = surface
                     params["reference_frame"] = ref
                     params["keys"] = keys
-                warn("planar tracker: region%s imported; compare with Nuke or retrack" % (" and corner-pin track" if keys else ""))
+                warn("planar tracker: region%s imported; compare with .nk apps or retrack" % (" and corner-pin track" if keys else ""))
             else:
                 warn("planar tracker data not found; draw the region and track in Welder")
             self.translated += 1
             return self.emit(nk_name, klass, "PlanarTracker", main[:1], params, k)
 
         if klass == "Tracker3":
-            warn("Tracker3 (pre-Nuke 7) tracks are not translated; the node passes its input through")
+            warn("Tracker3 (old format) tracks are not translated; the node passes its input through")
 
         if klass == "CornerPin2D":
             for kn in ("to1", "to2", "to3", "to4", "from1", "from2", "from3", "from4"):
@@ -2702,7 +2702,7 @@ class Translator:
                          "screenReplaceMethod", "screenReplaceColour"):
                 if knob in k:
                     warn("Keylight '%s' has no equivalent yet; ignored" % knob)
-            warn("Keylight becomes ScreenKeyer (a similar colour-difference keyer); compare the matte with Nuke")
+            warn("Keylight becomes ScreenKeyer (a similar colour-difference keyer); compare the matte with .nk apps")
             ins = [main[0] if main else None, main[3] if len(main) > 3 else None, main[2] if len(main) > 2 else None]
             while ins and ins[-1] is None:
                 ins.pop()
@@ -2787,11 +2787,11 @@ class Translator:
                 except Expression:
                     warn("OFX knob '%s' uses an expression; left at the plugin default" % knob)
             params["values"] = values
-            # Plugins installed in Nuke may not be installed for Welder: render on, loudly.
+            # Plugins installed in another .nk app may not be installed for Welder: render on, loudly.
             params["if_missing"] = "bypass"
             common_mix_mask()
             if "mix" in params:
-                warn("Nuke's mix on OFX nodes is not applied yet")
+                warn("the classic mix on OFX nodes is not applied yet")
                 del params["mix"]
             self.translated += 1
             return self.emit(nk_name, klass, "OFX", main + masks, params, k)
@@ -2813,7 +2813,7 @@ class Translator:
                 if sh is not None:
                     params["shutter"] = sh
             n_paint = sum(1 for s in shapes if s.get("kind") == "stroke")
-            warn("roto: %d shape(s), %d stroke(s) read from the curves knob; compare with Nuke"
+            warn("roto: %d shape(s), %d stroke(s) read from the curves knob; compare with .nk apps"
                  % (len(shapes) - n_paint, n_paint))
             self.translated += 1
             return self.emit(nk_name, klass, klass, main[:2] if klass == "RotoPaint" else main[:1], params, k)
@@ -2825,7 +2825,7 @@ class Translator:
             if knob not in ("xpos", "ypos", "selected", "name"):
                 raw[knob] = str(val)
         self.warn(nk_name, "node class '%s' is not supported yet; passing input 0 through" % klass)
-        return self.emit(nk_name, klass, "Nuke:" + klass, main + masks, {"nuke_knobs": raw}, k)
+        return self.emit(nk_name, klass, "Unsupported:" + klass, main + masks, {"nk_knobs": raw}, k)
 
     # ------------------------------------------------------------- output
 
@@ -2869,13 +2869,13 @@ def convert(path, gizmo_paths=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Translate a Nuke .nk script into a Welder comp.")
+    ap = argparse.ArgumentParser(description="Translate a .nk script into a Welder comp.")
     ap.add_argument("nk", help="input .nk file")
     ap.add_argument("-o", "--output", help="output .weld file (default: next to the .nk)")
     ap.add_argument("--report", help="also write the translation report as JSON")
     ap.add_argument("-q", "--quiet", action="store_true", help="only print the summary line")
     ap.add_argument("--fragment", action="store_true",
-                    help="the input is nodes copied in Nuke; write {\"strata_nodes\": [...]} for pasting")
+                    help="the input is nodes copied in another .nk app; write {\"strata_nodes\": [...]} for pasting")
     ap.add_argument("--gizmo-path", action="append", default=[], help="a folder to find .gizmo files in (repeatable)")
     a = ap.parse_args(argv)
 

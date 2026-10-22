@@ -30,7 +30,7 @@ enum class Knob {
     Text,        // multi-line string (scripts)
     Gradient,    // colour stops [[pos, r, g, b, a], ...] with an editor and presets
     Button,      // runs an action (the knob's name), labelled with its label
-    Format,      // an image size [w, h]: the project's (unset), Nuke's named formats, or custom
+    Format,      // an image size [w, h]: the project's (unset), the classic named formats, or custom
     Info,        // read-only facts about the node (`info` says which)
 };
 
@@ -46,12 +46,12 @@ struct KnobDef {
     // Shown only when another knob has one of these values: "key=value" or
     // "key=v1|v2" (empty = always).
     std::string when = {};
-    // ---- layout, following Nuke's panels
+    // ---- layout, following the classic panels
     std::string tab = {};                 // "" = the node's main tab (named after the node)
     bool sameLine = false;                // on the previous knob's row
     bool hideLabel = false;               // no label of its own
     std::vector<std::string> comps = {};  // labels in vector fields (default x y / x y z / x y r t)
-    bool splittable = false;              // one value with Nuke's "2" button for separate w / h
+    bool splittable = false;              // one value with the .nk "2" button for separate w / h
     bool logSlider = false;
     bool noSlider = false;                // just the field (frame numbers, ...)
     bool noAnim = false;                  // no keyframe button

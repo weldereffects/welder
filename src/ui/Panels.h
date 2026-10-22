@@ -35,7 +35,7 @@ struct ViewerState {
     float gamma = 1.0f;
     bool hovered = false;
     bool matte = false;      // M
-    bool overlays = true;    // O: format / bbox lines
+    bool overlays = true;    // Q: shapes, handles, trackers, format / bbox lines
     bool openSettings = false;  // S: viewer settings popup
     ImVec2 viewSize = {800, 450};
     // A/B compare (the toolbar's A/B menu): B is another node, shown right of the wipe line
@@ -84,7 +84,7 @@ struct View3DState {
 
 struct GizmoEntry {
     std::string name, path;
-    bool strata = false;  // .sgizmo (else a Nuke .gizmo)
+    bool strata = false;  // .sgizmo (else a .gizmo)
 };
 
 struct GraphState {
@@ -99,7 +99,11 @@ struct GraphState {
     ImVec2 dragStartScreen;
     std::map<std::string, ImVec2> moveOrig;
     bool moved = false;
-    // shaking a dragged node loose (Nuke / Blender): direction reversals of the drag, in time
+    // a pipe drag started from a node's top / bottom edge: until the mouse has moved a few
+    // pixels it is still just a click on that node (selects it, changes no pipes)
+    std::string edgeNode;
+    bool edgeArmed = false;
+    // shaking a dragged node loose (Blender too): direction reversals of the drag, in time
     struct Shake {
         int sx = 0, sy = 0;           // current direction of travel (-1, 0, 1)
         float runX = 0, runY = 0;     // distance travelled since the last reversal (screen px)
@@ -141,11 +145,11 @@ struct RotoState {
     std::vector<roto::StrokePt> strokePts;
     float brushColor[4] = {1, 1, 1, 1};
     float brushSize = 25, brushHardness = 0.2f, brushOpacity = 1;
-    bool paintSingleFrame = true;       // new strokes live on the current frame only (Nuke's default)
+    bool paintSingleFrame = true;       // new strokes live on the current frame only (the classic default)
     bool cloneSourceSet = false, cloneOffsetSet = false;
     ImVec2 cloneSource, cloneOffset;    // image space; offset = destination - source
     // Mouse drags
-    enum class Drag { None, Points, TanL, TanR, Feather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize } drag = Drag::None;
+    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize } drag = Drag::None;
     ImVec2 dragStartImg, dragStartScreen;
     std::map<int, roto::Pts> orig;      // shape -> control points when the drag started
     std::map<int, json> origStroke;     // stroke -> points when the drag started
@@ -283,7 +287,7 @@ struct UiState {
     View3DState v3d;
     Transform2DState xform2d;
     FileDialogState fileDialog;
-    // Render dialog (Nuke's): the Writes, the frame range menu and text, the options
+    // Render dialog (the classic): the Writes, the frame range menu and text, the options
     bool showRenderDialog = false;
     bool renderSelectedOnly = false;
     std::vector<std::string> renderWrites;  // set: just these (a Write's Render button)
@@ -305,7 +309,7 @@ struct UiState {
     std::string dropOpenComp;  // a .weld dropped on the window: opened (asking first when there are unsaved changes)
     bool requestQuit = false;
     double lastPlayTime = 0;
-    // Timeline (Nuke's): playback mode (0 repeat, 1 bounce, 2 stop at the end),
+    // Timeline (the classic): playback mode (0 repeat, 1 bounce, 2 stop at the end),
     // time format (0 frames, 1 timecode), the << >> increment, the measured
     // playback rate (shown in the fps box while playing).
     int playMode = 0;
@@ -425,6 +429,7 @@ std::vector<std::pair<double, json>> trackerMatchMove(Node* tracker, double ref)
 void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
 bool rotoHotkeys(App& app, UiState& ui);
 void drawRotoPanel(App& app, UiState& ui, Node* n);
+void drawSplineWarpSwitch(App& app, UiState& ui, Node* n);  // SplineWarp: edit the A or the B curves
 // Shuffle's channel-routing knobs (Properties).
 void drawShufflePanel(App& app, UiState& ui, Node* n);
 // Hotkeys
@@ -437,7 +442,7 @@ void openFileDialog(UiState& ui, const std::string& title, bool saving, std::vec
 void openFolderDialog(UiState& ui, const std::string& title, std::function<void(const std::string&)> onOk,
                       const std::string& startDir = "");
 void drawFileDialog(App& app, UiState& ui);
-// Render > Render (F5) / Render Selected (F7) / a Write's Render button: Nuke's Render dialog.
+// Render > Render (F5) / Render Selected (F7) / a Write's Render button: the classic Render dialog.
 void openRenderDialog(App& app, UiState& ui, bool selectedOnly, std::vector<std::string> writes = {});
 void testSelectInBrowser(const std::string& name);
 // Files dropped on the window (from Explorer / Finder): Reads, imported scripts, comps, geometry, LUTs.

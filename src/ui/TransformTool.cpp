@@ -1,4 +1,4 @@
-// On-screen transform handles in the 2D viewer, like Nuke's transform jack.
+// On-screen transform handles in the 2D viewer, as is standard transform jack.
 //
 // Transform (while its properties are open):
 //   drag the centre          translate

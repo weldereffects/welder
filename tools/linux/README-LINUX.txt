@@ -21,12 +21,12 @@ WHAT IT NEEDS
   - OpenGL 3.3 (any current NVIDIA, AMD or Intel driver) and X11 or XWayland.
   - Optional: Vulkan (libvulkan.so.1) for GPU processing; without it
     everything runs on the CPU.
-  - Optional: Python 3 for the Nuke importer (File > Import .nk, pasting
-    nodes copied in Nuke) and, after bin/ml/setup-ml.sh, the AI nodes.
+  - Optional: Python 3 for the .nk importer (File > Import .nk, pasting
+    nodes copied in another .nk app) and, after bin/ml/setup-ml.sh, the AI nodes.
 
 THE COMMAND LINE RENDERER
   bin/welder comp.weld            renders the comp's Write nodes
   bin/welder --help                 everything else
 
-Everything else (hotkeys, nodes, Nuke import) is as on Windows: see
+Everything else (hotkeys, nodes, .nk import) is as on Windows: see
 README.md and docs/.

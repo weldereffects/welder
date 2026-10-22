@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     if (mode == "export") {  // the synthetic solve's exports into $BENCH_PREVIEW
         std::string dir = std::getenv("BENCH_PREVIEW") ? std::getenv("BENCH_PREVIEW") : ".";
         auto s = camsolve::solve(synth::syntheticTracks(frames, 1920, 1080, 0.3, 0.05), 1920, 1080, camsolve::Options());
-        std::ofstream(dir + "/cam.nk") << camexport::nukeCamera(s, "SolvedCam");
+        std::ofstream(dir + "/cam.nk") << camexport::nkCamera(s, "SolvedCam");
         std::ofstream(dir + "/cam.chan") << camexport::chan(s);
         std::ofstream(dir + "/cam.py") << camexport::blender(s, "SolvedCam", 24);
         std::ofstream(dir + "/cam.json") << camsolve::toJson(s).dump();

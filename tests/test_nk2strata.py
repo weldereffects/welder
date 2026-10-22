@@ -115,7 +115,7 @@ Blur { size 3 name After }
         # the studio names its slate gizmo in studio.json
         cfg = os.path.join(tempfile.mkdtemp(), "studio.json")
         with open(cfg, "w") as f:
-            json.dump({"nuke": {"slate_gizmos": ["ACME_SLATE_GENERATOR"]}}, f)
+            json.dump({"nk": {"slate_gizmos": ["ACME_SLATE_GENERATOR"]}}, f)
         old = os.environ.get("STRATA_STUDIO_CONFIG")
         os.environ["STRATA_STUDIO_CONFIG"] = cfg
         try:
@@ -240,7 +240,7 @@ class Knobs(unittest.TestCase):
         self.assertFalse(any("expression" in w["message"] for w in report["warnings"]))
 
     def test_tcl_expression_warns_and_keeps_default(self):
-        _, report, n = convert('Constant { inputs 0 name C }\nBlur { size {{"[python nuke.thisNode().width()]"}} name B }\n')
+        _, report, n = convert('Constant { inputs 0 name C }\nBlur { size {{"[python thisNode().width()]"}} name B }\n')
         self.assertNotIn("size", n["B"]["params"])
         self.assertTrue(any("expression" in w["message"] for w in report["warnings"]))
 
@@ -376,7 +376,7 @@ Grade {
 
     def test_unsupported_is_reported(self):
         _, report, n = convert("Constant { inputs 0 name C }\nPrimatte3 { name K }\n")
-        self.assertEqual(n["K"]["type"], "Nuke:Primatte3")
+        self.assertEqual(n["K"]["type"], "Unsupported:Primatte3")
         self.assertEqual(report["unsupported_classes"], {"Primatte3": 1})
 
 
@@ -385,7 +385,7 @@ class EndToEnd(unittest.TestCase):
 
     def test_example_loads(self):
         exe = os.path.join(ROOT, "build", "strata")
-        nk = os.path.join(ROOT, "examples", "nuke", "shot010_comp_v003.nk")
+        nk = os.path.join(ROOT, "examples", "nk", "shot010_comp_v003.nk")
         comp, report = nk2strata.convert(nk)
         self.assertEqual(report["nodes_total"], 23)  # with the backdrop and the group's Input / Output
         if not os.path.exists(exe):
@@ -1186,7 +1186,7 @@ class CGImport(unittest.TestCase):
 
 
 class ExportRoundTrip(unittest.TestCase):
-    """Welder -> Nuke (welder nk) -> Welder (this importer) keeps the comp."""
+    """Welder -> .nk (welder nk) -> Welder (this importer) keeps the comp."""
 
     def roundtrip(self, comp_path):
         exe = os.path.join(ROOT, "build", "strata")
@@ -1219,7 +1219,7 @@ class ExportRoundTrip(unittest.TestCase):
     def test_imported_script_survives(self):
         d = tempfile.mkdtemp()
         st = os.path.join(d, "shot.weld")
-        comp, _ = nk2strata.convert(os.path.join(ROOT, "examples", "nuke", "shot010_comp_v003.nk"))
+        comp, _ = nk2strata.convert(os.path.join(ROOT, "examples", "nk", "shot010_comp_v003.nk"))
         json.dump(comp, open(st, "w"))
         a, b = self.roundtrip(st)
         na = {n["name"]: n for n in a["nodes"]}
@@ -1230,7 +1230,7 @@ class ExportRoundTrip(unittest.TestCase):
                              (nb[name]["type"], nb[name].get("inputs", []), nb[name].get("group")), name)
 
     def test_panel_knobs_survive(self):
-        """The Nuke panel knobs (Read, Transform, Reformat, Merge, Copy, Grade, Write, Node tab) both ways."""
+        """The .nk panel knobs (Read, Transform, Reformat, Merge, Copy, Grade, Write, Node tab) both ways."""
         d = tempfile.mkdtemp()
         src = os.path.join(d, "panel.nk")
         open(src, "w").write(PANEL_NK)
@@ -1393,7 +1393,7 @@ class ColorImport(unittest.TestCase):
         self.assertEqual(n["Grade"]["params"]["direction"], "inverse")
         self.assertEqual(n["Out"]["params"]["colorspace"], "sRGB Encoded Rec.709 (sRGB)")
 
-    def test_nuke_default(self):
+    def test_nk_default(self):
         comp, report, n = convert("Root {\n inputs 0\n}\nRead {\n inputs 0\n file a.png\n colorspace linear\n name R\n}\n")
         self.assertEqual(comp["project"]["color"]["working"], "Linear Rec.709 (sRGB)")
         self.assertEqual(n["R"]["params"]["colorspace"], "working")

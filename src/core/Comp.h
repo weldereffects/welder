@@ -26,7 +26,7 @@ public:
     std::string formatName;  // e.g. "HD_1080" (informational; width/height are what count)
     double firstFrame = 1, lastFrame = 1, fps = 24;
 
-    // Project settings (Nuke's Root node).
+    // Project settings (the classic Root node).
     struct Project {
         std::string name;
         bool lockRange = false;       // timeline edits don't change the frame range
@@ -42,7 +42,7 @@ public:
         std::string integerSpace = "sRGB Encoded Rec.709 (sRGB)";  // default for 8/16-bit files
         std::string viewerDisplay;                                   // "" = the config's default
         std::string viewerView = "Un-tone-mapped";
-        // Timeline range menu (Nuke's Global / Input / Custom): the project range,
+        // Timeline range menu (the classic Global / Input / Custom): the project range,
         // the viewed node's input range, or a range of the user's own.
         std::string timelineRange = "global";
         double customFirst = 1, customLast = 100;

@@ -12,8 +12,8 @@ FIRST LAUNCH
 
 WHAT IT NEEDS
   - macOS 11 (Big Sur) or later.
-  - Optional: Python 3 (python.org or Homebrew) for the Nuke importer
-    (File > Import .nk, pasting nodes copied in Nuke) and, after
+  - Optional: Python 3 (python.org or Homebrew) for the .nk importer
+    (File > Import .nk, pasting nodes copied in another .nk app) and, after
     Welder.app/Contents/Resources/ml/setup-ml.sh, the AI nodes.
   - Optional: GPU processing uses Vulkan through MoltenVK
     (brew install molten-vk); without it everything runs on the CPU.
@@ -24,5 +24,5 @@ THE COMMAND LINE RENDERER
 OFX PLUGINS
   Welder looks in /Library/OFX/Plugins and in OFX_PLUGIN_PATH.
 
-Everything else (hotkeys, nodes, Nuke import) is as on Windows: see
+Everything else (hotkeys, nodes, .nk import) is as on Windows: see
 README.md and docs/.

@@ -13,9 +13,36 @@
   "fps": 24.0,
   "project": {
     "lock_range": true,
-    "name": "shot010_comp_v003"
+    "name": "shot010_comp_v003",
+    "color": {
+      "config": "ocio://studio-config-latest",
+      "working": "Linear Rec.709 (sRGB)",
+      "integer": "sRGB Encoded Rec.709 (sRGB)",
+      "view": "Un-tone-mapped"
+    }
   },
   "nodes": [
+    {
+      "name": "BackdropNode1",
+      "type": "Backdrop",
+      "inputs": [],
+      "params": {
+        "label": "FG element",
+        "color": [
+          0.45,
+          0.45,
+          0.45,
+          1
+        ]
+      },
+      "ui": {
+        "x": -300,
+        "y": -400,
+        "nk_class": "BackdropNode",
+        "w": 400,
+        "h": 300
+      }
+    },
     {
       "name": "FG_Matte",
       "type": "Radial",
@@ -31,7 +58,7 @@
       "ui": {
         "x": -120,
         "y": -350,
-        "nuke_class": "Radial"
+        "nk_class": "Radial"
       }
     },
     {
@@ -53,7 +80,7 @@
       "ui": {
         "x": -250,
         "y": -350,
-        "nuke_class": "Constant"
+        "nk_class": "Constant"
       }
     },
     {
@@ -74,7 +101,7 @@
       "ui": {
         "x": -250,
         "y": -280,
-        "nuke_class": "Copy"
+        "nk_class": "Copy"
       }
     },
     {
@@ -87,7 +114,7 @@
       "ui": {
         "x": -250,
         "y": -240,
-        "nuke_class": "Premult"
+        "nk_class": "Premult"
       }
     },
     {
@@ -150,12 +177,14 @@
           960.0,
           540.0
         ],
-        "filter": "cubic"
+        "filter": "cubic",
+        "motionblur": 1.0,
+        "shutteroffset": "centred"
       },
       "ui": {
         "x": -250,
         "y": -180,
-        "nuke_class": "Transform"
+        "nk_class": "Transform"
       }
     },
     {
@@ -165,12 +194,15 @@
         "FG_Move"
       ],
       "params": {
+        "size": {
+          "expr": "FG_Move.scale.w*20"
+        },
         "channels": "rgba"
       },
       "ui": {
         "x": -250,
         "y": -130,
-        "nuke_class": "Blur"
+        "nk_class": "Blur"
       }
     },
     {
@@ -195,7 +227,7 @@
       "ui": {
         "x": 0,
         "y": -350,
-        "nuke_class": "CheckerBoard2"
+        "nk_class": "CheckerBoard2"
       }
     },
     {
@@ -220,29 +252,57 @@
       "ui": {
         "x": 0,
         "y": -280,
-        "nuke_class": "Grade"
+        "nk_class": "Grade"
       }
     },
     {
-      "name": "BG_Look_Saturation1",
-      "type": "Saturation",
+      "name": "BG_Look",
+      "type": "Group",
       "inputs": [
         "BG_Grade"
+      ],
+      "params": {},
+      "ui": {
+        "x": 0,
+        "y": -220,
+        "nk_class": "Group"
+      }
+    },
+    {
+      "name": "Input1",
+      "type": "Input",
+      "inputs": [],
+      "params": {
+        "number": 0
+      },
+      "ui": {
+        "x": 0,
+        "y": -10,
+        "nk_class": "Input"
+      },
+      "group": "BG_Look"
+    },
+    {
+      "name": "Saturation1",
+      "type": "Saturation",
+      "inputs": [
+        "Input1"
       ],
       "params": {
         "saturation": 0.8
       },
       "ui": {
-        "x": 0.0,
-        "y": -220.0,
-        "nuke_class": "Saturation"
-      }
+        "x": 0,
+        "y": 40,
+        "nk_class": "Saturation"
+      },
+      "group": "BG_Look"
     },
     {
-      "name": "BG_Look_ColorCorrect1",
+      "name": "ColorCorrect1",
       "type": "ColorCorrect",
       "inputs": [
-        "BG_Look_Saturation1"
+        "Saturation1"
       ],
       "params": {
         "contrast": 1.1,
@@ -254,16 +314,31 @@
         ]
       },
       "ui": {
-        "x": 0.0,
-        "y": -180.0,
-        "nuke_class": "ColorCorrect"
-      }
+        "x": 0,
+        "y": 80,
+        "nk_class": "ColorCorrect"
+      },
+      "group": "BG_Look"
+    },
+    {
+      "name": "Output1",
+      "type": "Output",
+      "inputs": [
+        "ColorCorrect1"
+      ],
+      "params": {},
+      "ui": {
+        "x": 0,
+        "y": 140,
+        "nk_class": "Output"
+      },
+      "group": "BG_Look"
     },
     {
       "name": "Merge_FG",
       "type": "Merge",
       "inputs": [
-        "BG_Look_ColorCorrect1",
+        "BG_Look",
         "FG_Defocus"
       ],
       "params": {
@@ -271,8 +346,8 @@
       },
       "ui": {
         "x": 0,
-        "y": -90,
-        "nuke_class": "Merge2"
+        "y": -130,
+        "nk_class": "Merge2"
       }
     },
     {
@@ -288,7 +363,7 @@
       "ui": {
         "x": -380,
         "y": -80,
-        "nuke_class": "Dilate"
+        "nk_class": "Dilate"
       }
     },
     {
@@ -303,7 +378,7 @@
       "ui": {
         "x": -380,
         "y": -40,
-        "nuke_class": "Blur"
+        "nk_class": "Blur"
       }
     },
     {
@@ -319,8 +394,8 @@
       },
       "ui": {
         "x": 0,
-        "y": 0,
-        "nuke_class": "Merge2"
+        "y": -40,
+        "nk_class": "Merge2"
       }
     },
     {
@@ -339,26 +414,26 @@
       },
       "ui": {
         "x": 0,
-        "y": 40,
-        "nuke_class": "OFXuk.co.thefoundry.noisereduction_v2"
+        "y": 0,
+        "nk_class": "OFXuk.co.thefoundry.noisereduction_v2"
       }
     },
     {
       "name": "ShowLUT",
-      "type": "Nuke:Vectorfield",
+      "type": "Unsupported:Vectorfield",
       "inputs": [
         "Denoise1"
       ],
       "params": {
-        "nuke_knobs": {
+        "nk_knobs": {
           "vfield_file": "/shows/demo/luts/show.cube",
           "colorspaceIn": "linear"
         }
       },
       "ui": {
         "x": 0,
-        "y": 80,
-        "nuke_class": "Vectorfield"
+        "y": 40,
+        "nk_class": "Vectorfield"
       }
     },
     {
@@ -373,12 +448,14 @@
             "A",
             "1"
           ]
-        ]
+        ],
+        "in1": "rgba",
+        "out1": "rgba"
       },
       "ui": {
         "x": 0,
-        "y": 120,
-        "nuke_class": "Shuffle"
+        "y": 80,
+        "nk_class": "Shuffle"
       }
     },
     {
@@ -388,6 +465,7 @@
         "Opaque"
       ],
       "params": {
+        "type": "to format",
         "format": [
           1280,
           720
@@ -396,8 +474,8 @@
       },
       "ui": {
         "x": 0,
-        "y": 160,
-        "nuke_class": "Reformat"
+        "y": 120,
+        "nk_class": "Reformat"
       }
     },
     {
@@ -409,17 +487,18 @@
       "params": {
         "file": "renders/shot010_comp_v003.####.exr",
         "datatype": "half",
-        "compression": "zips"
+        "compression": "zips",
+        "file_type": "exr"
       },
       "ui": {
         "x": 0,
-        "y": 200,
-        "nuke_class": "Write"
+        "y": 160,
+        "nk_class": "Write"
       }
     }
   ],
   "meta": {
-    "imported_from": "/home/claude/strata/examples/nuke/shot010_comp_v003.nk",
+    "imported_from": "/home/claude/strata/examples/nk/shot010_comp_v003.nk",
     "importer": "nk2strata 0.1"
   }
 }

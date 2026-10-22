@@ -19,7 +19,7 @@
 #include "ml/ML.h"
 #include "nodes/BlenderNode.h"
 #include "nodes/NodeUtils.h"
-#include "core/NukeExport.h"
+#include "core/NkExport.h"
 #include "core/Schema.h"
 #include "imgui_internal.h"
 #include "ofx/OfxHost.h"
@@ -42,16 +42,16 @@ static void doOpen(App& app, UiState& ui) {
 }
 
 static void doImport(App& app, UiState& ui) {
-    openFileDialog(ui, "Import Nuke script (.nk)", false, {".nk"}, [&app, &ui](const std::string& p) {
+    openFileDialog(ui, "Import .nk script (.nk)", false, {".nk"}, [&app, &ui](const std::string& p) {
         std::string err;
-        if (!app.importNuke(p, &err)) app.message("error: " + err);
+        if (!app.importNk(p, &err)) app.message("error: " + err);
         ui.graph.needsFrame = true;
         ui.viewer.fitPending = true;
     });
 }
 
-static void doExportNuke(App& app, UiState& ui) {
-    openFileDialog(ui, "Export Nuke script (.nk)", true, {".nk"}, [&app](const std::string& p) {
+static void doExportNk(App& app, UiState& ui) {
+    openFileDialog(ui, "Export .nk script (.nk)", true, {".nk"}, [&app](const std::string& p) {
         std::string path = p;
         if (fs::path(path).extension() != ".nk") path += ".nk";
         nk::ExportResult r = nk::exportComp(*app.comp);
@@ -62,7 +62,7 @@ static void doExportNuke(App& app, UiState& ui) {
         }
         f << r.text;
         app.message("exported " + std::to_string(r.nodes) + " nodes to " + path +
-                    (r.placeholders ? " (" + std::to_string(r.placeholders) + " as NoOps: no Nuke equivalent)" : ""));
+                    (r.placeholders ? " (" + std::to_string(r.placeholders) + " as NoOps: no .nk equivalent)" : ""));
         for (auto& w : r.warnings) app.message("  " + w);
     }, app.compPath.empty() ? "" : fs::path(app.compPath).parent_path().string());
 }
@@ -119,7 +119,7 @@ void drawMenuBar(App& app, UiState& ui) {
             if (ImGui::MenuItem("Clear Recent")) app.clearRecent();
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Import Nuke Script...")) doImport(app, ui);
+        if (ImGui::MenuItem("Import .nk Script...")) doImport(app, ui);
         if (ImGui::MenuItem("Convert network drive paths to UNC")) {
             app.checkpoint();
             app.edit([&app](Comp& c) {
@@ -128,7 +128,7 @@ void drawMenuBar(App& app, UiState& ui) {
                               : "no paths on mapped network drives to convert");
             });
         }
-        if (ImGui::MenuItem("Export Nuke Script...")) doExportNuke(app, ui);
+        if (ImGui::MenuItem("Export .nk Script...")) doExportNk(app, ui);
         ImGui::Separator();
         if (ImGui::MenuItem("Save", "Ctrl+S")) doSave(app, ui);
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) doSaveAs(app, ui);
@@ -396,7 +396,7 @@ void tickPlayback(App& app, UiState& ui) {
     ViewResult r = app.result();
     bool shown = !app.rendering() && (r.frame == app.frame || app.viewed.empty());
     if (shown && now - ui.lastPlayTime >= 1.0 / std::max(1.0, c.fps)) {
-        // the real rate, shown in the timeline's fps box like Nuke's
+        // the real rate, shown in the timeline's fps box, as is standard
         if (ui.lastAdvance > 0 && now > ui.lastAdvance) {
             double inst = 1.0 / (now - ui.lastAdvance);
             ui.measuredFps = ui.measuredFps > 0 ? ui.measuredFps * 0.85 + inst * 0.15 : inst;
@@ -618,7 +618,7 @@ static void drawPreferences(App& app, UiState& ui) {
         row("AI job files", "ml-jobs", sizes.mljobs,
             "The AI nodes' inputs and results: clearing means running those nodes again",
             [] { emptyFolder(fs::path(cacheRoot()) / "ml-jobs"); }, nullptr);
-        row("Temporary files", "tmp", sizes.tmp, "Pasting from Nuke, importer logs", [] { emptyFolder(fs::path(cacheRoot()) / "tmp"); },
+        row("Temporary files", "tmp", sizes.tmp, "Pasted .nk nodes, importer logs", [] { emptyFolder(fs::path(cacheRoot()) / "tmp"); },
             nullptr);
         ImGui::EndTable();
     }
@@ -640,7 +640,7 @@ static void drawPreferences(App& app, UiState& ui) {
         ImGui::TextColored(ok ? ImVec4(0.55f, 0.85f, 0.5f, 1) : ImVec4(0.75f, 0.75f, 0.75f, 1), "%s", gpu::status().c_str());
     }
     ImGui::Spacing();
-    {  // the RAM playback cache (Nuke's playback cache): frames played or read ahead
+    {  // the RAM playback cache (the classic playback cache): frames played or read ahead
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Playback cache (RAM)");
         if (ImGui::IsItemHovered())
@@ -724,7 +724,7 @@ void openRenderDialog(App& app, UiState& ui, bool selectedOnly, std::vector<std:
     ui.renderStarted = false;
     ui.renderSelectedOnly = selectedOnly;
     ui.renderWrites = std::move(writes);
-    // Nuke starts on the input range when the Writes have one
+    // the classic dialog starts on the input range when the Writes have one
     ui.renderRangeMode = rangeFor(app, ui, 0) ? 0 : 1;
     auto r = rangeFor(app, ui, ui.renderRangeMode);
     ui.renderRange = r ? frameRangeText(r->first, r->second) : "1";
@@ -739,7 +739,7 @@ static void drawRenderDialog(App& app, UiState& ui) {
     const float fs = ImGui::GetFontSize();
     BatchStatus st = app.batchStatus();
     if (!ui.renderStarted) {
-        // ---------------- Nuke's dialog: Frame range [menu] [text], options, OK / Cancel
+        // ---------------- the classic dialog: Frame range [menu] [text], options, OK / Cancel
         std::vector<std::string> names = renderTargets(app, ui);
         static const char* kModes[] = {"input", "global", "in-out", "visible", "custom"};
         kit::rowLabel("Frame range");
@@ -1043,7 +1043,7 @@ void drawDialogs(App& app, UiState& ui) {
     }
     ImGui::SetNextWindowSize(ImVec2(760, 600), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Keyboard shortcuts", nullptr)) {
-        ImGui::TextDisabled("Nuke's default hotkeys. The panel under the mouse decides what a key does. Greyed rows are Nuke keys for features Welder doesn't have yet.");
+        ImGui::TextDisabled("The standard compositing hotkeys. The panel under the mouse decides what a key does. Greyed rows are keys for features Welder doesn't have yet.");
         ImGui::BeginChild("##keys", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
         std::string ctx;
         for (auto& sc : shortcuts()) {
@@ -1079,7 +1079,7 @@ void drawDialogs(App& app, UiState& ui) {
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(100);
         if (ImGui::InputInt("frame", &ui.gotoFrame, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
-            app.frame = ui.gotoFrame;  // Nuke lets you go outside the timeline range
+            app.frame = ui.gotoFrame;  // the classic timeline lets you go outside the timeline range
             app.requestView();
             ImGui::CloseCurrentPopup();
         }

@@ -16,7 +16,7 @@
 #include "core/Studio.h"
 #include "core/DiskCache.h"
 #include "core/Expr.h"
-#include "core/NukeExport.h"
+#include "core/NkExport.h"
 #include "core/Engine.h"
 #include "core/ThreadBudget.h"
 #include "core/NetPath.h"
@@ -332,7 +332,7 @@ int main(int argc, char** argv) {
         CHECK(s2.hits > s1.hits);
     });
 
-    test("expressions: Nuke's math, knob references, groups' knobs, safety", [] {
+    test("expressions: the classic math, knob references, groups' knobs, safety", [] {
         auto ev = [](const std::string& t, double f = 1, const Node* o = nullptr) {
             std::string err;
             double v = expr::eval(t, f, o, nullptr, -999, &err);
@@ -459,7 +459,7 @@ int main(int argc, char** argv) {
         CHECK_NEAR(img3->px(10, 10)[img3->ch("R")], 0.25f * 2 + 1 + 0.125f, 1e-5);
     });
 
-    test("Nuke export: nodes as .nk text (groups, curves, expressions, masks), and the clipboard", [] {
+    test(".nk export: nodes as .nk text (groups, curves, expressions, masks), and the clipboard", [] {
         json nodes = json::parse(R"([
             {"name": "Plate", "type": "Read", "params": {"file": "plates/a.####.exr", "first": 1001, "last": 1010}, "ui": {"x": 0, "y": 0}},
             {"name": "M", "type": "Radial", "params": {"center": [100, 50], "radius": 20}},
@@ -488,20 +488,20 @@ int main(int argc, char** argv) {
         CHECK(has(" maskChannelInput rgba.alpha"));
         CHECK(has(" tile_color 0xff0000ff"));
         CHECK(has(" size {{curve L x1 0 x10 8}}"));
-        CHECK(t.find("push $cut_paste_input") == std::string::npos);  // Merge's A is outside: unconnected in Nuke
-        // a copied chain fed from outside connects to what's selected in Nuke when pasting
+        CHECK(t.find("push $cut_paste_input") == std::string::npos);  // Merge's A is outside: unconnected in .nk apps
+        // a copied chain fed from outside connects to what's selected in the other app when pasting
         std::string t2 = nk::exportNodes(json::parse(R"([{"name": "B", "type": "Blur", "inputs": ["Elsewhere"], "params": {"size": 4}}])")).text;
         CHECK(t2.find("push $cut_paste_input\nBlur {\n size 4\n name B\n selected true\n}") != std::string::npos);
         CHECK(has("Merge2 {\n inputs 2\n operation plus\n mix 0.5"));
         CHECK(has("Group {\n inputs 1\n addUserKnob {20 User}\n addUserKnob {7 amount R 0 10}\n amount 3\n"));
-        CHECK(has(" multiply {{parent.amount} 1 1 {G.white.a}}"));  // Welder names -> Nuke's
+        CHECK(has(" multiply {{parent.amount} 1 1 {G.white.a}}"));  // Welder names -> the classic
         CHECK(has("end_group"));
         CHECK(has("NoOp {"));
         CHECK(r.placeholders == 1 && r.nodes == 10);
         // the Grade's inputs are pushed mask first, input 0 last (on top)
         size_t g = t.find("Grade {"), pm = t.rfind("push", g);
         CHECK(pm != std::string::npos && t.compare(pm, 12, "push $N1000\n") == 0);
-        // the clipboard: Nuke text plus the exact Welder nodes on a comment line
+        // the clipboard: .nk text plus the exact Welder nodes on a comment line
         std::string clip = nk::clipboardText(nodes);
         CHECK(clip.rfind("# strata_nodes_b64: ", 0) == 0);
         CHECK(clip.substr(0, clip.find('\n')).find_first_of("{}\"[]$") == std::string::npos);
@@ -510,7 +510,7 @@ int main(int argc, char** argv) {
         CHECK(nk::strataNodesIn("Blur {\n size 3\n}\n").is_null());
     });
 
-    test("Nuke export: the Nuke panel knobs (Read, Transform, Reformat, Merge, Copy, Grade, Write, Node tab)", [] {
+    test(".nk export: the .nk panel knobs (Read, Transform, Reformat, Merge, Copy, Grade, Write, Node tab)", [] {
         json nodes = json::parse(R"([
             {"name": "Plate", "type": "Read", "params": {"file": "a.####.exr", "first": 1, "last": 10, "after": "loop",
                  "frame_mode": "start at", "frame": "1001", "origfirst": 1, "origlast": 10, "proxy": "p.####.exr",
@@ -556,7 +556,7 @@ int main(int argc, char** argv) {
         CHECK(has(" use_limit true\n first 3\n last 8\n"));
     });
 
-    test("Transform: Nuke's filters, downscale footprint, clamp, black outside, motion blur", [] {
+    test("Transform: the classic filters, downscale footprint, clamp, black outside, motion blur", [] {
         auto c = comp(json::array({
             {{"name", "K"}, {"type", "CheckerBoard"}, {"params", {{"size", 1}, {"color0", {0, 0, 0, 1}}, {"color1", {1, 1, 1, 1}}}}},
             {{"name", "Small"}, {"type", "Transform"}, {"inputs", {"K"}}, {"params", {{"scale", 0.25}, {"filter", "cubic"}}}},
@@ -597,7 +597,7 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(mb, 30, 20, "G"), 20, 1e-4);
     });
 
-    test("Read: Nuke's frame modes, before/after, missing frames, auto alpha", [&] {
+    test("Read: the classic frame modes, before/after, missing frames, auto alpha", [&] {
         auto dir = tmp / "readmodes";
         std::filesystem::remove_all(dir);
         std::filesystem::create_directories(dir);
@@ -734,7 +734,7 @@ int main(int argc, char** argv) {
         ml::setAppDir("");
     });
 
-    test("Merge: channel boxes off, Video colorspace, inject, fringe, range from; their Nuke knobs", [] {
+    test("Merge: channel boxes off, Video colorspace, inject, fringe, range from; their .nk knobs", [] {
         auto c = comp(json::array({
             {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.4, 0.6, 1}}}}},
             {{"name", "Fg"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 0.5}}}}},
@@ -768,7 +768,7 @@ int main(int argc, char** argv) {
         auto rB = nodeFrameRange(c2->find("M")), rA = nodeFrameRange(c2->find("MA"));
         CHECK(rB && rB->first == 100 && rB->second == 120);
         CHECK(rA && rA->first == 1 && rA->second == 5);
-        // Nuke's knob names
+        // the classic knob names
         std::string t = nk::exportNodes(json::parse(R"([{"name": "M", "type": "Merge", "params": {"Achannels_off": ["G"],
             "video_colorspace": true, "alpha_masking": true, "metadata_from": "A", "range_from": "A", "inject": true, "fringe": true}}])")).text;
         for (const char* want : {" Achannels {rgba.red -rgba.green rgba.blue rgba.alpha}\n", " sRGB true\n", " screen_alpha true\n",
@@ -960,6 +960,83 @@ int main(int argc, char** argv) {
         double d = 0;
         for (size_t i = 0; i < g->data.size(); ++i) d = std::max(d, (double)std::fabs(g->data[i] - g4->data[i]));
         CHECK_NEAR(d, 0.0, 0);
+    });
+
+    test("Erode: fractional sizes, round or square, grows with negative sizes, seamless across tiles", [] {
+        auto c = comp(json::array({
+            {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},
+            {{"name", "K"}, {"type", "Crop"}, {"inputs", {"C"}}, {"params", {{"box", {10, 10, 30, 30}}}}},
+            {{"name", "E2"}, {"type", "Erode"}, {"inputs", {"K"}}, {"params", {{"size", 2}, {"shape", "square"}}}},
+            {{"name", "E15"}, {"type", "Erode"}, {"inputs", {"K"}}, {"params", {{"size", 1.5}, {"shape", "square"}}}},
+            {{"name", "Gc"}, {"type", "Erode"}, {"inputs", {"K"}}, {"params", {{"size", -3}}}},
+            {{"name", "Gs"}, {"type", "Erode"}, {"inputs", {"K"}}, {"params", {{"size", -3}, {"shape", "square"}}}},
+            {{"name", "Eb"}, {"type", "Erode"}, {"inputs", {"K"}}, {"params", {{"size", 2}, {"blur", 4}}}},
+        }));
+        auto e = render(*c, "E2");
+        CHECK_NEAR(px(e, 12, 12, "A"), 1, 0);
+        CHECK_NEAR(px(e, 11, 20, "A"), 0, 0);
+        CHECK_NEAR(px(e, 11, 20, "R"), 1, 0);  // only the alpha by default
+        auto h = render(*c, "E15");
+        CHECK_NEAR(px(h, 11, 20, "A"), 0.5, 1e-6);
+        CHECK_NEAR(px(h, 12, 20, "A"), 1, 0);
+        auto gc = render(*c, "Gc"), gs = render(*c, "Gs");
+        CHECK_NEAR(px(gs, 32, 32, "A"), 1, 0);  // a square reaches the corner
+        CHECK_NEAR(px(gc, 32, 32, "A"), 0, 0);  // a disc doesn't
+        CHECK_NEAR(px(gc, 31, 31, "A"), 1, 0);
+        CHECK_NEAR(px(gc, 20, 32, "A"), 1, 0);
+        auto b = render(*c, "Eb");
+        CHECK(px(b, 12, 20, "A") > 0.05 && px(b, 12, 20, "A") < 0.95);  // softened edge
+        CHECK_NEAR(px(b, 20, 20, "A"), 1, 1e-3);
+        auto b4 = render(*c, "Eb", 1, 16);
+        double d = 0;
+        for (size_t i = 0; i < b->data.size(); ++i) d = std::max(d, (double)std::fabs(b->data[i] - b4->data[i]));
+        CHECK_NEAR(d, 0.0, 1e-5);
+    });
+
+    test("EdgeBlur: blurs along the alpha's edge only", [] {
+        auto c = comp(json::array({
+            {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {1, 0.5, 0.25, 1}}}}},
+            {{"name", "K"}, {"type", "Crop"}, {"inputs", {"C"}}, {"params", {{"box", {10, 10, 40, 40}}}}},
+            {{"name", "E"}, {"type", "EdgeBlur"}, {"inputs", {"K"}}, {"params", {{"size", 4}}}},
+        }), 64, 64);
+        auto e = render(*c, "E");
+        CHECK_NEAR(px(e, 25, 25, "R"), 1, 1e-6);  // the inside is untouched
+        const float edge = px(e, 10, 25, "A");
+        CHECK(edge > 0.2f && edge < 0.95f);  // the outline is soft
+        CHECK(px(e, 8, 25, "A") > 0.0f);     // and reaches out a little
+        CHECK_NEAR(px(e, 60, 60, "A"), 0, 0);
+        auto e16 = render(*c, "E", 1, 16);
+        double d = 0;
+        for (size_t i = 0; i < e->data.size(); ++i) d = std::max(d, (double)std::fabs(e->data[i] - e16->data[i]));
+        CHECK_NEAR(d, 0.0, 1e-5);
+    });
+
+    test("SplineWarp: the A curve's picture moves onto the B curve", [] {
+        auto rect = [](double x1, double y1, double x2, double y2) {
+            return json::array({{x1, y1, 0, 0, 0, 0, 0, 0}, {x2, y1, 0, 0, 0, 0, 0, 0}, {x2, y2, 0, 0, 0, 0, 0, 0}, {x1, y2, 0, 0, 0, 0, 0, 0}});
+        };
+        json shape = {{"name", "Bezier1"}, {"kind", "bezier"}, {"closed", true}, {"points", rect(40, 40, 60, 60)}, {"points_b", rect(52, 40, 72, 60)}};
+        auto c = comp(json::array({
+            {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},
+            {{"name", "K"}, {"type", "Crop"}, {"inputs", {"C"}}, {"params", {{"box", {40, 40, 60, 60}}}}},
+            {{"name", "W"}, {"type", "SplineWarp"}, {"inputs", {"K"}}, {"params", {{"shapes", json::array({shape})}}}},
+            {{"name", "W0"}, {"type", "SplineWarp"}, {"inputs", {"K"}}, {"params", {{"shapes", json::array({shape})}, {"mix", 0}}}},
+            {{"name", "WB"}, {"type", "SplineWarp"}, {"inputs", {"K"}},
+             {"params", {{"shapes", json::array({{{"name", "B"}, {"kind", "bezier"}, {"closed", true}, {"points", rect(52, 40, 72, 60)}, {"points_b", rect(40, 40, 60, 60)}}})},
+                         {"edit_b", true}}}},
+        }), 128, 100);
+        auto w = render(*c, "W");
+        CHECK(px(w, 68, 50, "A") > 0.9f);  // the box has moved right by 12
+        CHECK(px(w, 44, 50, "A") < 0.1f);
+        CHECK(px(w, 5, 5, "A") < 0.01f);
+        auto w0 = render(*c, "W0");
+        CHECK_NEAR(px(w0, 44, 50, "A"), 1, 1e-4);
+        auto wb = render(*c, "WB");  // the same pair stored the other way round (editing B)
+        CHECK_NEAR(px(wb, 68, 50, "A"), px(w, 68, 50, "A"), 1e-5);
+        auto w16 = render(*c, "W", 1, 16);
+        double d = 0;
+        for (size_t i = 0; i < w->data.size(); ++i) d = std::max(d, (double)std::fabs(w->data[i] - w16->data[i]));
+        CHECK_NEAR(d, 0.0, 1e-4);
     });
 
     test("cache respects its byte budget", [] {
@@ -2322,7 +2399,7 @@ int main(int argc, char** argv) {
         CHECK(std::fabs(ar - 48.5 / W) < 0.03);
         CHECK(std::fabs(wh - 0.5) < 0.03);
         CHECK(std::fabs(direct - 32.5 / W) < 0.03);
-        // Nuke export: the driven knob as a plain value (it doesn't move) / a curve (it does)
+        // .nk export: the driven knob as a plain value (it doesn't move) / a curve (it does)
         {
             auto nk = nk::exportComp(*c);
             const size_t at = nk.text.find("Transform {\n name T");
@@ -2499,7 +2576,7 @@ int main(int argc, char** argv) {
             cam3d::M3 d = cam->R.transposed() * k->R;
             CHECK_NEAR(d.m[0][0] + d.m[1][1] + d.m[2][2], 3, 1e-6);
         }
-        std::string nk = camexport::nukeCamera(s, "Cam"), ch = camexport::chan(s), py = camexport::blender(s, "Cam", 24);
+        std::string nk = camexport::nkCamera(s, "Cam"), ch = camexport::chan(s), py = camexport::blender(s, "Cam", 24);
         CHECK(nk.find("Camera2 {") != std::string::npos && nk.find("{curve x1 ") != std::string::npos);
         CHECK(std::count(ch.begin(), ch.end(), '\n') == 40);
         CHECK(py.find("import bpy") != std::string::npos);

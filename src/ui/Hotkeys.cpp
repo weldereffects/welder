@@ -1,9 +1,9 @@
-// Keyboard shortcuts, following Nuke's default hotkeys.
+// Keyboard shortcuts, following the classic default hotkeys.
 //
-// Like Nuke, the panel under the mouse decides what a key does: B over the
+// As is standard, the panel under the mouse decides what a key does: B over the
 // node graph inserts a Blur, B over the viewer shows the blue channel.
 // shortcuts() is the reference table shown in Help > Keyboard Shortcuts; keys
-// Nuke has for features Welder doesn't have yet are listed as unavailable and
+// the .nk format has for features Welder doesn't have yet are listed as unavailable and
 // say so in the status bar when pressed, instead of doing something else.
 #include <cstdlib>
 #include <algorithm>
@@ -54,7 +54,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Node Graph", "Ctrl+G", "group the selected nodes", true},
         {"Node Graph", "Ctrl+Alt+G", "expand the selected group", true},
         {"Node Graph", "Ctrl+Enter", "open the selected group (nothing selected: up a level)", true},
-        {"Node Graph", "Ctrl+V", "paste nodes (also nodes copied in Nuke)", true},
+        {"Node Graph", "Ctrl+V", "paste nodes (also nodes copied in another .nk app)", true},
         {"Node Graph", "I", "info about the selected node", true},
         {"Node Graph", "S", "project settings", true},
         {"Node Graph", "F", "fit selected nodes (or all) in the panel", true},
@@ -88,7 +88,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Viewer", "+ / -", "zoom in / out", true},
         {"Viewer", "Ctrl+1-9, Ctrl+0 / Alt+1-9, Alt+0", "zoom presets", true},
         {"Viewer", ", / .", "gain down / up", true},
-        {"Viewer", "Q", "show / hide overlays", true},
+        {"Viewer", "Q", "show / hide all overlays: roto shapes, transform handles, trackers, format and bbox", true},
         {"Viewer", "S", "viewer settings", true},
         {"Viewer", "P", "pause updates", true},
         {"Viewer", "U", "update once while paused", true},
@@ -106,7 +106,6 @@ const std::vector<Shortcut>& shortcuts() {
         {"Viewer", "Alt+W", "region of interest", false},
         {"Viewer", "Ctrl+click", "sample a pixel (the readout follows the mouse already)", false},
         // ---- Roto (over the viewer while a Roto node's properties are open)
-        {"Roto", "Q", "select tool (overlays toggle is unavailable while a Roto is open)", true},
         {"Roto", "V", "draw tools: Bezier, B-spline, Ellipse, Rectangle (cycle)", true},
         {"Roto", "N / C / X", "RotoPaint: brush, eraser / clone, reveal / blur", true},
         {"Roto", "drag, Shift+drag", "paint tools: paint / resize the brush", true},
@@ -117,6 +116,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Roto", "Backspace / Esc", "while drawing: remove the last point / cancel", true},
         {"Roto", "Shift+drag", "Ellipse / Rectangle: circle / square", true},
         {"Roto", "drag a point / tangent", "move it (Ctrl breaks the tangent)", true},
+        {"Roto", "Ctrl+drag a point", "pull out that point's own feather", true},
         {"Roto", "click a curve or inside a shape", "select the shape (drag to move it)", true},
         {"Roto", "Ctrl+Alt+click on a curve", "insert a point", true},
         {"Roto", "Z / Shift+Z", "smooth / cusp the selected points", true},
@@ -270,7 +270,7 @@ void handleHotkeys(App& app, UiState& ui) {
         if (!app.save(app.compPath, &err) || !app.save(next, &err)) app.message("error: " + err);
         return;
     }
-    for (int i = 0; i < 10; ++i)  // Alt+Shift+1..9, 0: the recent scripts (Nuke's keys)
+    for (int i = 0; i < 10; ++i)  // Alt+Shift+1..9, 0: the recent scripts (the classic keys)
         if (key((ImGuiKey)(ImGuiKey_0 + (i + 1) % 10), false, true, true)) {
             if (i < (int)app.recentFiles.size()) ui.dropOpenComp = app.recentFiles[i];  // asks about unsaved changes
             return;

@@ -28,7 +28,7 @@ A comp is a JSON file (`.strata`, the older extension, is the same format and st
 }
 ```
 
-* `project` holds the Project Settings (Nuke's Root node). All keys are optional.
+* `project` holds the Project Settings (the classic Root node). All keys are optional.
   `project_directory`, when set, is where relative Read/Write paths resolve
   (itself relative to the comp's folder). `in_out` is the timeline's in/out
   range, used for playback and as the default render range. `timeline.range` is
@@ -64,7 +64,7 @@ A comp is a JSON file (`.strata`, the older extension, is the same format and st
 
 ### Expressions
 
-A safe subset of Nuke's expression language (nothing in it can read files, run
+A safe subset of the classic expression language (nothing in it can read files, run
 commands or loop forever):
 
 * numbers, `+ - * / %`, `**` (power), `== != < <= > >= && || !`, `a ? b : c`
@@ -161,7 +161,7 @@ Strokes can have a `transform` and `life` like shapes.
 | Node | Inputs | Params |
 |---|---|---|
 | Merge | B, A, mask, A2, A3… | `operation`, `video_colorspace` (the operation on sRGB-encoded colour), `alpha_masking`, `bbox` (`union`, `A`, `B`, `intersection`), `metadata_from` / `range_from` (`B`, `A`: which input's metadata and frame range pass on), `Achannels`/`Bchannels` (the layer used as rgba, default `rgba`) with `Achannels_off`/`Bchannels_off` (channels switched off: `["G"]`, read as black), `channels` (output, default `rgba`), `also_merge` (more layers from A, default `none`), `inject` (the mask into `mask.a`), `mix` |
-| Copy | B, A, mask | `from` [...], `to` [...] (channel pairs), `layer_copy` (whole layers from A, Nuke's `channels`), `bbox` |
+| Copy | B, A, mask | `from` [...], `to` [...] (channel pairs), `layer_copy` (whole layers from A, the classic `channels`), `bbox` |
 | Switch | any | `which` |
 | Dissolve | any | `which` (fractional values blend) |
 
@@ -193,7 +193,7 @@ The OCIO nodes also take `unpremult` and `mix`.
 ### Transform
 | Node | Params |
 |---|---|
-| Transform | `translate`, `rotate` (degrees, CCW), `scale` (one value or [w, h]), `skewX`, `skewY`, `skew_order` (`XY`, `YX`; older `skew` [x, y] still reads), `center` (default: format centre), `invert`, `filter` (Nuke's: `impulse`, `cubic`, `keys`, `simon`, `rifman`, `mitchell`, `parzen`, `notch`, `lanczos4`, `lanczos6`, `sinc4`; plus `bilinear`; the kernel widens when shrinking so downscales don't alias), `clamp` (no overshoot from sharpening filters), `black_outside` (default on), `motionblur` (0 = off; quality), `shutter` (frames), `shutteroffset` (`start`, `centred`, `end`, `custom` with `shuttercustomoffset`) |
+| Transform | `translate`, `rotate` (degrees, CCW), `scale` (one value or [w, h]), `skewX`, `skewY`, `skew_order` (`XY`, `YX`; older `skew` [x, y] still reads), `center` (default: format centre), `invert`, `filter` (the classic: `impulse`, `cubic`, `keys`, `simon`, `rifman`, `mitchell`, `parzen`, `notch`, `lanczos4`, `lanczos6`, `sinc4`; plus `bilinear`; the kernel widens when shrinking so downscales don't alias), `clamp` (no overshoot from sharpening filters), `black_outside` (default on), `motionblur` (0 = off; quality), `shutter` (frames), `shutteroffset` (`start`, `centred`, `end`, `custom` with `shuttercustomoffset`) |
 | Position | `translate` |
 | Reformat | `type` (`to format` with `format` [w, h]; `to box` with `box_width`, `box_height`, `box_fixed`; `scale` with `scale`), `resize` (`none`, `width`, `height`, `fit`, `fill`, `distort`), `center`, `flip`, `flop`, `turn` (rotate 90°), `black_outside`, `pbb` (preserve bounding box), `filter`, `clamp` |
 | Crop | `box` [x, y, r, t], `reformat`, `softness` |
@@ -235,9 +235,9 @@ applies the homography to the input; stabilize applies its inverse.
 ### Filter
 | Node | Params |
 |---|---|
-| Blur | `size` [x, y], `filter` (`box`, `triangle`, `quadratic`, `gaussian`), `quality` (15: blurs larger than this many pixels are computed at reduced resolution, like Nuke's; 0 = always full), `channels` (default `all`), `crop` |
+| Blur | `size` [x, y], `filter` (`box`, `triangle`, `quadratic`, `gaussian`), `quality` (15: blurs larger than this many pixels are computed at reduced resolution, as is standard; 0 = always full), `channels` (default `all`), `crop` |
 | Sharpen | `amount`, `size`, `channels` (default `rgb`) |
-| ZDefocus | input, filter (an image for `filter_type` image), mask. `depth` (channel, `depth.Z`), `math` (`1/z`: Welder / Nuke depth.Z; `z`: distance; `direct`: blur size per pixel), `focus_plane` (distance), `use_focus_point` + `focus_point` [x, y] (focus on what's there), `depth_of_field`, `size` (blur at infinity, px), `maximum` (px), `layers` (16), `output` (`result`, `focal plane setup`, `coc`), `filter_type` (`disc`, `bladed`, `gaussian`, `image`), `blades`, `rotation`, `aspect`, `highlight_threshold` / `highlight_gain` (bright pixels bloom into bokeh), `quality` (12: larger kernels run at reduced resolution), `mix`. Blur = size x \|1 - focus / distance\| |
+| ZDefocus | input, filter (an image for `filter_type` image), mask. `depth` (channel, `depth.Z`), `math` (`1/z`: Welder's depth.Z; `z`: distance; `direct`: blur size per pixel), `focus_plane` (distance), `use_focus_point` + `focus_point` [x, y] (focus on what's there), `depth_of_field`, `size` (blur at infinity, px), `maximum` (px), `layers` (16), `output` (`result`, `focal plane setup`, `coc`), `filter_type` (`disc`, `bladed`, `gaussian`, `image`), `blades`, `rotation`, `aspect`, `highlight_threshold` / `highlight_gain` (bright pixels bloom into bokeh), `quality` (12: larger kernels run at reduced resolution), `mix`. Blur = size x \|1 - focus / distance\| |
 | Defocus | input, filter, mask. `defocus` (px) and the bokeh knobs above |
 | VectorBlur | input, vectors (optional; else the input's channels), mask. `uv` (`forward.u,forward.v`: pixels to the next frame), `shutter` (frames, 0.5), `offset` (`centred`, `start`, `end`), `samples` (16), `max_length` (px), `depth` / `depth_math` (optional, for occlusion), `invert`, `channels` (rgba), `mix` |
 | Glow | input, mask. `tolerance` (0.8: luminance above it glows), `brightness` [r, g, b], `saturation`, `size` (20 px), `effect_only`, `crop` (to the format), `mix`. Large glows blur at reduced resolution. |
@@ -285,11 +285,11 @@ group and its contents, as in a comp.
 ### 3D and camera tracking
 | Node | Params |
 |---|---|
-| Camera | `translate` [x, y, z], `rotate` [x, y, z] (degrees), `rot_order` (`ZXY`; `XYZ` = X first), `focal` (mm, 50), `haperture` / `vaperture` (film back, mm), `near`. Looks down -Z with +Y up, like Nuke's. No image of its own. |
+| Camera | `translate` [x, y, z], `rotate` [x, y, z] (degrees), `rot_order` (`ZXY`; `XYZ` = X first), `focal` (mm, 50), `haperture` / `vaperture` (film back, mm), `near`. Looks down -Z with +Y up, as is standard. No image of its own. |
 | Card3D | inputs: img, cam (a Camera or a solved CameraTracker; default a 50 mm camera at the origin). `translate`, `rotate`, `scaling` [x, y, z], `uniform_scale`, `pivot`, `rot_order`, `lens_in_focal` (50), `lens_in_haperture` (24.576), `filter`. The card sits at z = -1 in its own space, `lens_in_haperture / lens_in_focal` units wide, so the defaults leave the image unchanged. Minified areas are supersampled. |
 | CameraTracker | inputs: Source, Mask. `lens_mode` (`none`, `known`, `k1`, `k1k2`: solve radial distortion with the camera), `k1` / `k2` (known values), `features` (300), `quality` (0.01), `mask` (`none`, `mask alpha`, `mask inverted`, `source alpha`, `source inverted`), `range` (`input`, `custom`), `first` / `last`, `focal_mode` (`unknown`, `approximate`, `known`), `focal` (mm), `haperture` (mm), `min_length` (8), `threshold` (px, 0 = automatic), `tracks`, `tracks_id`, `solve`, `scene` (below). Passes Source through; provides the solved camera to Card3D. |
 
-3D scene nodes (Nuke's conventions: +Y up, cameras look down -Z, transforms scale-rotate-translate about the pivot, degrees). All take the transform params `translate`, `rotate`, `scaling` [x, y, z], `uniform_scale`, `pivot`, `rot_order`:
+3D scene nodes (the classic conventions: +Y up, cameras look down -Z, transforms scale-rotate-translate about the pivot, degrees). All take the transform params `translate`, `rotate`, `scaling` [x, y, z], `uniform_scale`, `pivot`, `rot_order`:
 
 | Node | Params |
 |---|---|

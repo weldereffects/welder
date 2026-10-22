@@ -50,7 +50,7 @@ KnobDef When(KnobDef k, const char* cond) {
     k.when = cond;
     return k;
 }
-// layout modifiers (Nuke's panels)
+// layout modifiers (the classic panels)
 KnobDef OnTab(KnobDef k, const char* tab) {
     k.tab = tab;
     return k;
@@ -158,7 +158,7 @@ std::vector<KnobDef> retimeKnobs(bool rife) {
 }
 
 std::vector<KnobDef> maskKnobs() {
-    // Nuke's bottom rows: mask [channel] invert, (un)premult by [channel] invert, mix
+    // the classic bottom rows: mask [channel] invert, (un)premult by [channel] invert, mix
     return {Div(""), Width(S("mask_channel", "mask", "A"), 110), Same(B("invert_mask", "invert", false)),
             Same(B("fringe", "fringe", false)), F("mix", "mix", 1.0, 0, 1)};
 }
@@ -493,7 +493,7 @@ std::vector<NodeDef> build() {
     d.push_back({"VectorGenerator", "Time",
                  {F("vector_detail", "vector detail", 0.3, 0.05, 1, "Resolution of the flow (1 = every pixel; lower is faster and smoother)"),
                   F("smoothness", "smoothness", 0.5, 0, 1), Tip(B("flicker", "flicker / lighting changes", false), "Match on gradients, not brightness: for flickering or changing light")},
-                 "Motion vectors from optical flow, like Nuke's VectorGenerator: forward.u / .v (where each pixel goes on the next frame) and "
+                 "Motion vectors from optical flow, like the classic VectorGenerator: forward.u / .v (where each pixel goes on the next frame) and "
                  "backward.u / .v (the previous frame), in pixels per frame. For VectorBlur, IDistort, FlowMap (advect) or export in an EXR."});
     d.push_back({"FlowField", "Draw",
                  {C("base", "flow", "noise", {"none", "noise", "direction", "vortex", "image contours", "image slope"}),
@@ -725,6 +725,13 @@ std::vector<NodeDef> build() {
                  "Earlier frames trail behind the current one, each weaker by the falloff."});
     // ---------------------------------------------------------------- Draw
     d.push_back({"Roto", "Draw", {}, "Bezier, B-spline, ellipse and rectangle shapes, drawn in the viewer."});
+    d.push_back({"SplineWarp", "Transform",
+                 {F("mix", "mix", 1, 0, 1, "0: no warp, 1: the A curves all the way onto the B curves"),
+                  B("invert", "invert (B onto A)", false),
+                  Width(C("boundary", "boundary", "pin edges", {"pin edges", "free"}), 110),
+                  Width(C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic", "lanczos4"}), 110)},
+                 "Bends the image so source curves (A) land on destination curves (B). Draw curves with the roto tools; "
+                 "switch the panel between A and B to shape each."});
     d.push_back({"RotoPaint", "Draw", {}, "Shapes plus paint strokes: brush, eraser, clone, reveal, blur."});
     // ---------------------------------------------------------------- Keyer
     const char* pickTip = "Press pick, then click (or drag a box) over the screen in the viewer: samples this node's input.";
@@ -871,6 +878,17 @@ std::vector<NodeDef> build() {
                  withMask({Ch("channels", "channels", "rgb"), F("amount", "amount", 1, 0, 5), XY("size", "size", json::array({3, 3}), 0, 50)}),
                  ""});
     d.push_back({"Dilate", "Filter", {Ch("channels", "channels", "all"), I("size", "size", 0, -50, 50)}, "Positive grows, negative erodes."});
+    d.push_back({"Erode", "Filter",
+                 withMask({Ch("channels", "channels", "alpha"),
+                           F("size", "size", 1, -50, 50, "Pixels to shrink the matte by (fractions work); negative grows it"),
+                           Width(C("shape", "shape", "circle", {"circle", "square"}), 100),
+                           F("blur", "blur", 0, 0, 50, "Softens the result (px)")}),
+                 "Erode / dilate: shrinks (positive size) or grows (negative) the chosen channels, smoothly by fractions of a pixel."});
+    d.push_back({"EdgeBlur", "Filter",
+                 withMask({Ch("channels", "channels", "all"), F("size", "size", 3, 0, 100, "The blur along the edges (px)"),
+                           F("edge_mult", "edge mult", 2, 0, 10, "How wide the band around the edges is, in sizes"),
+                           Width(S("edge_matte", "edge matte", "A"), 110)}),
+                 "Blurs only along a matte's edges (the image's alpha, or the matte input's), softening a hard outline."});
     // ---------------------------------------------------------------- Merge
     d.push_back({"Merge", "Merge",
                  {Width(C("operation", "operation", "over", kMergeOps), 140),

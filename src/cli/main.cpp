@@ -3,7 +3,7 @@
 //   welder render <comp.weld> [-f 1-100] [-w Write1,Write2] [-t threads] [--cache-mb N] [-v]
 //   welder node   <comp.weld> <NodeName> -o out.exr [-f frame]
 //   welder info   <comp.weld>
-//   welder nk     <comp.weld> [-o shot.nk]       (a Nuke script)
+//   welder nk     <comp.weld> [-o shot.nk]       (a .nk script)
 //   strata types
 //   strata ofx-list [plugin paths...]
 #include <chrono>
@@ -21,7 +21,7 @@
 #include "../core/Platform.h"
 #include "../core/Engine.h"
 #include "../core/FrameList.h"
-#include "../core/NukeExport.h"
+#include "../core/NkExport.h"
 #include "../io/ImageIO.h"
 #include "../ofx/OfxHost.h"
 
@@ -35,7 +35,7 @@ void usage() {
                  "  welder render <comp.weld> [-f 1-100|1-100x2|1,5,9] [-w Write1,..] [-t threads] [--cache-mb N] [--scale 0.5] [-c] [-v] [--no-gpu]\n"
                  "  welder node   <comp.weld> <NodeName> -o out.(exr|dpx|tif|png|jpg) [-f frame]\n"
                  "  welder info   <comp.weld>\n"
-                 "  welder nk     <comp.weld> [-o shot.nk]   (export to a Nuke script)\n"
+                 "  welder nk     <comp.weld> [-o shot.nk]   (export to a .nk script)\n"
                  "  welder bench  <comp.weld> <Node> [EditedNode] [-f frame]\n"
                  "  strata types\n"
                  "  strata ofx-list [dir ...]   (also searches $OFX_PLUGIN_PATH)\n";
@@ -259,7 +259,7 @@ int cmdNk(const Args& a) {
     std::ofstream f(out, std::ios::binary);
     if (!f) { std::cerr << "cannot write " << out << "\n"; return 1; }
     f << r.text;
-    std::printf("%s -> %s: %d nodes, %d without a Nuke equivalent (NoOps)\n", a.pos[0].c_str(), out.c_str(), r.nodes, r.placeholders);
+    std::printf("%s -> %s: %d nodes, %d without a .nk equivalent (NoOps)\n", a.pos[0].c_str(), out.c_str(), r.nodes, r.placeholders);
     for (auto& w : r.warnings) std::printf("  %s\n", w.c_str());
     return 0;
 }

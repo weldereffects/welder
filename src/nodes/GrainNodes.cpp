@@ -1,5 +1,5 @@
 // CADGrain: semi-automatic regraining (the approach of Fabian Holtz's DasGrain
-// for Nuke, written from scratch for Welder).
+// for .nk apps, written from scratch for Welder).
 //
 // Inputs: comp (the degrained comp), plate (the original, grainy plate),
 // degrain (the plate, degrained: what the comp was built on), mask (optional:

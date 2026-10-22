@@ -1,6 +1,8 @@
-// Spatial filters: Blur, Sharpen, Dilate.
+// Spatial filters: Blur, Sharpen, Dilate, Erode, EdgeBlur.
 #include <cmath>
+#include <algorithm>
 #include <cstring>
+#include <limits>
 
 #include <map>
 
@@ -14,7 +16,7 @@ namespace {
 
 // Build a normalized 1D kernel for the given blur size (pixels).
 // size is treated as the full width at half maximum of the Gaussian;
-// TODO: calibrate against Nuke's Blur so imported scripts match exactly.
+// TODO: calibrate against the classic Blur so imported scripts match exactly.
 std::vector<float> kernel1D(double size, const std::string& type) {
     if (size <= 0.0) return {1.0f};
     std::vector<float> k;
@@ -29,7 +31,7 @@ std::vector<float> kernel1D(double size, const std::string& type) {
         double hw = size / 2.0;
         int r = (int)std::ceil(hw);
         for (int i = -r; i <= r; ++i) k.push_back((float)std::max(0.0, 1.0 - std::abs(i) / (hw + 1e-9)));
-    } else if (type == "quadratic") {  // Nuke's quadratic: a B-spline bump
+    } else if (type == "quadratic") {  // the classic quadratic: a B-spline bump
         double hw = size / 2.0;
         int r = (int)std::ceil(hw);
         for (int i = -r; i <= r; ++i) {
@@ -197,7 +199,7 @@ void convolve(const Image& src, Image& out, const Blur1D& bx, const Blur1D& by, 
 
 // How a blur is computed at a given render scale. Large blurs run on a
 // box-filtered copy (factor f) and are scaled back up with bilinear filtering,
-// like Nuke's Blur "quality" knob: blurs bigger than `quality` pixels are done
+// like the classic Blur "quality" knob: blurs bigger than `quality` pixels are done
 // at reduced resolution, which is visually equivalent and far cheaper.
 struct BlurPlan {
     int f = 1;          // reduction factor (1 = full resolution)
@@ -425,6 +427,177 @@ public:
     }
 };
 
+// The running min (grow = false) or max of `ch` of `src` over a square (or disc) of radius r
+// around each pixel of `target`; src must cover target padded by r. Row-major, target-sized.
+std::vector<float> extremeOf(const Image& src, int ch, const Box& target, int r, bool grow, bool disc) {
+    const int W = target.width(), H = target.height();
+    std::vector<float> out((size_t)W * H);
+    if (W <= 0 || H <= 0) return out;
+    const int LW = W + 2 * r, TH = H + 2 * r, sn = src.nch();
+    std::vector<float> line(LW), g, hb;
+    auto rowsAt = [&](int w) {  // every source row's running extreme at half-width w
+        std::vector<float> rows((size_t)TH * W);
+        for (int j = 0; j < TH; ++j) {
+            const float* sp = src.px(target.x1 - r, target.y1 - r + j);
+            for (int x = 0; x < LW; ++x, sp += sn) line[x] = sp[ch];
+            runningExtreme(line.data() + (r - w), &rows[(size_t)j * W], W, 1, w, grow, g, hb);
+        }
+        return rows;
+    };
+    if (r == 0) {
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) out[(size_t)y * W + x] = src.px(target.x1 + x, target.y1 + y)[ch];
+        return out;
+    }
+    if (!disc) {
+        std::vector<float> rows = rowsAt(r);
+        runningExtreme(rows.data(), out.data(), H, W, r, grow, g, hb);
+        return out;
+    }
+    // a disc: each row offset dy takes the row extreme over its chord's half-width
+    std::map<int, std::vector<float>> byWidth;
+    std::fill(out.begin(), out.end(), grow ? -std::numeric_limits<float>::infinity() : std::numeric_limits<float>::infinity());
+    for (int dy = -r; dy <= r; ++dy) {
+        const int w = (int)std::floor(std::sqrt((double)r * r - (double)dy * dy) + 1e-6);
+        auto it = byWidth.find(w);
+        if (it == byWidth.end()) it = byWidth.emplace(w, rowsAt(w)).first;
+        const std::vector<float>& rows = it->second;
+        for (int y = 0; y < H; ++y) {
+            const float* rp = &rows[(size_t)(y + r + dy) * W];
+            float* o = &out[(size_t)y * W];
+            for (int x = 0; x < W; ++x) o[x] = grow ? std::max(o[x], rp[x]) : std::min(o[x], rp[x]);
+        }
+    }
+    return out;
+}
+
+// Erode: shrinks (size > 0) or grows (size < 0) the chosen channels by a fractional number of
+// pixels, with a square or round footprint, then softens the result by `blur`.
+class ErodeNode : public Node {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 1 ? "mask" : ""; }
+    double amount(double f, double sc) const { return params.num("size", f, 1) * sc; }
+    double softness(double f, double sc) const { return std::max(0.0, params.num("blur", f, 0) * sc); }
+    int reach(double f, double sc) const { return (int)std::ceil(std::fabs(amount(f, sc))) + (int)std::ceil(softness(f, sc) * 1.5) + 1; }
+    int identityInput(double f) override { return params.num("size", f, 1) == 0 && params.num("blur", f, 0) <= 0 ? 0 : -1; }
+    Box dod(Engine& e, double f) override {
+        Box b = e.dod(input(0), f);
+        return amount(f, e.scale()) < 0 || softness(f, e.scale()) > 0 ? b.pad(reach(f, e.scale()), reach(f, e.scale())) : b;
+    }
+    Box roi(Engine& e, int idx, const Box& req, double f) override {
+        if (idx == 1) return req;
+        const int p = reach(f, e.scale());
+        return req.pad(p, p);
+    }
+    void render(RenderArgs& a, Image& out) override {
+        const double sc = a.engine.scale(), s = amount(a.frame, sc), soft = softness(a.frame, sc);
+        const bool grow = s < 0, disc = params.str("shape", "circle") == "circle";
+        const double mag = std::fabs(s);
+        const int r0 = (int)std::floor(mag), r1 = r0 + 1;
+        const double t = mag - r0;
+        const int bp = soft > 0 ? (int)std::ceil(soft * 1.5) + 1 : 0;
+        const Box R = a.region, RR = R.pad(bp, bp);
+        ImagePtr src = a.fetch(input(0), RR.pad(r1, r1));
+        out.copyFrom(*src);
+        ChannelSet sel = parseChannels(params, "channels", "alpha", out.channels);
+        // the eroded channels over RR, then (with blur) softened down to R
+        Image er(RR, out.channels);
+        er.copyFrom(*src);
+        std::vector<int> idx;
+        for (auto& cn : sel) {
+            const int oc = out.ch(cn), sc2 = src->ch(cn);
+            if (oc < 0 || sc2 < 0) continue;
+            idx.push_back(oc);
+            std::vector<float> e0 = extremeOf(*src, sc2, RR, r0, grow, disc), e1;
+            if (t > 1e-6) e1 = extremeOf(*src, sc2, RR, r1, grow, disc);
+            const int W = RR.width(), n = er.nch();
+            for (int y = 0; y < RR.height(); ++y) {
+                float* o = er.row(RR.y1 + y);
+                for (int x = 0; x < W; ++x) {
+                    float v = e0[(size_t)y * W + x];
+                    if (!e1.empty()) v = lerpf(v, e1[(size_t)y * W + x], (float)t);
+                    o[(size_t)x * n + oc] = v;
+                }
+            }
+        }
+        Image res(R, out.channels);
+        res.copyFrom(er);
+        if (soft > 0 && !idx.empty()) blurSum(er, res, {BlurTerm{soft, soft, 1}}, idx);
+        MaskMix mm = MaskMix::setup(a, this, 1);
+        for (int y = R.y1; y < R.y2; ++y)
+            for (int x = R.x1; x < R.x2; ++x) {
+                float* o = out.px(x, y);
+                const float* v = res.px(x, y);
+                const float w = mm.active() ? mm.weight(x, y) : 1.0f;
+                for (int i : idx) o[i] = lerpf(o[i], v[i], w);
+            }
+    }
+};
+
+// EdgeBlur: blurs the image only along the edges of a matte (by default the image's own
+// alpha) - softening a hard cut-out's outline without touching its inside.
+//   size: the blur (px); edge_mult: how wide the edge band is, in sizes; edge_matte: the
+//   channel whose edges count; mix / mask as usual.
+class EdgeBlurNode : public Node {
+public:
+    int maxInputs() const override { return 3; }
+    std::string inputLabel(int i) const override { return i == 1 ? "matte" : i == 2 ? "mask" : ""; }
+    double size(double f, double sc) const { return std::max(0.0, params.num("size", f, 3) * sc); }
+    int band(double f, double sc) const { return (int)std::ceil(size(f, sc) * std::max(0.0, params.num("edge_mult", f, 2)) * 0.5); }
+    int pad(double f, double sc) const { return (int)std::ceil(size(f, sc) * 1.5) + band(f, sc) + 2; }
+    int identityInput(double f) override { return params.num("size", f, 3) <= 0 ? 0 : -1; }
+    Box dod(Engine& e, double f) override {
+        const int p = (int)std::ceil(size(f, e.scale()) * 1.5) + 1;  // the softened outline reaches out a little
+        return e.dod(input(0), f).pad(p, p);
+    }
+    Box roi(Engine& e, int idx, const Box& req, double f) override {
+        if (idx == 2) return req;
+        const int p = pad(f, e.scale());
+        return req.pad(p, p);
+    }
+    void render(RenderArgs& a, Image& out) override {
+        const double sc = a.engine.scale(), sz = size(a.frame, sc);
+        const int eb = band(a.frame, sc), P = pad(a.frame, sc);
+        const Box R = a.region;
+        ImagePtr src = a.fetch(input(0), R.pad(P, P));
+        out.copyFrom(*src);
+        if (sz <= 0) return;
+        ImagePtr matteImg = input(1) ? a.fetch(input(1), R.pad(P, P)) : src;
+        const int mc = matteImg->ch(params.str("edge_matte", "A"));
+        if (mc < 0) throw RenderError(name + ": no " + params.str("edge_matte", "A") + " channel for the edges");
+        // the edge band: where the matte changes within `eb` pixels (max - min), softened by size / 2
+        const int bp = (int)std::ceil(sz * 0.75) + 1;
+        const Box E = R.pad(bp, bp);
+        std::vector<float> hi = extremeOf(*matteImg, mc, E, eb, true, true), lo = extremeOf(*matteImg, mc, E, eb, false, true);
+        Image edge(E, ChannelSet{"A"});
+        for (int y = 0; y < E.height(); ++y)
+            for (int x = 0; x < E.width(); ++x) {
+                const size_t k = (size_t)y * E.width() + x;
+                edge.px(E.x1 + x, E.y1 + y)[0] = std::clamp(hi[k] - lo[k], 0.0f, 1.0f);
+            }
+        Image soft(R, ChannelSet{"A"});
+        blurSum(edge, soft, {BlurTerm{sz * 0.5, sz * 0.5, 1}}, {0});
+        // the blurred picture
+        ChannelSet sel = parseChannels(params, "channels", "all", out.channels);
+        std::vector<int> idx;
+        for (auto& cn : sel)
+            if (out.ch(cn) >= 0) idx.push_back(out.ch(cn));
+        Image blurred(R, out.channels);
+        blurSum(*src, blurred, {BlurTerm{sz, sz, 1}}, idx);
+        MaskMix mm = MaskMix::setup(a, this, 2);
+        for (int y = R.y1; y < R.y2; ++y)
+            for (int x = R.x1; x < R.x2; ++x) {
+                float w = std::clamp(soft.px(x, y)[0] * 1.5f, 0.0f, 1.0f);
+                if (mm.active()) w *= mm.weight(x, y);
+                if (w <= 0) continue;
+                float* o = out.px(x, y);
+                const float* b = blurred.px(x, y);
+                for (int i : idx) o[i] = lerpf(o[i], b[i], w);
+            }
+    }
+};
+
 }  // namespace
 
 void blurSum(const Image& src, Image& out, const std::vector<BlurTerm>& terms, const std::vector<int>& idx, double quality) {
@@ -487,6 +660,8 @@ void registerFilterNodes() {
     r.add("Blur", [] { return std::make_unique<BlurNode>(); });
     r.add("Sharpen", [] { return std::make_unique<SharpenNode>(); });
     r.add("Dilate", [] { return std::make_unique<DilateNode>(); });
+    r.add("Erode", [] { return std::make_unique<ErodeNode>(); });
+    r.add("EdgeBlur", [] { return std::make_unique<EdgeBlurNode>(); });
 }
 
 }  // namespace strata

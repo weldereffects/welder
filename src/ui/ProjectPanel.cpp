@@ -1,4 +1,4 @@
-// Project Settings panel (Nuke's Root node): frame range, fps, format, proxy,
+// Project Settings panel (the classic Root node): frame range, fps, format, proxy,
 // project directory. Opened with S over the node graph or Edit > Project Settings.
 #include <cmath>
 #include <cstring>
@@ -10,7 +10,7 @@
 namespace strata::ui {
 
 const std::vector<NamedFormat>& namedFormats() {
-    // Nuke's standard format names, so imported scripts and muscle memory line up.
+    // the classic standard format names, so imported scripts and muscle memory line up.
     static const std::vector<NamedFormat> v = {
         {"HD_1080", 1920, 1080, 1.0},        {"HD_720", 1280, 720, 1.0},
         {"UHD_4K", 3840, 2160, 1.0},         {"2K_DCP", 2048, 1080, 1.0},
@@ -257,7 +257,7 @@ void drawProjectPanel(App& app, UiState& ui, bool* keepOpen) {
         };
         spaceCombo("working space", "##work", c.project.workingSpace,
                    [&](const std::string& v) { projectEdit(app, [v](Comp& cc) { cc.project.workingSpace = v; }); },
-                   "The scene-linear space nodes compute in (Nuke's scene_linear role). ACEScg is the usual choice.");
+                   "The scene-linear space nodes compute in (the OCIO scene_linear role). ACEScg is the usual choice.");
         spaceCombo("8/16-bit files", "##int", c.project.integerSpace,
                    [&](const std::string& v) { projectEdit(app, [v](Comp& cc) { cc.project.integerSpace = v; }); },
                    "Default colour space of PNG / JPEG / TGA / BMP files (Read and Write 'default'). "

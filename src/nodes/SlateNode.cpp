@@ -1,6 +1,6 @@
 // Slate: a delivery slate over a held frame of the shot, laid out like a studio
-// slate-generator gizmo for Nuke. The art, vendor, show and artist default to the
-// studio's (studio.json, core/Studio.h); the Nuke gizmo it maps to is set there too.
+// slate-generator gizmo for .nk apps. The art, vendor, show and artist default to the
+// studio's (studio.json, core/Studio.h); the .nk gizmo it maps to is set there too.
 //
 // The slate is built at 3840 x 2160 (the gizmo's coordinates) and fitted to the input's
 // width, centred, as its Reformat to the input's resolution does:
@@ -11,7 +11,7 @@
 //     and the version big (80 px at 2274) - every position as in the gizmo's Text nodes;
 //   - a hole (367,806)-(1167,1454) cut out of the slate, where the thumbnail shows: the input
 //     at the thumbnail frame, scaled about its centre and moved by image location.
-// Outside the slate (a taller plate) its edge pixels carry on, as Nuke shows outside a bbox.
+// Outside the slate (a taller plate) its edge pixels carry on, as compositors show outside a bbox.
 //
 // filename: the script's name; version: the v### part of it; length: the input's frames,
 // counting the slate frame; date: today. Each can be typed over.
@@ -120,7 +120,7 @@ std::vector<int> utf8(const std::string& s) {
     return cps;
 }
 
-// Text as Nuke's Text node lays it out: `size` px (the em), `kerning` extra space per character as
+// Text as the classic Text node lays it out: `size` px (the em), `kerning` extra space per character as
 // a fraction of the size, left-justified at x; `yAnchor` is the box's vertical centre (center) or
 // top (top). wrap > 0: lines break at words to stay within that width. Drawn over `im` (RGBA),
 // in the canvas' pixels (y up); everything already multiplied by `sc` by the caller.

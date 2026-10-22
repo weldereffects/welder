@@ -137,7 +137,7 @@ void svd3(const M3& A, M3& U, V3& s, M3& V) {
 
 // ----------------------------------------------------------------- two views
 // Normalised image coordinates x = (u / f, v / f, 1), camera looking down +z
-// (computer-vision convention; converted to Nuke's at the end).
+// (computer-vision convention; converted to the .nk at the end).
 
 bool eightPoint(const std::vector<V2>& a, const std::vector<V2>& b, const std::vector<int>& idx, M3& E) {
     double AtA[81] = {0};
@@ -1206,7 +1206,7 @@ Solution solve(const std::vector<Track>& tracks, int W, int H, const Options& o)
     }
     out.lens = pb.lens;
     out.focal = best.f / W * o.haperture;
-    const M3 D = M3::diag(1, -1, -1);  // computer-vision camera -> Nuke camera (180 degrees about X)
+    const M3 D = M3::diag(1, -1, -1);  // computer-vision camera -> .nk camera (180 degrees about X)
     for (auto& [fr, P] : best.poses) {
         Cam c;
         c.frame = fr;

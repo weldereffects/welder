@@ -4,7 +4,7 @@
 //               name). It *is* its Output node: the engine forwards everything
 //               there, so a group costs nothing to render. Its inputs are its
 //               Input nodes (param "number", 0-based). Its own knobs (user knobs,
-//               as on Nuke groups and gizmos) are listed in params["knobs"]
+//               as on .nk groups and gizmos) are listed in params["knobs"]
 //               ([{name, label, type, default, lo, hi, options}]) with their
 //               values as ordinary params; inner nodes read them with
 //               expressions such as parent.size. A gizmo is a Group with

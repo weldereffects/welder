@@ -63,7 +63,7 @@ struct MLExportStatus {
     std::string label;
 };
 
-// Render > Render... (Nuke's Render dialog): which frames and Writes, and how.
+// Render > Render... (the classic Render dialog): which frames and Writes, and how.
 struct RenderRequest {
     std::vector<double> frames;          // sorted
     std::vector<std::string> writes;     // empty: every enabled Write
@@ -177,7 +177,7 @@ public:
     // Render Write nodes for a frame range: all enabled ones, or only `names`.
     void renderWrites(double first, double last, std::vector<std::string> names = {});
     void renderWrites(const RenderRequest& r);
-    // Drop every cached tile (Nuke's "clear buffers", F12).
+    // Drop every cached tile (the classic "clear buffers", F12).
     void clearCaches();
     void cancelBatch() { batchCancel_ = true; }
     BatchStatus batchStatus();
@@ -187,11 +187,11 @@ public:
     bool newComp();
     bool open(const std::string& path, std::string* err);
     bool save(const std::string& path, std::string* err);
-    bool importNuke(const std::string& nkPath, std::string* err);
-    // Nodes copied in Nuke (its clipboard text) -> {"strata_nodes"} entries; null on failure.
-    json nukeToNodes(const std::string& nkText, std::string* err);
+    bool importNk(const std::string& nkPath, std::string* err);
+    // Nodes copied in another .nk app (its clipboard text) -> {"strata_nodes"} entries; null on failure.
+    json nkToNodes(const std::string& nkText, std::string* err);
     // Folders searched for gizmos (.gizmo, and Welder's .sgizmo): Welder's own,
-    // STRATA_GIZMO_PATH, NUKE_PATH and ~/.nuke.
+    // WELDER_GIZMO_PATH (or STRATA_GIZMO_PATH).
     std::vector<std::string> gizmoDirs() const;
     std::string userGizmoDir() const;  // where "Save as gizmo" writes
     std::string toolsDir() const;  // where nk2strata.py lives

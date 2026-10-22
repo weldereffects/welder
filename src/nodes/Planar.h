@@ -2,7 +2,7 @@
 // frame, the homography (perspective transform) that maps the region drawn on
 // the reference frame onto that frame. Direct image alignment (robust
 // inverse-compositional Lucas-Kanade over an image pyramid, with gain / bias
-// compensation), like Mocha's and NukeX's planar trackers.
+// compensation), like Mocha's and the advanced edition's planar trackers.
 //
 // A PlanarTracker node stores
 //   "region": [[x, y], ...]          polygon on the reference frame (pixels)

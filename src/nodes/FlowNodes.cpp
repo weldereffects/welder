@@ -1,5 +1,5 @@
 // Flow maps and motion vectors:
-//   VectorGenerator  a plate's motion as channels, like Nuke's: forward.u / .v
+//   VectorGenerator  a plate's motion as channels, as is standard: forward.u / .v
 //                    (where each pixel goes on the next frame) and backward.u / .v
 //                    (the previous frame), in pixels per frame, from optical flow
 //   FlowField        makes a flow map: curl noise (swirls), a direction, a vortex,

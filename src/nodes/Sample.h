@@ -1,5 +1,5 @@
 // Resampling an image at continuous positions, shared by Transform, STMap and
-// the warp nodes. The filters are Nuke's: impulse, the BC-cubic family (cubic,
+// the warp nodes. The filters are the classic: impulse, the BC-cubic family (cubic,
 // keys, simon, rifman, mitchell, parzen, notch), lanczos4 / lanczos6 and sinc4,
 // plus bilinear. When the transform shrinks the image the kernel widens with
 // it (a filter footprint > 1), so downscales average instead of aliasing.
@@ -28,7 +28,7 @@ struct Filter {
     static Filter lanczos(int a) { return {Lanczos, 0, 0, a}; }
 };
 
-// The filter names (Nuke's; "bilinear" too).
+// The filter names (the classic; "bilinear" too).
 inline const std::vector<std::string>& filterNames() {
     static const std::vector<std::string> n = {"impulse", "cubic",   "keys",     "simon",    "rifman", "mitchell",
                                                "parzen",  "notch",   "lanczos4", "lanczos6", "sinc4",  "bilinear"};
@@ -48,7 +48,7 @@ inline Filter parseFilter(std::string s) {
     if (s == "lanczos4") return Filter::lanczos(2);
     if (s == "lanczos6") return Filter::lanczos(3);
     if (s == "sinc4") return Filter::lanczos(4);
-    return Filter::bc(0, 0);  // "cubic": Nuke's default, smooth, no sharpening
+    return Filter::bc(0, 0);  // "cubic": the classic default, smooth, no sharpening
 }
 
 // Mitchell-Netravali BC-cubic.

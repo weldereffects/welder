@@ -128,7 +128,7 @@ void applyTheme() {
     c[ImGuiCol_ResizeGripActive] = accent;
 }
 
-// Nuke-like default: viewer top-left with the timeline under it, node graph
+// classic default: viewer top-left with the timeline under it, node graph
 // below, properties on the right, node toolbar on the far left.
 void buildLayout(ImGuiID dock, ImVec2 size) {
     ImGui::DockBuilderRemoveNode(dock);
@@ -233,7 +233,7 @@ int main(int argc, char** argv) {
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigWindowsMoveFromTitleBarOnly = true;
     static std::string iniPath = (fs::path(configDir()) / "layout.ini").string();
-    io.ConfigDragClickToInputText = true;  // a click on a number field types into it; a drag scrubs it (Nuke-like)
+    io.ConfigDragClickToInputText = true;  // a click on a number field types into it; a drag scrubs it (classic)
     io.IniFilename = opt.screenshot.empty() ? iniPath.c_str() : nullptr;  // screenshots use the default layout
     applyTheme();
 
@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
     // Open a file from the command line.
     if (!opt.file.empty()) {
         std::string err;
-        bool ok = fs::path(opt.file).extension() == ".nk" ? app.importNuke(opt.file, &err) : app.open(opt.file, &err);
+        bool ok = fs::path(opt.file).extension() == ".nk" ? app.importNk(opt.file, &err) : app.open(opt.file, &err);
         if (!ok) app.message("error: " + err);
     }
     app.applyEdits();
@@ -369,11 +369,18 @@ int main(int argc, char** argv) {
             if (justMaximized && ui.maximized.empty() && !lastMax.empty())
                 ImGui::SetWindowFocus(lastMax.c_str());  // restored panel is the active tab again
             lastMax = ui.maximized;
+            // a maximized viewer keeps the timeline under it
+            const bool viewerMax = ui.maximized == "Viewer";
+            const float tlH = viewerMax ? std::min(timelineHeight() + ImGui::GetFrameHeight(), vp->WorkSize.y * 0.5f) : 0.0f;  // (+ its title bar)
             for (auto& p : kPanels) {
-                if (!ui.maximized.empty() && ui.maximized != p.name) continue;
-                if (!ui.maximized.empty()) {
+                const bool timelineUnder = viewerMax && std::string(p.name) == "Timeline";
+                if (!ui.maximized.empty() && ui.maximized != p.name && !timelineUnder) continue;
+                if (timelineUnder) {
+                    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - tlH), ImGuiCond_Always);
+                    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, tlH), ImGuiCond_Always);
+                } else if (!ui.maximized.empty()) {
                     ImGui::SetNextWindowPos(vp->WorkPos, ImGuiCond_Always);
-                    ImGui::SetNextWindowSize(vp->WorkSize, ImGuiCond_Always);
+                    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, vp->WorkSize.y - tlH), ImGuiCond_Always);
                     if (justMaximized) ImGui::SetNextWindowFocus();
                 }
                 p.fn(app, ui);
@@ -661,6 +668,9 @@ int main(int argc, char** argv) {
             std::printf("ALIGN overlaps (within a node's size): %d\n", overlaps);
             for (auto& n : app.comp->nodes) std::printf("ALIGN %s %.0f %.0f\n", n->name.c_str(), n->ui.value("x", 0.0f), n->ui.value("y", 0.0f));
         }
+        // STRATA_TEST_MAXIMIZE=<panel>: that panel maximized (Space); STRATA_TEST_NO_OVERLAYS: Q pressed over the viewer
+        if (const char* tm = std::getenv("STRATA_TEST_MAXIMIZE"); tm && *tm && !opt.screenshot.empty() && frameCount == 5) ui.maximized = tm;
+        if (std::getenv("STRATA_TEST_NO_OVERLAYS") && !opt.screenshot.empty() && frameCount == 5) ui.viewer.overlays = false;
         // STRATA_TEST_COLLAPSE=<backdrop>: minimise it (as its corner button does)
         if (const char* tb = std::getenv("STRATA_TEST_COLLAPSE"); tb && *tb && !opt.screenshot.empty() && frameCount == 12)
             graphToggleBackdrop(app, app.node(tb));
@@ -749,6 +759,15 @@ int main(int argc, char** argv) {
             ImGuiIO& tio = ImGui::GetIO();
             dragTest = frameCount < 70;
             const int a = 20, b = 40;
+            if (std::getenv("STRATA_TEST_DRAG_CTRL")) {  // with Ctrl held (roto: a point's feather)
+                if (frameCount == a - 3) {
+                    tio.AddKeyEvent(ImGuiMod_Ctrl, true);
+                    tio.AddKeyEvent(ImGuiKey_LeftCtrl, true);
+                } else if (frameCount == b + 4) {
+                    tio.AddKeyEvent(ImGuiMod_Ctrl, false);
+                    tio.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+                }
+            }
             if (frameCount == a - 2) tio.AddMousePosEvent(q[0], q[1]);
             else if (frameCount == a) tio.AddMouseButtonEvent(0, true);
             else if (frameCount > a && frameCount <= b) {
@@ -757,6 +776,8 @@ int main(int argc, char** argv) {
             } else if (frameCount == b + 2) tio.AddMouseButtonEvent(0, false);
             else if (frameCount == 60)
                 for (auto& n : app.comp->nodes) {
+                    if ((n->type == "Roto" || n->type == "SplineWarp") && n->params.has("shapes"))
+                        std::printf("DRAG %s shapes %s\n", n->name.c_str(), n->params.data["shapes"].dump().c_str());
                     if (n->type == "CameraTracker") std::printf("DRAG %s scene %s\n", n->name.c_str(), n->params.has("scene") ? n->params.data["scene"].dump().c_str() : "{}");
                     if (n->type == "EditMesh" && n->params.has("mesh")) {
                         const json& P = n->params.data["mesh"]["P"];

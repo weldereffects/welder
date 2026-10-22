@@ -1,4 +1,4 @@
-// The timeline, laid out like Nuke's: a frame ruler (a tick per frame, labels,
+// The timeline, laid out the classic way: a frame ruler (a tick per frame, labels,
 // the current frame marked above it, in/out, keys, the cache line) with the
 // range fields at its ends, and under it the fps / time format / range menus,
 // the transport and the range length. It has a fixed height: it never resizes
@@ -249,8 +249,9 @@ void lockTimelineHeight() {
 }
 
 void drawTimeline(App& app, UiState& ui) {
-    const float H = timelineHeight();
-    ImGui::SetNextWindowSizeConstraints(ImVec2(160, H), ImVec2(FLT_MAX, H));  // floating: the same fixed height
+    // floating: the same fixed height; under a maximized viewer: that plus its title bar
+    const float H = timelineHeight() + (ui.maximized == "Viewer" ? ImGui::GetFrameHeight() : 0.0f);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(160, H), ImVec2(FLT_MAX, H));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
     ImGui::Begin(ui.win("Timeline").c_str(), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
@@ -367,7 +368,7 @@ void drawTimeline(App& app, UiState& ui) {
     // where they don't crowd
     const int minor = niceStep(4.0 / std::max(1e-6f, ppf));
     const float labelW = ImGui::CalcTextSize(label(last).c_str()).x * sf / ImGui::GetFontSize();
-    const int major = std::max(minor, niceStep((labelW * 2 + 30) / std::max(1e-6f, ppf)));  // roomy, like Nuke's
+    const int major = std::max(minor, niceStep((labelW * 2 + 30) / std::max(1e-6f, ppf)));  // roomy, as is standard
     const int mid = major % 5 == 0 && major / 5 >= minor && (major / 5) % minor == 0 ? major / 5 : (major % 2 == 0 && major / 2 >= minor ? major / 2 : major);
     const ImU32 tickCol = IM_COL32(150, 150, 150, 255), labelCol = IM_COL32(170, 170, 170, 255);
     auto floorTo = [](int v, int s) { return (int)std::floor((double)v / s) * s; };
@@ -452,13 +453,13 @@ void drawTimeline(App& app, UiState& ui) {
     }
     widths(lw, mw, rwid);
     const bool leftFits = lw + mw + rwid + gap * 4 <= W || lw + mw + gap * 2 <= W;
-    float midX = origin.x + (W - mw) * 0.5f;  // centred, like Nuke's
+    float midX = origin.x + (W - mw) * 0.5f;  // centred, as is standard
     if (leftFits) midX = std::clamp(midX, origin.x + lw + gap * 2, std::max(origin.x + lw + gap * 2, origin.x + W - rwid - gap * 2 - mw));
     else midX = origin.x;  // very narrow: the transport alone
 
     if (leftFits) {
         ImGui::SetCursorScreenPos(ImVec2(origin.x, y2));
-        // fps: the comp's rate; while playing, the rate actually reached (red when behind), as in Nuke
+        // fps: the comp's rate; while playing, the rate actually reached (red when behind), as is standard
         char fpsPrev[32];
         const bool live = app.playing && ui.measuredFps > 0;
         std::snprintf(fpsPrev, sizeof fpsPrev, "%g", live ? std::round(ui.measuredFps * 10) / 10 : c.fps);
@@ -491,7 +492,7 @@ void drawTimeline(App& app, UiState& ui) {
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("time format: frame numbers or timecode");
         }
-        // Range menu (Nuke's Global / Input / Custom).
+        // Range menu (the classic Global / Input / Custom).
         static const char* kModes[] = {"global", "input", "custom"};
         static const char* kModeLabels[] = {"Global", "Input", "Custom"};
         ImGui::SameLine(0, gap);
@@ -516,7 +517,7 @@ void drawTimeline(App& app, UiState& ui) {
                               "Custom: a range of your own; doesn't change the project");
     }
 
-    // transport, Nuke's order
+    // transport, the classic order
     ImGui::SetCursorScreenPos(ImVec2(midX, y2));
     auto next = [&](float s = 2) { ImGui::SameLine(0, s); };
     if (show.loop) {

@@ -210,7 +210,7 @@ json Comp::toJson() const {
 std::string Comp::uniqueName(const std::string& base) const {
     std::string stem = base.empty() ? "Node" : base;
     if (!find(stem)) return stem;
-    // Strip a trailing number so "Grade1" -> "Grade2", like Nuke.
+    // Strip a trailing number so "Grade1" -> "Grade2", as is standard.
     size_t e = stem.size();
     while (e > 0 && std::isdigit((unsigned char)stem[e - 1])) --e;
     std::string root = stem.substr(0, e);

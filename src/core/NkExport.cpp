@@ -1,4 +1,4 @@
-#include "NukeExport.h"
+#include "NkExport.h"
 #include "Studio.h"
 
 #include <algorithm>
@@ -53,8 +53,8 @@ bool isColorKnob(const std::string& k) {
     return c.count(k) > 0;
 }
 
-// Welder param -> Nuke knob, by Welder node type (where they differ).
-std::string nukeKnob(const std::string& type, const std::string& p) {
+// Welder param -> .nk knob, by Welder node type (where they differ).
+std::string nkKnob(const std::string& type, const std::string& p) {
     static const std::map<std::pair<std::string, std::string>, std::string> m = {
         {{"Grade", "lift"}, "black"},          {{"Grade", "gain"}, "white"},
         {{"Grade", "offset"}, "add"},          {{"ZDefocus", "depth_of_field"}, "dof"},
@@ -69,8 +69,8 @@ std::string nukeKnob(const std::string& type, const std::string& p) {
     return it != m.end() ? it->second : p;
 }
 
-// Welder channel -> Nuke ("R" -> rgba.red, "diffuse.G" -> diffuse.green).
-std::string nukeChannel(const std::string& c) {
+// Welder channel -> .nk ("R" -> rgba.red, "diffuse.G" -> diffuse.green).
+std::string nkChannel(const std::string& c) {
     static const std::map<std::string, std::string> s = {{"R", "red"}, {"G", "green"}, {"B", "blue"}, {"A", "alpha"}};
     auto dot = c.find('.');
     if (dot == std::string::npos) {
@@ -82,17 +82,17 @@ std::string nukeChannel(const std::string& c) {
     return layer + "." + (it != s.end() ? it->second : ch);
 }
 
-std::string nukeChannels(const json& v) {
+std::string nkChannels(const json& v) {
     if (v.is_string()) {
         std::string s = v.get<std::string>();
         if (s == "rgb" || s == "rgba" || s == "alpha" || s == "all" || s == "none" || s.find('.') == std::string::npos)
-            return s == "R" || s == "G" || s == "B" || s == "A" ? nukeChannel(s) : s;
-        return nukeChannel(s);
+            return s == "R" || s == "G" || s == "B" || s == "A" ? nkChannel(s) : s;
+        return nkChannel(s);
     }
     if (v.is_array()) {
         std::string r = "{";
         for (auto& e : v)
-            if (e.is_string()) r += (r.size() > 1 ? " " : "") + nukeChannel(e.get<std::string>());
+            if (e.is_string()) r += (r.size() > 1 ? " " : "") + nkChannel(e.get<std::string>());
         return r + "}";
     }
     return "rgba";
@@ -103,8 +103,8 @@ struct Names {
     std::map<std::string, std::string> type;  // node -> Welder type (what the export knows)
 };
 
-// Welder expression -> Nuke's: knob names and numbered components.
-std::string exprToNuke(const std::string& text, const Names& names) {
+// Welder expression -> the classic: knob names and numbered components.
+std::string exprToNk(const std::string& text, const Names& names) {
     std::string out;
     size_t i = 0;
     auto idch = [](char c) { return std::isalnum((unsigned char)c) || c == '_'; };
@@ -130,7 +130,7 @@ std::string exprToNuke(const std::string& text, const Names& names) {
                 } else if (names.type.count(parts[0]))
                     type = names.type.at(parts[0]);
                 if (kn < parts.size() && parts[0] != "root") {
-                    parts[kn] = nukeKnob(type, parts[kn]);
+                    parts[kn] = nkKnob(type, parts[kn]);
                     if (kn + 1 < parts.size() && std::isdigit((unsigned char)parts[kn + 1][0])) {
                         int ci = std::atoi(parts[kn + 1].c_str());
                         const char* col = "rgba";
@@ -150,7 +150,7 @@ std::string exprToNuke(const std::string& text, const Names& names) {
     return out;
 }
 
-// A label in braces, so Nuke evaluates [value ...] in it as Welder does.
+// A label in braces, so .nk apps evaluate [value ...] in it as Welder does.
 std::string tclLabel(const std::string& s) {
     int depth = 0;
     bool ok = s.find('\\') == std::string::npos;
@@ -183,7 +183,7 @@ std::string elem(const json& e, const Names& n) {
     if (e.is_number()) return fmt(e.get<double>());
     if (e.is_boolean()) return e.get<bool>() ? "1" : "0";
     if (params::isLink(e)) return e.contains("keep") ? elem(e["keep"], n) : "0";  // (baked by exportComp)
-    if (params::isExpr(e)) return "{" + exprToNuke(e["expr"].get<std::string>(), n) + "}";
+    if (params::isExpr(e)) return "{" + exprToNk(e["expr"].get<std::string>(), n) + "}";
     if (params::isAnimated(e)) return "{" + curveText(e) + "}";
     return "0";
 }
@@ -204,7 +204,7 @@ std::string value(const json& v, const Names& n) {
     return word(v.dump());
 }
 
-std::string nukeFormat(int w, int h) {
+std::string nkFormat(int w, int h) {
     return "\"" + std::to_string(w) + " " + std::to_string(h) + " 0 0 " + std::to_string(w) + " " + std::to_string(h) + " 1 \"";
 }
 
@@ -250,7 +250,7 @@ struct Writer {
         auto raw = [&](const std::string& knob, const std::string& text) { b.knobs.push_back({knob, text}); };
         auto mixMask = [&] {
             copy("mix");
-            if (has("mask_channel")) raw("maskChannelInput", nukeChannel(p["mask_channel"].get<std::string>()));
+            if (has("mask_channel")) raw("maskChannelInput", nkChannel(p["mask_channel"].get<std::string>()));
             if (p.value("invert_mask", false)) raw("invert_mask", "true");
             if (p.value("fringe", false)) raw("fringe", "true");
         };
@@ -259,7 +259,7 @@ struct Writer {
             if (maskAt >= 0) b.mask = in(n, maskAt);
         };
         auto warn = [&](const std::string& w) { warnings.push_back(name + ": " + w); };
-        auto filter = [&] {  // Welder's filter names are Nuke's, lower-case (plus bilinear)
+        auto filter = [&] {  // Welder's filter names are the classic, lower-case (plus bilinear)
             if (!has("filter") || !p["filter"].is_string()) return;
             std::string f = p["filter"].get<std::string>();
             for (auto& c : f) c = (char)std::tolower((unsigned char)c);
@@ -282,7 +282,7 @@ struct Writer {
             copy("before");
             copy("after");
             if (has("format") && p["format"].is_array() && p["format"].size() >= 2)
-                raw("format", nukeFormat(p["format"][0].get<int>(), p["format"][1].get<int>()));
+                raw("format", nkFormat(p["format"][0].get<int>(), p["format"][1].get<int>()));
             if (has("proxy") && !p["proxy"].get<std::string>().empty()) copy("proxy");
             if (has("origfirst") || has("origlast")) {
                 copy("origfirst");
@@ -313,7 +313,7 @@ struct Writer {
             mainMask(1, -1);
             std::string f = p.value("file", "");
             copy("file");
-            if (has("channels")) raw("channels", nukeChannels(p["channels"]));
+            if (has("channels")) raw("channels", nkChannels(p["channels"]));
             std::string ext = f.substr(f.rfind('.') == std::string::npos ? f.size() : f.rfind('.') + 1);
             for (auto& ch : ext) ch = (char)std::tolower((unsigned char)ch);
             if (ext == "tif") ext = "tiff";
@@ -338,7 +338,7 @@ struct Writer {
                 std::string bd = p["bit_depth"].get<std::string>();
                 if (bd != "default") raw("datatype", word(bd == "32 float" ? "32 bit float" : bd + " bit"));
             }
-            if (movie && has("codec")) warn("movie codec '" + p["codec"].get<std::string>() + "': set it on the Write in Nuke");
+            if (movie && has("codec")) warn("movie codec '" + p["codec"].get<std::string>() + "': set it on the Write after opening the script");
             copy("colorspace");
             if (p.value("raw", false)) raw("raw", "true");
             if (p.value("use_limit", false)) {
@@ -355,7 +355,7 @@ struct Writer {
                 copy("color1");
             }
             if (has("format") && p["format"].is_array() && p["format"].size() >= 2)
-                raw("format", nukeFormat(p["format"][0].get<int>(), p["format"][1].get<int>()));
+                raw("format", nkFormat(p["format"][0].get<int>(), p["format"][1].get<int>()));
         } else if (type == "Radial") {
             b.cls = "Radial";
             mainMask(1, -1);
@@ -384,7 +384,7 @@ struct Writer {
             for (const char* k : {"size", "zoffset", "octaves", "lacunarity", "gain", "gamma", "translate", "rotate", "center"}) copy(k);
             copy("mix", "opacity");
             if (has("color1")) copy("color1", "color");
-            warn("Noise exported to Nuke's Noise (types beyond fBm / turbulence, colours and scale are approximate)");
+            warn("Noise exported to the .nk Noise (types beyond fBm / turbulence, colours and scale are approximate)");
         } else if (type == "IDistort") {
             b.cls = "IDistort";
             mainMask(1, -1);
@@ -405,7 +405,7 @@ struct Writer {
             for (const char* k : {"tolerance", "saturation", "size", "brightness"}) copy(k);
             if (has("effect_only")) raw("effect_only", p.value("effect_only", false) ? "true" : "false");
             mixMask();
-        } else if (type == "ExpoGlow") {  // the Nuke Survival Toolkit's / SPIN's gizmo
+        } else if (type == "ExpoGlow") {  // the Survival Toolkit's / SPIN's gizmo
             b.cls = "Glow_Exponential";
             mainMask(2, -1);
             for (const char* k : {"size", "intensity", "falloff", "range", "saturation", "core_color", "falloff_color", "threshold",
@@ -413,9 +413,9 @@ struct Writer {
                 copy(k);
             for (const char* k : {"glow_only", "crop"})
                 if (has(k)) raw(k, p.value(k, false) ? "true" : "false");
-            warn("exported as the Glow_Exponential gizmo (Nuke Survival Toolkit / SPIN VFX): it must be installed in Nuke");
-        } else if (type == "Slate" && !studio::str("nuke", "slate_gizmo_export").empty()) {  // back to the studio's slate gizmo
-            b.cls = studio::str("nuke", "slate_gizmo_export");
+            warn("exported as the Glow_Exponential gizmo (Survival Toolkit / SPIN VFX): it must be installed in another .nk app");
+        } else if (type == "Slate" && !studio::str("nk", "slate_gizmo_export").empty()) {  // back to the studio's slate gizmo
+            b.cls = studio::str("nk", "slate_gizmo_export");
             mainMask(1, -1);
             for (auto [sp, nk] : std::vector<std::pair<const char*, const char*>>{{"notes", "Notes_Input"},
                                                                                 {"mattes", "Mattes_Input"},
@@ -447,7 +447,7 @@ struct Writer {
             mainMask(2, 2);
             std::string math = p.value("math", "1/z");
             raw("math", word(math == "z" ? "far = 1" : math == "direct" ? "direct" : "far = 0"));
-            if (has("depth")) raw("z_channel", nukeChannel(p["depth"].get<std::string>()));
+            if (has("depth")) raw("z_channel", nkChannel(p["depth"].get<std::string>()));
             if (has("focus_plane")) {
                 const json& f = p["focus_plane"];
                 if (math == "1/z" && f.is_number()) raw("center", fmt(f.get<double>() != 0 ? 1.0 / f.get<double>() : 0));
@@ -515,8 +515,8 @@ struct Writer {
             if (p.value("inject", false)) raw("inject", "true");
             copy("operation");
             copy("bbox");
-            if (has("channels")) raw("output", nukeChannels(p["channels"]));
-            if (has("also_merge")) raw("also_merge", nukeChannels(p["also_merge"]));
+            if (has("channels")) raw("output", nkChannels(p["channels"]));
+            if (has("also_merge")) raw("also_merge", nkChannels(p["also_merge"]));
             mixMask();
         } else if (type == "Copy") {
             b.cls = "Copy";
@@ -524,10 +524,10 @@ struct Writer {
             b.mask = in(n, 2);
             json from = p.value("from", json::array()), to = p.value("to", json::array());
             for (size_t i = 0; i < from.size() && i < 8; ++i) {
-                raw("from" + std::to_string(i), nukeChannel(from[i].get<std::string>()));
-                if (i < to.size()) raw("to" + std::to_string(i), nukeChannel(to[i].get<std::string>()));
+                raw("from" + std::to_string(i), nkChannel(from[i].get<std::string>()));
+                if (i < to.size()) raw("to" + std::to_string(i), nkChannel(to[i].get<std::string>()));
             }
-            if (has("layer_copy")) raw("channels", nukeChannels(p["layer_copy"]));
+            if (has("layer_copy")) raw("channels", nkChannels(p["layer_copy"]));
             copy("bbox");
             mixMask();
         } else if (type == "Switch" || type == "Dissolve") {
@@ -539,10 +539,10 @@ struct Writer {
                    type == "Gamma" || type == "Invert" || type == "Clamp" || type == "Premult" || type == "Unpremult") {
             b.cls = type;
             mainMask(1, 1);
-            if (has("channels")) raw("channels", nukeChannels(p["channels"]));
+            if (has("channels")) raw("channels", nkChannels(p["channels"]));
             if (type == "Grade") {
                 for (const char* k : {"blackpoint", "whitepoint", "lift", "gain", "multiply", "offset", "gamma"})
-                    copy(k, nukeKnob(type, k).c_str());
+                    copy(k, nkKnob(type, k).c_str());
                 if (has("black_clamp")) raw("black_clamp", p.value("black_clamp", true) ? "true" : "false");
                 if (has("white_clamp")) raw("white_clamp", p.value("white_clamp", false) ? "true" : "false");
                 if (p.value("reverse", false)) raw("reverse", "true");
@@ -562,11 +562,11 @@ struct Writer {
                     else copy(k);
                 }
             } else if (type == "Premult" || type == "Unpremult") {
-                if (has("alpha")) raw("alpha", nukeChannel(p["alpha"].get<std::string>()));
+                if (has("alpha")) raw("alpha", nkChannel(p["alpha"].get<std::string>()));
             }
             if (has("unpremult") && p["unpremult"].is_string() && !p["unpremult"].get<std::string>().empty() &&
                 p["unpremult"] != "none") {
-                raw("unpremult", nukeChannel(p["unpremult"].get<std::string>()));
+                raw("unpremult", nkChannel(p["unpremult"].get<std::string>()));
                 if (p.value("invert_unpremult", false)) raw("invert_unpremult", "true");
             }
             mixMask();
@@ -614,7 +614,7 @@ struct Writer {
                 copy("box_height");
                 if (p.value("box_fixed", false)) raw("box_fixed", "true");
             } else if (has("format") && p["format"].is_array() && p["format"].size() >= 2)
-                raw("format", nukeFormat(p["format"][0].get<int>(), p["format"][1].get<int>()));
+                raw("format", nkFormat(p["format"][0].get<int>(), p["format"][1].get<int>()));
             copy("resize");
             if (has("center")) raw("center", p.value("center", true) ? "true" : "false");
             for (const char* k : {"flip", "flop", "turn", "pbb", "clamp"})
@@ -630,7 +630,7 @@ struct Writer {
         } else if (type == "Blur" || type == "Sharpen" || type == "Dilate") {
             b.cls = type;
             mainMask(1, type == "Dilate" ? -1 : 1);
-            if (has("channels")) raw("channels", nukeChannels(p["channels"]));
+            if (has("channels")) raw("channels", nkChannels(p["channels"]));
             copy("size");
             if (type == "Sharpen") copy("amount");
             if (type == "Blur") {
@@ -675,9 +675,9 @@ struct Writer {
             json ch = p.value("channels", json());
             if (ch.is_array()) {
                 std::vector<std::string> knobs = {"channels", "channels2", "channels3", "channels4"};
-                for (size_t i = 0; i < ch.size() && i < 4; ++i) raw(knobs[i], nukeChannels(ch[i]));
+                for (size_t i = 0; i < ch.size() && i < 4; ++i) raw(knobs[i], nkChannels(ch[i]));
             } else if (!ch.is_null())
-                raw("channels", nukeChannels(ch));
+                raw("channels", nkChannels(ch));
         } else if (type == "FrameHold") {
             b.cls = "FrameHold";
             mainMask(1, -1);
@@ -707,12 +707,12 @@ struct Writer {
             for (size_t i = 0; i < std::max<size_t>(1, ins.size()); ++i) b.main.push_back(in(n, i));
             const json vals = p.value("values", json::object());
             for (auto& [k, v] : vals.items()) b.knobs.push_back({k, value(v, names)});
-        } else if (type.rfind("Nuke:", 0) == 0) {
+        } else if (isPlaceholderType(type)) {
             // a node the importer couldn't translate: back as it came
-            b.cls = type.substr(5);
+            b.cls = placeholderClass(type);
             const json& ins = n.value("inputs", json::array());
             for (size_t i = 0; i < ins.size(); ++i) b.main.push_back(in(n, i));
-            const json nkk = p.value("nuke_knobs", json::object());
+            const json nkk = p.value("nk_knobs", json::object());
             for (auto& [k, v] : nkk.items()) {
                 if (k == "inputs") continue;
                 std::string s = v.is_string() ? v.get<std::string>() : v.dump();
@@ -723,7 +723,7 @@ struct Writer {
             b.cls = "Group";  // its knobs and contents are written by the exporter
             const json& ins = n.value("inputs", json::array());
             for (size_t i = 0; i < ins.size(); ++i) b.main.push_back(in(n, i));
-            if (has("gizmo")) warn("was the gizmo " + p["gizmo"].get<std::string>() + "; it goes to Nuke as a group");
+            if (has("gizmo")) warn("was the gizmo " + p["gizmo"].get<std::string>() + "; it goes into the .nk as a group");
         } else if (type == "Input") {
             b.cls = "Input";
             int num = (int)std::lround(p.value("number", 0.0));
@@ -765,7 +765,7 @@ struct Writer {
         return b;
     }
 
-    // Something Nuke has no node for: a NoOp that says what it was.
+    // Something the .nk format has no node for: a NoOp that says what it was.
     Block placeholder(const json& n, const std::string& why) {
         Block b;
         b.cls = "NoOp";
@@ -773,7 +773,7 @@ struct Writer {
         std::string type = n.value("type", "?");
         b.knobs.push_back({"tile_color", "0xb0404aff"});
         b.knobs.push_back({"label", word("Welder " + type + (why.empty() ? "" : "\n(" + why + ")"))});
-        warnings.push_back(n.value("name", "?") + ": Welder's " + type + " has no Nuke equivalent; it became a NoOp" +
+        warnings.push_back(n.value("name", "?") + ": Welder's " + type + " has no .nk equivalent; it became a NoOp" +
                            (why.empty() ? "" : " (" + why + ")"));
         ++placeholders;
         return b;
@@ -838,7 +838,7 @@ struct Exporter {
             for (auto& src : pushes) {
                 if (!src.empty() && varOf.count(src)) out += indent + "push $" + varOf[src] + "\n";
                 else if (!src.empty() && !index.count(src) && level.empty() && !cutPasteUsed && &src == &pushes.back()) {
-                    out += indent + "push $cut_paste_input\n";  // connects to the node selected in Nuke
+                    out += indent + "push $cut_paste_input\n";  // connects to the node selected in the other app
                     cutPasteUsed = true;
                 } else
                     out += indent + "push 0\n";
@@ -903,7 +903,7 @@ struct Exporter {
             out += indent + " addUserKnob " + def + "}\n";
             json v = p.contains(nm) ? p[nm] : d.value("default", json());
             if (v.is_null()) continue;
-            if (t == "choice" && v.is_string()) {  // Nuke stores the item
+            if (t == "choice" && v.is_string()) {  // the .nk format stores the item
                 out += indent + " " + nm + " " + word(v.get<std::string>()) + "\n";
                 continue;
             }
@@ -934,7 +934,7 @@ ExportResult exportNodes(const json& strataNodes, bool selected) {
 }
 
 ExportResult exportComp(const Comp& c) {
-    // Knobs driven through exposed inputs (value nodes, sampled images) have no Nuke form: they go
+    // Knobs driven through exposed inputs (value nodes, sampled images) have no .nk form: they go
     // as curves with a key on every frame of the project range (or a plain number if they don't move).
     json j = c.toJson();
     const int f0 = (int)std::floor(c.firstFrame), f1 = std::max(f0, (int)std::ceil(c.lastFrame));
@@ -991,29 +991,28 @@ ExportResult exportCompJson(const json& j) {
     if (pr.value("proxy_mode", false)) root += " proxy true\n";
     if (pr.contains("proxy_scale")) root += " proxy_scale " + fmt(pr["proxy_scale"].get<double>()) + "\n";
     if (pr.contains("project_directory")) root += " project_directory " + word(pr["project_directory"].get<std::string>()) + "\n";
-    // colour: Nuke's default management for comps working the way it does
+    // colour: the classic default management for comps working the way it does
     // (no colour settings, or linear sRGB with a plain view); else OCIO
     std::string config = col.value("config", "ocio://studio-config-latest"), working = col.value("working", "Linear Rec.709 (sRGB)");
     std::string view = col.value("view", "Un-tone-mapped");
-    const bool nukeDefault = col.empty() || (working == "Linear Rec.709 (sRGB)" && view == "Un-tone-mapped");
+    const bool nkDefault = col.empty() || (working == "Linear Rec.709 (sRGB)" && view == "Un-tone-mapped");
     const bool builtin = config.rfind("ocio://", 0) == 0;
-    if (nukeDefault) root += " colorManagement Nuke\n";
-    else {
+    if (!nkDefault) {  // (the default colour management needs no colorManagement knob)
         root += " colorManagement OCIO\n";
         if (builtin) root += " OCIO_config aces_1.3\n";
         else root += " OCIO_config custom\n customOCIOConfigPath " + word(config) + "\n";
         root += " workingSpaceLUT " + word(working) + "\n";
         if (builtin)
-            e.res.warnings.push_back("Root: the comp uses OCIO's built-in studio config; Nuke is set to its ACES 1.3 config "
+            e.res.warnings.push_back("Root: the comp uses OCIO's built-in studio config; the script is set to its ACES 1.3 config "
                                      "(colour space names may need a look)");
     }
     root += "}\n";
-    e.res.text = "#! nuke -nx\nversion 14.0 v5\n" + root + body;
+    e.res.text = "version 14.0 v5\n" + root + body;
     return e.res;
 }
 
 // The exact nodes ride along base64-encoded on a comment line: no braces or
-// quotes for Nuke's parser to trip on.
+// quotes for the .nk parser to trip on.
 static const char* kMarker = "# strata_nodes_b64: ";
 
 static std::string b64(const std::string& in) {

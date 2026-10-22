@@ -278,7 +278,7 @@ private:
             const int bc[3] = {B->ch("R"), B->ch("G"), B->ch("B")};
             const bool isKeyed = params.str("influence", "flat") == "keyed";
             const auto range = params.vec<4>("range", f, {0.00715583, 0.55234983, 1, 1});
-            // Nuke's Log2Lin lin2log (blackpoint 95, whitepoint 685, gamma 0.6)
+            // the classic Log2Lin lin2log (blackpoint 95, whitepoint 685, gamma 0.6)
             const double offset = std::pow(10.0, (95.0 - 685.0) * 0.002 / 0.6), gain = 1.0 / (1.0 - offset);
             auto toLog = [&](float v) { return (float)((685.0 + std::log10(std::max(1e-10, v / gain + offset)) * 0.6 / 0.002) / 1023.0); };
             for (int y = Bbox.y1; y < Bbox.y2; ++y) {

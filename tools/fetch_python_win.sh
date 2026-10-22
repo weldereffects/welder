@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch a standalone CPython for Windows (python-build-standalone) and trim it
-# to what the Nuke importer (tools/nk2strata.py) needs. The Windows package
-# ships it as python\, so importing scripts and pasting nodes copied in Nuke
+# to what the .nk importer (tools/nk2strata.py) needs. The Windows package
+# ships it as python\, so importing scripts and pasting nodes copied in another .nk app
 # work without installing Python.
 #   tools/fetch_python_win.sh <dest dir>     (default: ~/deps/python-win)
 set -euo pipefail

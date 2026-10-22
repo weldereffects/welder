@@ -26,7 +26,7 @@ class Node;
 namespace strata::retime {
 
 // ---------------------------------------------------------------- timing
-// Params (Nuke OFlow / Kronos):
+// Params (OFlow / Kronos):
 //   "timing": "output speed" | "input speed" | "frame"
 //   "speed" (output speed), "input_speed", "frame" (source frame, animated)
 //   "input_first" / "input_last": the input range; it anchors the speed and
@@ -64,7 +64,7 @@ Plane luminance(const Image& img, const float weights[3]);
 
 // ---------------------------------------------------------------- optical flow
 struct FlowOptions {
-    double detail = 0.2;      // flow resolution relative to the image (Nuke's Vector Detail)
+    double detail = 0.2;      // flow resolution relative to the image (the classic Vector Detail)
     double smoothness = 0.5;  // 0..1
     bool flicker = false;     // gradient constancy + local contrast: robust to flicker / lighting changes
     std::function<bool()> cancelled;
@@ -103,7 +103,7 @@ struct Fields {
 // la / lb (optional, image resolution): luminance of the two frames, used to
 // give pixels seen in only one frame the motion of the background around them.
 Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* la = nullptr, const Plane* lb = nullptr);
-// A plain cross-dissolve (Nuke's Blend).
+// A plain cross-dissolve (the classic Blend).
 Fields blendFields(int w, int h, double t);
 
 // out(x) = m A(x + f0) + (1 - m) B(x + f1) for the channels `chans` (indices

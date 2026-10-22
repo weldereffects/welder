@@ -246,7 +246,7 @@ std::optional<std::pair<double, double>> nodeFrameRange(Node* n) {
             return std::make_pair(a + off, b + off);
         }
         std::optional<std::pair<double, double>> r;
-        if (x->type == "Merge" && !x->disabled()) {  // Nuke's "range from": one input's range (B by default)
+        if (x->type == "Merge" && !x->disabled()) {  // the classic "range from": one input's range (B by default)
             Node* from = x->params.str("range_from", "B") == "A" ? (x->inputs.size() > 1 ? x->inputs[1] : nullptr)
                                                                   : (x->inputs.empty() ? nullptr : x->inputs[0]);
             return rec(from);

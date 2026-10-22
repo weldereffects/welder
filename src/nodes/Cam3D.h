@@ -1,4 +1,4 @@
-// 3D basics for camera work: vectors, rotations, the camera model (Nuke's:
+// 3D basics for camera work: vectors, rotations, the camera model (the classic:
 // looks down -Z, +Y up, focal length and film back in mm), and evaluating the
 // camera a node provides (a Camera node, or a solved CameraTracker).
 #pragma once
@@ -55,7 +55,7 @@ struct M3 {
 };
 
 // Rotation from Euler angles (degrees) applied in `order` ("ZXY" = Z first,
-// then X, then Y, Nuke's default): R = R_last * R_mid * R_first.
+// then X, then Y, the classic default): R = R_last * R_mid * R_first.
 M3 eulerToMatrix(const V3& deg, const std::string& order = "ZXY");
 // Euler angles (degrees) of a rotation for `order`; `closeTo` picks the
 // equivalent solution closest to a previous value (continuity for animation).
@@ -91,7 +91,7 @@ public:
 };
 
 // Camera of a Camera node (translate, rotate, rot_order, focal, haperture,
-// vaperture: Nuke knob names) or a CameraTracker's solve, at `frame`.
+// vaperture: .nk knob names) or a CameraTracker's solve, at `frame`.
 std::optional<Camera> cameraAt(Node* n, double frame);
 
 // The camera of a Camera node's params.

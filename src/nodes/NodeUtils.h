@@ -30,7 +30,7 @@ struct MaskMix {
     ImagePtr mask;     // may be null
     int maskCh = -1;
     bool invert = false;
-    bool fringe = false;  // Nuke's fringe: only the mask's soft edge (4 m (1 - m))
+    bool fringe = false;  // the classic fringe: only the mask's soft edge (4 m (1 - m))
 
     static MaskMix setup(RenderArgs& a, Node* self, int maskInput);
     bool active() const { return mix < 1.0 || mask; }
@@ -55,7 +55,7 @@ inline float lerpf(float a, float b, float t) { return a + (b - a) * t; }
 // of the result averages the full-res pixels [x/s, (x+1)/s) x [y/s, (y+1)/s).
 std::shared_ptr<Image> downsample(const Image& src, double s);
 
-// out[idx] = the sum of w * a gaussian blur of `src` (Nuke-style sizes sx, sy: full width at half
+// out[idx] = the sum of w * a gaussian blur of `src` (classic sizes sx, sy: full width at half
 // maximum) on the channels idx (indices into out's channels; src's are matched by name), over
 // out.bounds, black outside src. Blurs bigger than `quality` px run on box-reduced copies (like
 // Blur's quality knob). For glows: several blurs of one source at once.
@@ -89,7 +89,7 @@ bool sequenceRange(const std::string& pattern, int& first, int& last);
 // the path is returned unchanged.
 std::string sequencePatternFor(const std::string& file);
 
-// Read nodes: set "first"/"last" from the frames found on disk, like Nuke does
+// Read nodes: set "first"/"last" from the frames found on disk, as is standard
 // when a file is picked. Returns true when a range was found and set.
 bool updateReadRange(Node* n);
 

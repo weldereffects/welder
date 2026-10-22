@@ -1,6 +1,6 @@
 // Merge, Switch, Dissolve, Copy.
 //
-// Merge inputs follow Nuke's Merge2: 0 = B, 1 = A, 2 = mask, 3.. = A2, A3, ...
+// Merge inputs follow the classic Merge2: 0 = B, 1 = A, 2 = mask, 3.. = A2, A3, ...
 // Each extra A is merged on top of the previous result with the same operation.
 // All maths assumes premultiplied images.
 #include <cmath>
@@ -66,7 +66,7 @@ void mergeRows(Image& out, const Image& Aimg, const std::vector<std::pair<int, i
             const float bb = outA >= 0 ? o[outA] : 0.0f;
             for (auto [oi, ai] : pairs) {
                 if (alphaMasking && oi == outA) {
-                    o[oi] = aa + bb - aa * bb;  // Nuke's "alpha masking": keep alpha as union
+                    o[oi] = aa + bb - aa * bb;  // the classic "alpha masking": keep alpha as union
                     continue;
                 }
                 o[oi] = fn(ai >= 0 ? ap[ai] : 0.0f, o[oi], aa, bb);
@@ -149,7 +149,7 @@ public:
         return a.unite(b);
     }
 
-    // Nuke's "metadata from": the chosen input's (the first one upstream that has any)
+    // the classic "metadata from": the chosen input's (the first one upstream that has any)
     json info(Engine& e, double frame) override {
         Node* n = params.str("metadata_from", "B") == "A" ? input(1) : input(0);
         for (int guard = 0; n && guard < 1000; ++guard, n = n->input(0)) {
@@ -186,8 +186,8 @@ public:
         ChannelSet sel = parseChannels(params, "channels", "rgba", out.channels);
         int outA = out.ch("A");
         bool alphaMasking = params.flag("alpha_masking", false);
-        // Nuke's A channels / B channels: which layer of each input plays rgba
-        // channels switched off in the A / B rows (Nuke's per-channel boxes) read as black
+        // the classic A channels / B channels: which layer of each input plays rgba
+        // channels switched off in the A / B rows (the classic per-channel boxes) read as black
         auto offSet = [&](const char* key) {
             std::set<std::string> r;
             if (params.has(key) && params.data[key].is_array())
@@ -211,7 +211,7 @@ public:
                 for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
                     for (int x = out.bounds.x1; x < out.bounds.x2; ++x) out.px(x, y)[oi] = bi >= 0 ? B->at(x, y, bi) : 0.0f;
             }
-        // Video colorspace: the operation runs on sRGB-encoded colour, as Nuke's
+        // Video colorspace: the operation runs on sRGB-encoded colour, as is standard
         const bool video = params.flag("video_colorspace", false);
         auto toVideo = [](float v) { return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f; };
         auto toLinear = [](float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
@@ -341,7 +341,7 @@ class CopyNode : public Node {
 public:
     int maxInputs() const override { return 3; }
     std::string inputLabel(int i) const override { return i == 0 ? "B" : i == 1 ? "A" : "mask"; }
-    // Nuke's channels row: whole layers copied from A (e.g. "depth", "rgba")
+    // the classic channels row: whole layers copied from A (e.g. "depth", "rgba")
     ChannelSet layerCopy(Engine& e, double frame) {
         std::string l = params.str("layer_copy", "none");
         if (l == "none" || l.empty() || !input(1)) return {};

@@ -1289,7 +1289,7 @@ public:
         if (st == kOfxStatOK) {
             OfxRectD r{out.getDouble(kOfxImageEffectPropRegionOfDefinition, 0), out.getDouble(kOfxImageEffectPropRegionOfDefinition, 1),
                        out.getDouble(kOfxImageEffectPropRegionOfDefinition, 2), out.getDouble(kOfxImageEffectPropRegionOfDefinition, 3)};
-            // Infinite regions (kOfxFlagInfiniteMin/Max) are clipped to the format, as Nuke does.
+            // Infinite regions (kOfxFlagInfiniteMin/Max) are clipped to the format, as is standard.
             Box f = format(e, frame).box();
             const double inf = 1e7;
             if (r.x1 <= -inf) r.x1 = f.x1 / sc;

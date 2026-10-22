@@ -1,4 +1,4 @@
-// OpenColorIO nodes (Nuke's names and knobs):
+// OpenColorIO nodes (the classic names and knobs):
 //   OCIOColorSpace     in_colorspace -> out_colorspace
 //   OCIODisplay        working space (or in_colorspace) -> display / view (invert: back)
 //   OCIOLookTransform  look(s) between in_colorspace and out_colorspace
@@ -107,7 +107,7 @@ protected:
     bool timeDependent() const override { return Node::timeDependent(); }
 };
 
-// Log2Lin (Nuke's Cineon conversion): operation "log2lin" | "lin2log",
+// Log2Lin (the classic Cineon conversion): operation "log2lin" | "lin2log",
 // blackpoint (95), whitepoint (685), gamma (0.6), on R G B.
 class Log2LinNode : public Node {
 public:

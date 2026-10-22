@@ -1,4 +1,4 @@
-// Expressions on knobs: a safe subset of Nuke's expression language.
+// Expressions on knobs: a safe subset of the classic expression language.
 //
 // A param value (or one component of a vector param) may be
 //   {"expr": "Blur1.size * 2"}            or, with its own animation for `curve`,

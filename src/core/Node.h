@@ -3,7 +3,7 @@
 // Rendering is pull-based. The engine asks a node for a region of pixels at a
 // frame; the node reports how much of each input it needs (roi), pulls those
 // regions through RenderArgs::fetch, and writes its output. Every node also
-// reports its domain of definition (dod, the "bbox" in Nuke terms) and the
+// reports its domain of definition (dod, the "bbox" in compositing terms) and the
 // channels it produces, so nothing outside the visible, defined area is ever
 // computed.
 #pragma once
@@ -22,6 +22,12 @@
 #include "Params.h"
 
 namespace strata {
+
+// A node the .nk importer couldn't translate: type "Unsupported:<class>" (older imports used
+// another prefix before the colon). It passes its input through.
+inline bool isPlaceholderType(const std::string& type) { return type.find(':') != std::string::npos; }
+inline std::string placeholderClass(const std::string& type) { return type.substr(type.find(':') + 1); }
+
 
 class Engine;
 class Comp;
@@ -181,7 +187,7 @@ public:
     // Disabled nodes (the "disable" param, D in the node graph) pass input 0
     // through. Write nodes keep their own meaning: a disabled Write is skipped.
     bool disabled() const { return type != "Write" && params.flag("disable", false); }
-    // Disabled, or outside its lifetime (Nuke's Node tab: useLifetime,
+    // Disabled, or outside its lifetime (the classic Node tab: useLifetime,
     // lifetimeStart, lifetimeEnd): the node passes input 0 through.
     bool bypassed(double frame) const {
         if (disabled()) return true;

@@ -21,7 +21,7 @@ const std::vector<TypeInfo>& types() {
 Type typeFromName(const std::string& n) {
     for (auto& t : types())
         if (n == t.name) return t.type;
-    if (n == "fBm" || n == "fbm") return Type::Perlin;  // Nuke's Noise types
+    if (n == "fBm" || n == "fbm") return Type::Perlin;  // the classic Noise types
     return Type::Perlin;
 }
 

@@ -3,7 +3,7 @@
 //   frames/    the disk cache of finished frames
 //   blender/   BlenderRender's rendered frames and scenes
 //   ml-jobs/   the AI nodes' job inputs and results
-//   tmp/       short-lived files (pasting from Nuke, importer logs)
+//   tmp/       short-lived files (pasting from .nk apps, importer logs)
 // Default: %LOCALAPPDATA%\Welder\cache, ~/.cache/strata.
 #pragma once
 

@@ -54,7 +54,7 @@ json cameraParams(const camsolve::Solution& s) {
             {"vaperture", r6(vaperture(s))}};
 }
 
-std::string nukeCamera(const camsolve::Solution& s, const std::string& name) {
+std::string nkCamera(const camsolve::Solution& s, const std::string& name) {
     auto e = eulers(s);
     std::ostringstream o;
     auto curve = [&](auto get) {
@@ -100,7 +100,7 @@ std::string chan(const camsolve::Solution& s) {
 std::string blender(const camsolve::Solution& s, const std::string& name, double fps) {
     std::ostringstream o;
     o << "# Camera solved in Welder. In Blender: Scripting workspace > Open > this file > Run Script.\n";
-    o << "# Y-up (Nuke / Welder) is converted to Blender's Z-up.\n";
+    o << "# Y-up (Welder) is converted to Blender's Z-up.\n";
     o << "import bpy\nfrom mathutils import Matrix, Vector\n\n";
     o << "NAME = " << "\"" << name << "\"\n";
     o << "FOCAL = " << num(s.focal) << "\nSENSOR_WIDTH = " << num(s.haperture) << "\n";

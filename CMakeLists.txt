@@ -76,7 +76,7 @@ add_library(strata_core STATIC
   src/core/FrameList.cpp
   src/core/Schema.cpp
   src/core/Expr.cpp
-  src/core/NukeExport.cpp
+  src/core/NkExport.cpp
   src/core/Comp.cpp
   src/core/NetPath.cpp
   src/io/ExrIO.cpp
@@ -96,6 +96,7 @@ add_library(strata_core STATIC
   src/nodes/NodeUtils.cpp
   src/nodes/IONodes.cpp
   src/nodes/Roto.cpp
+  src/nodes/SplineWarp.cpp
   src/nodes/KeyerNodes.cpp
   src/nodes/GrainNodes.cpp
   src/nodes/StylizeNodes.cpp
@@ -311,7 +312,7 @@ if(Python3_FOUND)
   add_test(NAME ml_worker
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_worker.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  add_test(NAME nuke_importer
+  add_test(NAME nk_importer
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_nk2strata.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()

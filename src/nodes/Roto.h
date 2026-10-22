@@ -77,7 +77,7 @@ bool hasKeyAt(const json& shape, double frame);
 Pts pointsAt(const json& shape, double frame);
 
 // An item's own transform at `frame`: the transform controls (about "center": translate,
-// rotate, scale, skew, extra translate) after its "matrix" - Nuke's extra matrix, 3 x 3
+// rotate, scale, skew, extra translate) after its "matrix" - the classic extra matrix, 3 x 3
 // row-major (may be projective; elements may be animated). Points go through the extra matrix
 // first, then the controls.
 Xf transformAt(const json& item, double frame);
@@ -130,7 +130,7 @@ std::vector<V2> flatten(const Pts& pts, bool closed, double scale, std::vector<i
 // Split segment `seg` (point seg -> seg+1) at t, returning the new point list.
 Pts splitSegment(const Pts& pts, bool closed, int seg, double t);
 
-// Smooth / cusp tangents for point i (Nuke's Z / Shift+Z).
+// Smooth / cusp tangents for point i (the classic Z / Shift+Z).
 void smoothPoint(Pts& pts, bool closed, int i);
 void cuspPoint(Pts& pts, int i);
 // Outward unit normal at point i of a closed shape.

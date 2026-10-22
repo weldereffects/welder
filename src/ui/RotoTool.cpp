@@ -2,7 +2,7 @@
 // the viewer, the roto hotkeys, and the Roto / RotoPaint properties panel.
 //
 // The tools work on the Roto or RotoPaint node whose properties panel is open
-// (the most recently opened one), like Nuke. Viewer controls:
+// (the most recently opened one), as is standard. Viewer controls:
 //   Bezier / B-spline (V)  click to add points (Bezier: click-drag pulls
 //                          tangents); click the first point or Enter closes;
 //                          Backspace removes the last point, Esc cancels
@@ -207,6 +207,7 @@ void closeDrawing(App& app, UiState& ui, Node* n) {
         for (int i = 0; i < (int)pts.size(); ++i) r.sel.insert({index, i});
         r.curShape = index;
         r.node = n->name;
+        r.tool = Tool::Select;  // a finished shape: straight back to selecting / adjusting it
     }
     r.drawing = false;
     r.drawPts.clear();
@@ -430,7 +431,7 @@ Node* activeToolNode(App& app) {
     // The most recently opened panel among the nodes with viewer tools.
     for (auto& p : app.panels)
         if (Node* n = app.node(p))
-            if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "Tracker" || n->type == "PlanarTracker" ||
+            if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "Tracker" || n->type == "PlanarTracker" ||
                 n->type == "CameraTracker" || n->type == "FlowField" || n->type == "TrackMask" || n->type == "Transform" || n->type == "Position" || n->type == "CornerPin2D")
                 return n;
     return nullptr;
@@ -438,7 +439,7 @@ Node* activeToolNode(App& app) {
 
 Node* activeRoto(App& app) {
     Node* n = activeToolNode(app);
-    return n && (n->type == "Roto" || n->type == "RotoPaint") ? n : nullptr;
+    return n && (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp") ? n : nullptr;
 }
 
 void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered) {
@@ -456,6 +457,8 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         r.drawing = false;
         r.drawPts.clear();
         r.strokePts.clear();
+        // one that already has shapes opens ready to adjust them; an empty one, ready to draw
+        if (!paintTool(r.tool)) r.tool = itemsOf(n).empty() ? Tool::Bezier : Tool::Select;
     }
     if (!paintNode(n) && paintTool(r.tool)) r.tool = Tool::Select;
     ImGuiIO& io = ImGui::GetIO();
@@ -463,6 +466,36 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
     const ImVec2 mouseImg = xf.toImage(mouse);
     const json& items = itemsOf(n);
     const double frame = app.frame;
+
+    // SplineWarp: the curves not being edited (B while editing A, A while editing B), dimmed and
+    // joined to the edited ones at their starts so the pairs are easy to tell apart
+    if (n->type == "SplineWarp") {
+        const bool editB = n->params.flag("edit_b", false);
+        const ImU32 other = editB ? IM_COL32(110, 200, 255, 150) : IM_COL32(120, 255, 160, 150);
+        for (auto& s : items) {
+            if (roto::isLayer(s) || roto::isStroke(s) || !roto::shown(items, s, frame)) continue;
+            json o = s;
+            if (s.contains("points_b")) o["points"] = s["points_b"];
+            if (s.contains("anim_b")) o["anim"] = s["anim_b"];
+            else if (s.contains("points_b")) o.erase("anim");
+            const roto::Xf par = roto::parentTransformAt(items, s, frame);
+            const bool closed = s.value("closed", true);
+            auto po = roto::flatten(roto::curveAt(o, frame, par), closed, 1.0);
+            auto pe = roto::flatten(roto::curveAt(s, frame, par), closed, 1.0);
+            std::vector<roto::V2> sp;
+            for (auto& p : po) {
+                ImVec2 q = xf.toScreen(p.x, p.y);
+                sp.push_back({q.x, q.y});
+            }
+            polyline(dl, sp, other, closed, 1.5f);
+            if (!po.empty() && !pe.empty())
+                dl->AddLine(xf.toScreen(po[0].x, po[0].y), xf.toScreen(pe[0].x, pe[0].y), IM_COL32(200, 200, 200, 70), 1.0f);
+        }
+        const char* t = editB ? "SPLINEWARP: editing B (destination)  -  A shown in blue" : "SPLINEWARP: editing A (source)  -  B shown in green";
+        const ImVec2 tp(p0.x + 80, p0.y + 28), ts = ImGui::CalcTextSize(t);
+        dl->AddRectFilled(ImVec2(tp.x - 4, tp.y - 2), ImVec2(tp.x + ts.x + 4, tp.y + ts.y + 2), IM_COL32(20, 20, 20, 190), 3);
+        dl->AddText(tp, IM_COL32(220, 220, 220, 230), t);
+    }
 
     // Drop selections that no longer exist (undo, deleted items).
     std::vector<Disp> ds;
@@ -481,7 +514,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         const char* tip;
     };
     std::vector<TB> tools = {
-        {Tool::Select, "Sel", "Select (Q): points, tangents, feather points, shapes, the transform jack"},
+        {Tool::Select, "Sel", "Select: points, tangents, feather points, shapes, the transform jack"},
         {Tool::Bezier, "Bez", "Bezier (V): click to add points, drag for tangents"},
         {Tool::BSpline, "BSp", "B-spline (V cycles): click to add control points"},
         {Tool::Ellipse, "Ell", "Ellipse (V cycles): drag a box, Shift for a circle"},
@@ -768,6 +801,16 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                             break;
                         }
                 }
+                if (hs >= 0 && io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
+                    // Ctrl+drag a point: pull its own feather out (or in) from wherever it is now
+                    r.sel = {{hs, hp}};
+                    r.curShape = hs;
+                    r.tanShape = hs;
+                    r.tanPoint = hp;
+                    r.drag = Drag::PointFeather;
+                    r.orig[hs] = roto::pointsAt(items[hs], frame);
+                    break;
+                }
                 if (hs >= 0) {
                     std::pair<int, int> key{hs, hp};
                     if (io.KeyShift) {
@@ -907,7 +950,8 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Drag::Points:
             case Drag::TanL:
             case Drag::TanR:
-            case Drag::Feather: {
+            case Drag::Feather:
+            case Drag::PointFeather: {
                 if (!movedEnough && !r.dragChanged) break;
                 if (r.dragChanged && !mouseMoved) break;  // nothing new
                 if (!r.dragChanged) app.checkpoint();
@@ -951,7 +995,12 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                     Pts pts = r.orig[r.tanShape];
                     Pt& p = pts[r.tanPoint];
                     roto::V2 m = d.Minv.apply(mouseImg.x, mouseImg.y);  // mouse in the item's own space
-                    if (r.drag == Drag::Feather) {
+                    if (r.drag == Drag::PointFeather) {
+                        // by how far the mouse has moved since the press (no jump on the first move)
+                        roto::V2 m0 = d.Minv.apply(r.dragStartImg.x, r.dragStartImg.y);
+                        p.fx += m.x - m0.x;
+                        p.fy += m.y - m0.y;
+                    } else if (r.drag == Drag::Feather) {
                         // Relative to where the curve passes (the point itself for Beziers).
                         Pts bez = roto::toBezier(items[r.tanShape], pts);
                         p.fx = m.x - bez[r.tanPoint].x;
@@ -1010,6 +1059,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 r.sel.clear();
                 for (int i = 0; i < (int)pts.size(); ++i) r.sel.insert({index, i});
                 r.curShape = index;
+                r.tool = Tool::Select;  // back to selecting once the shape is made
             }
         } else if (r.drag == Drag::Marquee) {
             ImVec2 a(std::min(r.dragStartScreen.x, mouse.x), std::min(r.dragStartScreen.y, mouse.y));
@@ -1053,7 +1103,6 @@ bool rotoHotkeys(App& app, UiState& ui) {
     auto pressed = [&](ImGuiKey k, bool ctrl = false, bool shift = false) {
         return io.KeyCtrl == ctrl && io.KeyShift == shift && !io.KeyAlt && ImGui::IsKeyPressed(k, false);
     };
-    if (pressed(ImGuiKey_Q)) { setTool(app, ui, n, Tool::Select); return true; }
     if (pressed(ImGuiKey_V)) {
         Tool next = r.tool == Tool::Bezier ? Tool::BSpline : r.tool == Tool::BSpline ? Tool::Ellipse
                     : r.tool == Tool::Ellipse ? Tool::Rectangle : Tool::Bezier;
@@ -1116,6 +1165,46 @@ bool rotoHotkeys(App& app, UiState& ui) {
 
 // ------------------------------------------------------------------ properties
 
+void drawSplineWarpSwitch(App& app, UiState& ui, Node* n) {
+    const bool editB = n->params.flag("edit_b", false);
+    ImGui::SeparatorText("curves");
+    auto button = [&](const char* label, bool on, const char* tip) {
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.55f, 0.2f, 1));
+        bool pressed = ImGui::Button(label);
+        if (on) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+        return pressed && !on;
+    };
+    bool flip = button("edit A (source)", !editB, "Draw and shape the source curves: what gets moved.");
+    ImGui::SameLine();
+    flip |= button("edit B (destination)", editB, "Shape the destination curves: where the source curves end up. New shapes start with B = A.");
+    if (!flip) return;
+    // the roto tools always edit "points": swap the two curves of every shape, and the flag
+    const std::string name = n->name;
+    app.checkpoint();
+    app.edit([name](Comp& c) {
+        Node* x = c.find(name);
+        if (!x) return;
+        json& sh = x->params.data["shapes"];
+        if (sh.is_array())
+            for (auto& s : sh) {
+                if (!s.is_object() || roto::isLayer(s) || roto::isStroke(s)) continue;
+                if (!s.contains("points_b")) {  // B was still the same as A
+                    if (s.contains("points")) s["points_b"] = s["points"];
+                    if (s.contains("anim")) s["anim_b"] = s["anim"];
+                }
+                std::swap(s["points"], s["points_b"]);
+                json a = s.contains("anim") ? s["anim"] : json(), b = s.contains("anim_b") ? s["anim_b"] : json();
+                if (b.is_null()) s.erase("anim");
+                else s["anim"] = b;
+                if (a.is_null()) s.erase("anim_b");
+                else s["anim_b"] = a;
+            }
+        x->params.data["edit_b"] = !x->params.flag("edit_b", false);
+    });
+    ui.roto.sel.clear();
+}
+
 void drawRotoPanel(App& app, UiState& ui, Node* n) {
     RotoState& r = ui.roto;
     const json& items = itemsOf(n);
@@ -1143,6 +1232,7 @@ void drawRotoPanel(App& app, UiState& ui, Node* n) {
         });
     };
 
+    if (n->type != "SplineWarp") {  // (a SplineWarp's curves make no matte)
     row("output");
     {
         std::string out = n->params.str("output", paint ? "rgba" : "alpha");
@@ -1192,8 +1282,10 @@ void drawRotoPanel(App& app, UiState& ui, Node* n) {
             ImGui::TextDisabled("shutter offset");
         }
     }
+    }
     row("tools");
-    ImGui::TextDisabled(paint ? "Q select  V shapes  N brush/eraser  C clone/reveal  X blur" : "Q select   V Bezier / B-spline / Ellipse / Rectangle");
+    ImGui::TextDisabled(paint ? "V shapes  N brush/eraser  C clone/reveal  X blur  (Ctrl+drag a point: its feather)"
+                              : "V Bezier / B-spline / Ellipse / Rectangle  (Ctrl+drag a point: its feather)");
     row("");
     kit::checkbox("autokey", &r.autokey);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("On: editing a shape sets a key at the current frame.\nOff: edits apply to the whole animation.");
@@ -1691,7 +1783,7 @@ void drawRotoPanel(App& app, UiState& ui, Node* n) {
                 if (!c.is_null()) x["transform"]["center"] = c;
             });
         }
-        // the extra matrix (Nuke's roto "extra matrix": a corner pin / projective transform,
+        // the extra matrix (the classic roto "extra matrix": a corner pin / projective transform,
         // applied before the controls above)
         if (s.contains("matrix") && s["matrix"].is_array() && s["matrix"].size() == 9) {
             const json& m = s["matrix"];

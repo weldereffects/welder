@@ -260,7 +260,7 @@ public:
                 float A = c[3];
                 for (int k = 0; k < 4; ++k)
                     if (oc[k] >= 0) o[oc[k]] = c[k] + o[oc[k]] * (1 - A);  // over the background
-                if (oz >= 0) o[oz] = z[i];  // 1 / distance, like Nuke
+                if (oz >= 0) o[oz] = z[i];  // 1 / distance, as is standard
                 if (vectors)
                     for (int k = 0; k < 4; ++k)
                         if (ov[k] >= 0) o[ov[k]] = vec[i * 4 + k];

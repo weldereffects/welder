@@ -10,7 +10,7 @@
 #   (default ../deps/ocio-win) enables colour management.
 # Optional: NCNN_WIN=<ncnn install built with tools/build_ncnn.sh ... --windows>
 # Optional: PYTHON_WIN=<CPython for Windows from tools/fetch_python_win.sh> (default ../deps/python-win;
-#           fetched when missing) - shipped as python\ for the Nuke importer.
+#           fetched when missing) - shipped as python\ for the .nk importer.
 #   (default ../deps/ncnn-win) enables the RIFE node; its models come from
 #   models/rife (tools/fetch_rife_models.sh fetches them if missing).
 # Output: dist/welder-<version>-win64.zip
@@ -75,13 +75,13 @@ fi
 mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/imgui/fonts/Roboto-Medium.ttf" "$STAGE/bin/fonts/"
 [ -d "$BUILD/ofx-test-plugins" ] && cp -r "$BUILD/ofx-test-plugins" "$STAGE/ofx-test-plugins" && rm -rf "$STAGE/ofx-test-plugins/.glstub"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
-# Python for the Nuke importer (File > Import, pasting nodes copied in Nuke)
+# Python for the .nk importer (File > Import, pasting nodes copied in another .nk app)
 PYTHON_WIN="${PYTHON_WIN:-$ROOT/../deps/python-win}"
 [ -f "$PYTHON_WIN/python.exe" ] || "$ROOT/tools/fetch_python_win.sh" "$PYTHON_WIN" || true
 if [ -f "$PYTHON_WIN/python.exe" ]; then
   cp -r "$PYTHON_WIN" "$STAGE/python"
 else
-  echo "(no Python for Windows: the Nuke importer will need one installed)"
+  echo "(no Python for Windows: the .nk importer will need one installed)"
 fi
 # The ML worker (Python; the AI nodes) next to the executable
 mkdir -p "$STAGE/bin/ml"
@@ -91,10 +91,10 @@ find "$STAGE/bin/ml" -name __pycache__ -prune -exec rm -rf {} +
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$STAGE/"
-mkdir -p "$STAGE/examples/nuke"
+mkdir -p "$STAGE/examples/nk"
 cp "$ROOT"/examples/*.weld "$STAGE/examples/"
-cp "$ROOT"/examples/nuke/*.nk "$STAGE/examples/nuke/"
-python3 "$ROOT/tools/nk2strata.py" "$STAGE/examples/nuke/shot010_comp_v003.nk" -q   # pre-translated copy
+cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"
+python3 "$ROOT/tools/nk2strata.py" "$STAGE/examples/nk/shot010_comp_v003.nk" -q   # pre-translated copy
 cp "$ROOT/tools/windows/README-WINDOWS.txt" "$STAGE/"
 cp "$ROOT/tools/windows/try-it.bat" "$STAGE/"
 cp "$ROOT/tools/windows/Welder.bat" "$STAGE/"
@@ -111,7 +111,7 @@ PY
 #   welder-<v>-win64-rife-models.zip   bin/models/rife (the RIFE node's networks)
 #   welder-<v>-win64-tests.zip    the engine and EXR self-tests
 #   welder-<v>-win64-ofx-tests.zip  the OFX host test and its test plugins
-#   welder-<v>-win64-python.zip   python/ (runs the Nuke importer: import, paste from Nuke)
+#   welder-<v>-win64-python.zip   python/ (runs the .nk importer: import, paste from .nk apps)
 python3 - "$ROOT/dist" "welder-$VERSION-win64" <<'PY'
 import os, sys, zipfile
 dist, top = sys.argv[1], sys.argv[2]

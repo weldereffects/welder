@@ -1,6 +1,6 @@
 // Keying: ScreenKeyer (Keylight-style colour-difference keyer with despill and
 // matte controls), IBKColour + IBKGimme (image-based keying with a clean
-// plate), ChromaKeyer, Keyer (Nuke's luminance / channel keyer with a range),
+// plate), ChromaKeyer, Keyer (the classic luminance / channel keyer with a range),
 // HueKeyer, Difference and Despill.
 //
 // Colours are scene-linear RGB. Keyers write the matte to alpha and leave every
@@ -282,7 +282,7 @@ public:
     }
 };
 
-// ------------------------------------------------------------------ Keyer (Nuke)
+// ------------------------------------------------------------------ Keyer 
 // params: operation, range [A, B, C, D] (0 below A, ramps to 1 at B, 1 to C,
 // ramps to 0 at D), invert. The key value goes to alpha.
 class KeyerNode : public Node {

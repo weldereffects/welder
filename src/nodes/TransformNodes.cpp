@@ -148,7 +148,7 @@ bool gpuWarp(const Image& src, const Mat3& inv, const Filter& f, const SampleOpt
 }
 
 // Shared implementation for matrix-driven nodes.
-// Transforms concatenate, like Nuke's: a chain of them (Transform, Position,
+// Transforms concatenate, as is standard: a chain of them (Transform, Position,
 // CornerPin2D, Tracker, PlanarTracker, WarpStabilize, and a Reformat at its
 // end) multiplies its matrices and samples the source once, with the last
 // node's filter - so stacked transforms cost one resample and don't soften
@@ -304,13 +304,13 @@ public:
     }
 };
 
-// Transform, with Nuke's knobs: translate, rotate (deg, CCW), scale (one
+// Transform, with the .nk knobs: translate, rotate (deg, CCW), scale (one
 // value or [w, h]), skewX / skewY with skew_order ("XY" | "YX"; the older
 // "skew" [x, y] still reads), center, invert, filter, clamp, black_outside,
 // motionblur (0 = off; the quality: more samples the higher), shutter (frames),
 // shutteroffset ("centred" | "start" | "end" | "custom", with
 // shuttercustomoffset). Scale, then skew, then rotate, then translate, about
-// the centre (Nuke's SRT).
+// the centre (the classic SRT).
 class TransformNode : public MatrixNode {
 public:
     virtual Mat3 matrixAt(Engine& e, double f) {
@@ -613,7 +613,7 @@ public:
     }
 };
 
-// ReferenceLink: Nuke's reference-linked corner pins / transforms / trackers, as one node. The
+// ReferenceLink: the classic reference-linked corner pins / transforms / trackers, as one node. The
 // node on its link input (a Tracker, PlanarTracker, CornerPin2D, Transform or any 2D transform)
 // supplies the motion; this node applies that motion relative to its own reference frame:
 // M(frame) * M(reference)^-1 (match-move), or its inverse (stabilize). Many ReferenceLinks can
@@ -688,7 +688,7 @@ public:
 // resize ("none"|"width"|"height"|"fit"|"fill"|"distort"), center (bool), flip, flop, filter.
 class ReformatNode : public MatrixNode {
 public:
-    // Nuke's type: "to format" (format, or the project's), "to box" (box_width /
+    // the classic type: "to format" (format, or the project's), "to box" (box_width /
     // box_height; force the shape with box_fixed, else the height follows the
     // input's aspect), "scale" (scale, one value or [w, h]). Older comps: a
     // scale param without format means "scale".
@@ -754,7 +754,7 @@ public:
     bool concatenates() const override { return false; }  // it crops to its format: a later transform can't fold it in
     Box dod(Engine& e, double frame) override {
         Box b = MatrixNode::dod(e, frame);
-        if (params.flag("black_outside", false)) b = b.pad(1, 1);  // a black edge, as Nuke's
+        if (params.flag("black_outside", false)) b = b.pad(1, 1);  // a black edge, as is standard
         if (!params.flag("pbb", false)) b = b.intersect(format(e, frame).box());  // preserve bounding box off: the format
         return b;
     }
@@ -1076,7 +1076,7 @@ public:
         Format fm = format(a.engine, a.frame);
         const double W = fm.width, H = fm.height;
         lens::Lens L = lensAt(a.frame);
-        if (stmap()) {  // R, G = where to sample the source, normalised (Nuke's STMap convention)
+        if (stmap()) {  // R, G = where to sample the source, normalised (the classic STMap convention)
             for (int y = a.region.y1; y < a.region.y2; ++y)
                 for (int x = a.region.x1; x < a.region.x2; ++x) {
                     double sx, sy;

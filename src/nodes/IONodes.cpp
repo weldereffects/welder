@@ -33,7 +33,7 @@ size_t fileCacheBytes() {
 
 
 // ------------------------------------------------------------------ Read
-// Nuke's Read knobs:
+// the classic Read knobs:
 //   file (#### or %04d for sequences), proxy (a smaller version, used when the
 //   viewer works at a reduced scale), format (the file's size, filled in when a
 //   file is picked; for proxies), first / last (Frame Range) with before / after
@@ -159,7 +159,7 @@ public:
         return std::nullopt;
     }
 
-    // Nuke's checkerboard for missing frames.
+    // the classic checkerboard for missing frames.
     std::shared_ptr<ExrFile> checkerboard() const {
         auto f = std::make_shared<ExrFile>();
         f->format = comp ? comp->format : Format();
@@ -412,7 +412,7 @@ public:
         j["format"] = {f->format.width, f->format.height};
         j["pixel_aspect"] = f->format.pixelAspect;
         j["bbox"] = {f->image->bounds.x1, f->image->bounds.y1, f->image->bounds.x2, f->image->bounds.y2};
-        json md = json::object();  // as Nuke's Metadata tab lists it
+        json md = json::object();  // as the classic Metadata tab lists it
         md["input/filename"] = path(*ff);
         md["input/frame"] = *ff;
         md["input/width"] = f->format.width;
@@ -475,7 +475,7 @@ public:
         if (m) m->close();
     }
 
-    // Nuke's file type: picking one sets the file's extension; typing a file
+    // the classic file type: picking one sets the file's extension; typing a file
     // with another extension picks its type.
     void paramsChanged() override {
         std::string f = params.str("file"), t = params.str("file_type", "");
@@ -499,7 +499,7 @@ public:
     }
 
     void execute(Engine& e, double frame) override {
-        // Nuke's "limit to range": frames outside it aren't written
+        // the classic "limit to range": frames outside it aren't written
         if (params.flag("use_limit", false) &&
             (frame < params.num("first", frame, -1e30) - 1e-9 || frame > params.num("last", frame, 1e30) + 1e-9))
             return;

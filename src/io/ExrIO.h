@@ -3,7 +3,7 @@
 // Reads every compression OpenEXR supports (zip, zips, piz, rle, pxr24, b44,
 // b44a, dwaa, dwab, htj2k), scanline and tiled files, and multi-part files.
 // Channels from extra parts are named "<part>.<channel>" when they have no
-// layer prefix of their own, which matches how Nuke presents multi-part EXRs.
+// layer prefix of their own, which matches how compositors present multi-part EXRs.
 #pragma once
 
 #include <map>

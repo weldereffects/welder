@@ -1,4 +1,4 @@
-// Frame lists as Nuke writes them: "1040-1105", "1-100x2" (every 2nd),
+// Frame lists as the .nk format writes them: "1040-1105", "1-100x2" (every 2nd),
 // "1,5,10", "1-10 20-30", single frames, negative frames ("-5--1").
 #pragma once
 

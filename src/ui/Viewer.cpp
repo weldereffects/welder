@@ -119,7 +119,7 @@ void viewerFit(ViewerState& v, ImVec2 size) {
 }
 
 // The viewer's display transform: the comp's working space through the
-// display / view chosen in the toolbar (stored with the comp, like Nuke's viewer process).
+// display / view chosen in the toolbar (stored with the comp, as is standard viewer process).
 std::shared_ptr<const color::GpuShader> viewerTransform(App& app) {
     if (!app.comp || !color::haveOCIO()) return nullptr;
     const auto& pr = app.comp->project;
@@ -235,8 +235,8 @@ void drawViewer(App& app, UiState& ui) {
             v.dirtyTexture = true;
             if (r.image) v.layers = layersOf(r.image->channels);
         }
-        // Switching what's viewed (viewer inputs 1 / 2 ..., another node) keeps the zoom and pan, like
-        // Nuke, so plate and comp can be flipped at the same spot; only the very first image fits, or one
+        // Switching what's viewed (viewer inputs 1 / 2 ..., another node) keeps the zoom and pan, so
+        // plate and comp can be flipped at the same spot; only the very first image fits, or one
         // that would land entirely off screen (checked once the viewport size is known).
         if (firstOfNode && r.image) {
             if (!hadImage) v.fitPending = true;
@@ -583,37 +583,42 @@ void drawViewer(App& app, UiState& ui) {
     }
 
     // Roto shapes and tools (when a Roto node's properties are open).
-    if (v.overlays || activeRoto(app)) {
+    if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawRotoViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    if (v.overlays || activeTracker(app)) {
+    if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    if (v.overlays || activePlanar(app)) {
+    if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawPlanarViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    if (v.overlays || activeTransform2D(app)) {
+    if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawTransformViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    {
+    if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawViewer3DIn2D(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    if (activeFlowField(app)) {
+    if (v.overlays && activeFlowField(app)) {
         ViewXf xf{center, v.pan, v.zoom};
         drawFlowPaintViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    if (activeTrackMask(app)) {
+    if (v.overlays && activeTrackMask(app)) {
         ViewXf xf{center, v.pan, v.zoom};
         drawTrackMaskViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
-    if (v.overlays || activeCamTracker(app)) {
+    if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawCamTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+    }
+    if (!v.overlays) {  // Q hid the shapes and handles: say so, so a tool that ignores clicks isn't a mystery
+        const char* t = "overlays off [Q]";
+        ImVec2 ts = ImGui::CalcTextSize(t);
+        dl->AddText(ImVec2(p1.x - ts.x - 10, p1.y - ts.y - 8), IM_COL32(200, 200, 200, 150), t);
     }
     if (!res.error.empty()) {
         std::string e = "ERROR: " + res.error;
@@ -660,7 +665,7 @@ void drawViewer(App& app, UiState& ui) {
         ImGui::SetNextItemWidth(160);
         ImGui::SliderFloat("gamma", &v.gamma, 0.2f, 4.0f, "%.2f");
         ImGui::Checkbox("full resolution (no automatic downscale)", &v.fullRes);
-        ImGui::Checkbox("overlays (format, bbox)  [O]", &v.overlays);
+        ImGui::Checkbox("overlays (shapes, handles, format, bbox)  [Q]", &v.overlays);
         ImGui::Checkbox("matte overlay  [M]", &v.matte);
         bool paused = app.viewPaused;
         if (ImGui::Checkbox("pause updates  [P]", &paused)) app.viewPaused = paused;

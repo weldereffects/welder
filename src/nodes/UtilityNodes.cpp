@@ -151,6 +151,7 @@ void registerTransformNodes();
 void registerFilterNodes();
 void registerGlowNodes();
 void registerPrecompNode();
+void registerSplineWarp();
 void registerRetimeNodes();
 void registerCameraTrackerNodes();
 void registerScanlineRender();
@@ -180,6 +181,7 @@ void registerBuiltinNodes() {
     registerFilterNodes();
     registerGlowNodes();
     registerPrecompNode();
+    registerSplineWarp();
     registerUtilityNodes();
     registerRotoNodes();
     registerKeyerNodes();

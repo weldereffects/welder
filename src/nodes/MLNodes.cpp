@@ -404,7 +404,7 @@ public:
         for (int y = a.region.y1; y < a.region.y2; ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float v = d.at(x, y, 0);
-                out.px(x, y)[z] = v > 1e-9f ? 1.0f / v : 0.0f;  // Nuke's depth.Z: 1 / distance
+                out.px(x, y)[z] = v > 1e-9f ? 1.0f / v : 0.0f;  // the classic depth.Z: 1 / distance
             }
     }
     std::optional<cam3d::Camera> camera(double f) override {
@@ -426,7 +426,7 @@ public:
 
 // ================================================================= Depth
 // Video Depth Anything: depth for the whole shot, steady from frame to frame. The worker writes
-// "Z": relative disparity (near ~ 1), or metres for the metric models; both become Nuke's depth.Z
+// "Z": relative disparity (near ~ 1), or metres for the metric models; both become the classic depth.Z
 // (1 / distance in metres for metric; the disparity as is for relative).
 class DepthNode : public MLNode {
 public:

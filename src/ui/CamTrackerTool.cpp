@@ -6,7 +6,7 @@
 // and selection: click or drag a box (Shift adds, Ctrl removes), Delete
 // deletes the selected tracks, Esc stops tracking or solving.
 // Panel: track features, solve, scene orientation from the selected points,
-// exports (Camera node, Card3D on the selection, Nuke / .chan / Blender files).
+// exports (Camera node, Card3D on the selection, .nk / .chan / Blender files).
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -751,11 +751,11 @@ void drawCamTrackerPanel(App& app, UiState& ui, Node* n) {
         });
     };
     std::shared_ptr<const camsolve::Solution> sp = sol;
-    if (ImGui::Button("Nuke .nk")) saveAs("Export camera (Nuke)", ".nk", [sp, name] { return camexport::nukeCamera(*sp, name + "_cam"); });
+    if (ImGui::Button(".nk")) saveAs("Export camera ", ".nk", [sp, name] { return camexport::nkCamera(*sp, name + "_cam"); });
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("A Camera2 node: File > Import Script, or paste the file's text into the node graph");
     ImGui::SameLine();
     if (ImGui::Button(".chan")) saveAs("Export camera (.chan)", ".chan", [sp] { return camexport::chan(*sp); });
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("frame tx ty tz rx ry rz vfov (rotation order ZXY): Nuke's Camera import chan file, Houdini, Maya");
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("frame tx ty tz rx ry rz vfov (rotation order ZXY): a camera .chan file for Houdini, Maya and other apps");
     ImGui::SameLine();
     double fps = app.comp->fps;
     if (ImGui::Button("Blender .py")) saveAs("Export camera (Blender)", ".py", [sp, name, fps] { return camexport::blender(*sp, name, fps); });

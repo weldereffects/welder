@@ -1723,7 +1723,7 @@ void App::pollTracking() {
                 if (r.track < (int)tracks.size()) track::setKey(tracks[r.track], {r.frame, r.x, r.y, r.score, false});
             n->paramsChanged();
         });
-        frame = res.back().frame;  // follow the track, like Nuke
+        frame = res.back().frame;  // follow the track, as is standard
         requestView();
     }
     if (!running && track_.joinable()) track_.join();
@@ -1975,7 +1975,7 @@ void App::batchLoop(RenderRequest r) {
     watcher.join();
 }
 
-// Nuke's frame server: the comp saved to a temporary file, rendered by several
+// the classic frame server: the comp saved to a temporary file, rendered by several
 // `welder render` processes at once. Image sequences split their frames into
 // one contiguous chunk per process; a movie needs its frames in order, so each
 // movie Write gets a process of its own. Progress comes from their logs.
@@ -2241,7 +2241,7 @@ std::string App::toolsDir() const {
     return "";
 }
 
-// Python for the Nuke importer: the copy shipped next to Welder (Windows
+// Python for the .nk importer: the copy shipped next to Welder (Windows
 // builds bundle one), then whatever is installed.
 std::string App::userGizmoDir() const {
     if (!settingsPath.empty()) return (fs::path(settingsPath).parent_path() / "gizmos").string();
@@ -2250,7 +2250,7 @@ std::string App::userGizmoDir() const {
 
 std::vector<std::string> App::gizmoDirs() const {
     std::vector<std::string> d = {userGizmoDir()};
-    for (const char* var : {"STRATA_GIZMO_PATH", "NUKE_PATH"})
+    for (const char* var : {"STRATA_GIZMO_PATH"})
         if (const char* v = std::getenv(var)) {
             std::string s = v;
 #if defined(_WIN32)
@@ -2271,7 +2271,6 @@ std::vector<std::string> App::gizmoDirs() const {
 #else
     const char* home = std::getenv("HOME");
 #endif
-    if (home) d.push_back((fs::path(home) / ".nuke").string());
     return d;
 }
 
@@ -2308,7 +2307,7 @@ bool App::runImporter(const std::vector<std::string>& args, std::string* err) {
     std::string log = (fs::path(cacheDir("tmp")) / "strata_nk2strata.log").string();
     auto pys = pythonCandidates();
     if (pys.empty()) {
-        if (err) *err = "the Nuke importer needs Python 3 (the Windows build ships one in python\\; reinstall, or install Python 3)";
+        if (err) *err = "the .nk importer needs Python 3 (the Windows build ships one in python\\; reinstall, or install Python 3)";
         return false;
     }
     std::string lastErr;
@@ -2327,7 +2326,7 @@ bool App::runImporter(const std::vector<std::string>& args, std::string* err) {
         while (proc->running()) {
             if (std::chrono::steady_clock::now() - t0 > std::chrono::seconds(120)) {
                 proc->kill();
-                if (err) *err = "the Nuke importer took too long";
+                if (err) *err = "the .nk importer took too long";
                 return false;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -2352,7 +2351,7 @@ std::vector<std::string> App::gizmoArgs() const {
     return a;
 }
 
-bool App::importNuke(const std::string& nkPath, std::string* err) {
+bool App::importNk(const std::string& nkPath, std::string* err) {
     fs::path nk(nkPath);
     fs::path out = nk;
     out.replace_extension(".weld");
@@ -2374,7 +2373,7 @@ bool App::importNuke(const std::string& nkPath, std::string* err) {
     return true;
 }
 
-json App::nukeToNodes(const std::string& nkText, std::string* err) {
+json App::nkToNodes(const std::string& nkText, std::string* err) {
     fs::path dir = cacheDir("tmp");
     std::string tag = std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count());
     fs::path in = dir / ("strata_paste_" + tag + ".nk"), out = dir / ("strata_paste_" + tag + ".json"),

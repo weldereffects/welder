@@ -1,4 +1,4 @@
-// The file browser, laid out like Nuke's: a toolbar (new folder, up, back,
+// The file browser, laid out the classic way: a toolbar (new folder, up, back,
 // forward), favourites and drives on the left, the folder's contents with
 // Name / Size / Modified (image sequences on one row: name_####.exr 1-100),
 // the path, "sequences" / "split seq" / a filter, Next / Open / Cancel, and a
@@ -591,7 +591,7 @@ void drawFileDialog(App& app, UiState& ui) {
         for (auto& dv : drv) placeRow(dv, true, -1);
     }
     ImGui::EndChild();
-    // + edit - under the places, as in Nuke (drawn over the bottom of the column)
+    // + edit - under the places, as is standard (drawn over the bottom of the column)
     ImGui::SameLine();
     // the listing
     ImGui::BeginGroup();
@@ -753,7 +753,7 @@ void drawFileDialog(App& app, UiState& ui) {
                 {"all files", ""},
                 {"images", "*.exr *.dpx *.tif *.tiff *.png *.jpg *.jpeg *.tga *.bmp *.hdr"},
                 {"movies", "*.mov *.mp4 *.mkv *.avi *.mxf *.m4v *.webm *.mts"},
-                {"Nuke scripts", "*.nk"},
+                {".nk scripts", "*.nk"},
                 {"Welder comps", "*.weld *.strata"}};
             for (auto& [label, f] : presets)
                 if (ImGui::Selectable((std::string(label) + (f.empty() ? "" : "   " + f)).c_str(), d.filter == f)) d.filter = f;

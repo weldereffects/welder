@@ -1,12 +1,12 @@
 // studio.json: a facility's own defaults, kept out of the code - the slate's art and names,
-// the Nuke gizmo a studio's slates come from, and so on. One file per machine (or one shared
+// the .nk gizmo a studio's slates come from, and so on. One file per machine (or one shared
 // by pointing STRATA_STUDIO_CONFIG at it):
 //   $STRATA_STUDIO_CONFIG, else studio.json in the config folder
 //   (%APPDATA%\Welder on Windows, ~/.config/strata elsewhere). No file: no studio defaults.
 //
 //   {
 //     "slate": {"background": "//server/share/slate/art.exr", "vendor": "...", "show": "...", "artist": "..."},
-//     "nuke":  {"slate_gizmos": ["MY_SLATE_GIZMO"],   // Nuke classes (or Group names) imported as Slate nodes
+//     "nk":    {"slate_gizmos": ["MY_SLATE_GIZMO"],   // .nk classes (or Group names) imported as Slate nodes
 //               "slate_gizmo_export": "MY_SLATE_GIZMO"} // the class Slate nodes are exported as
 //   }
 #pragma once

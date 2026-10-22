@@ -1,4 +1,4 @@
-// Properties bin: a stack of node panels (most recent on top), like Nuke's.
+// Properties bin: a stack of node panels (most recent on top), as is standard.
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -567,7 +567,7 @@ void label(const KnobDef& k) {
         }
         return;
     }
-    if (!k.hideLabel && k.type != Knob::Bool)  // checkboxes carry their label on the right, as in Nuke
+    if (!k.hideLabel && k.type != Knob::Bool)  // checkboxes carry their label on the right, as is standard
         kit::rowLabel(k.label.c_str(), k.tip.c_str());
     else
         kit::skipLabel();
@@ -647,12 +647,12 @@ void numericKnob(Ctx& c, const KnobDef& k) {
         std::vector<std::string> cl = k.comps;
         if (cl.empty()) cl = n == 2 ? std::vector<std::string>{"x", "y"} : n == 3 ? std::vector<std::string>{"x", "y", "z"}
                                                                          : std::vector<std::string>{"x", "y", "r", "t"};
-        static std::set<std::string> splitOpen;  // Nuke's "2": scale as separate w / h
+        static std::set<std::string> splitOpen;  // the classic "2": scale as separate w / h
         const std::string ek = c.node->name + "/" + k.name;
         const bool uniformMode = k.splittable && n == 2 && !splitOpen.count(ek) && cur[0] == cur[1];
         const float icon = ImGui::GetFrameHeight();
         const float sp = ImGui::GetStyle().ItemSpacing.x;
-        // the chain between w and h (scale): linked = one value, as Nuke's "2" / "1"
+        // the chain between w and h (scale): linked = one value, as with the classic "2" / "1"
         auto chain = [&]() {
             if (!(k.splittable && n == 2)) return;
             if (kit::iconButton("##link", uniformMode ? kit::Icon::Chain : kit::Icon::ChainBroken, false,
@@ -718,7 +718,7 @@ void numericKnob(Ctx& c, const KnobDef& k) {
             if (ImGui::Button(k.button.c_str())) buttonAction(c, k.name + ":button");
         }
     } else if (k.type == Knob::Color) {
-        // Nuke-style: one slider drives all channels; expand for per-channel values.
+        // classic: one slider drives all channels; expand for per-channel values.
         static std::set<std::string> expanded;
         std::string ek = c.node->name + "/" + k.name;
         bool split = expanded.count(ek) || !(cur[0] == cur[1] && cur[1] == cur[2] && cur[2] == cur[3]);
@@ -810,7 +810,7 @@ void numericKnob(Ctx& c, const KnobDef& k) {
             if (!exprErr.empty()) tip += "error: " + exprErr + "\n";
             ImGui::SetTooltip("%s(= to edit)", tip.c_str());
         }
-        // Nuke's "=": the expression editor for the knob under the mouse
+        // the classic "=": the expression editor for the knob under the mouse
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Equal, false) && !ImGui::GetIO().KeyCtrl)
             openExprEditor(c, k, n, cur, defs);
     }
@@ -1114,8 +1114,8 @@ void knobBody(Ctx& c, const KnobDef& k);
 void infoKnob(Ctx& c, const KnobDef& k);
 void buttonAction(Ctx& c, const std::string& action);
 
-// Nuke's channel rows: a layer menu, then a box per channel (red / green / blue
-// / alpha in colour). Stored as Nuke would write it: "rgba", "rgb", "alpha",
+// the classic channel rows: a layer menu, then a box per channel (red / green / blue
+// / alpha in colour). Stored as the .nk format writes it: "rgba", "rgb", "alpha",
 // a layer name when all its channels are on, else a list ["R", "B"]. Merge's
 // A / B channels keep the layer name and list the boxes switched off in
 // "<knob>_off".
@@ -1375,7 +1375,7 @@ void knobBody(Ctx& c, const KnobDef& k) {
     const Params& p = c.node->params;
     if (k.type == Knob::Bool) {
         bool b = getBool(c.node, k.name, k.def.is_boolean() ? k.def.get<bool>() : false);
-        if (kit::checkbox(k.hideLabel ? "##b" : (k.label + "##b").c_str(), &b, k.tip.c_str())) {  // label on the right, as in Nuke
+        if (kit::checkbox(k.hideLabel ? "##b" : (k.label + "##b").c_str(), &b, k.tip.c_str())) {  // label on the right, as is standard
             c.app.checkpoint();
             change(c, k.name, [b](json& j) { j = b; });
         }
@@ -1402,7 +1402,7 @@ void knobBody(Ctx& c, const KnobDef& k) {
             ImGui::EndCombo();
         }
     } else if (k.type == Knob::Format) {
-        // Nuke's format menu: the project's (root.format), the named formats, or a size of its own
+        // the classic format menu: the project's (root.format), the named formats, or a size of its own
         const json* fv = findParam(c.node, k.name);
         const Format& rf = c.node->comp->format;
         int w = rf.width, h = rf.height;
@@ -1873,7 +1873,7 @@ void signalScopes(Ctx& c) {
     }
 }
 
-// ------------------------------------------------------------------ Keyer: Nuke's range graph
+// ------------------------------------------------------------------ Keyer: the classic range graph
 // What the operation measures across the input frame, as a histogram (computed in the background
 // at a small size), with the key curve over it: drag a corner (A, B, C, D), the top (B and C
 // together) or a side (A + B, C + D) - the whole shape or either side of it.
@@ -2327,7 +2327,7 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         }
         return;
     }
-    if (k.info == "copy_rows") {  // Nuke's Copy: "Copy channel [A channel] to [channel]", four rows
+    if (k.info == "copy_rows") {  // the classic Copy: "Copy channel [A channel] to [channel]", four rows
         Node* n = c.node;
         ChannelSet fromCh = n->input(1) ? c.app.channelsOf(n->input(1)->name) : ChannelSet{};
         ChannelSet toCh = n->input(0) ? c.app.channelsOf(n->input(0)->name) : rgbaChannels();
@@ -2584,7 +2584,7 @@ void buttonAction(Ctx& c, const std::string& action) {
         else c.app.startStabilizing(c.node->name);
         return;
     }
-    if (action == "write_render") {  // Nuke's Render dialog, for this Write
+    if (action == "write_render") {  // the classic Render dialog, for this Write
         openRenderDialog(c.app, c.ui, false, {c.node->name});
         return;
     }
@@ -2624,7 +2624,7 @@ void drawKnobs(Ctx& c, const NodeDef& def, const std::string& tab) {
     if (card) kit::endCard();
 }
 
-// The Node tab every node has (Nuke's): label, colours, hide input, disable, lifetime.
+// The Node tab every node has (the classic): label, colours, hide input, disable, lifetime.
 void nodeTab(Ctx& c) {
     Node* n = c.node;
     // ui-only fields (no re-render): label, font size, tile colour, hide input
@@ -2638,7 +2638,7 @@ void nodeTab(Ctx& c) {
             }
         });
     };
-    {  // label: shown under the name in the node graph ([value knob] works, as in Nuke)
+    {  // label: shown under the name in the node graph ([value knob] works, as is standard)
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("label");
         ImGui::SameLine(kit::labelWidth());
@@ -2680,7 +2680,7 @@ void nodeTab(Ctx& c) {
         bool hide = n->ui.value("hide_input", false);
         if (kit::checkbox("hide input", &hide)) setUi("hide_input", hide ? json(true) : json());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Don't draw the pipe into input 0 (the connection stays)");
-        if (n->type == "Read") {  // Nuke's postage stamp: a thumbnail on the node in the graph
+        if (n->type == "Read") {  // the classic postage stamp: a thumbnail on the node in the graph
             ImGui::SameLine();
             bool ps = n->ui.value("postage_stamp", true);
             if (kit::checkbox("postage stamp", &ps)) setUi("postage_stamp", ps ? json() : json(false));
@@ -2753,13 +2753,13 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
 
     const NodeDef* def = nodeDef(n->type);
     gDef = def;
-    // Tabs, as in Nuke: the node's own (named after it), any others its knobs
+    // Tabs, as is standard: the node's own (named after it), any others its knobs
     // name, and Node (label, colour, lifetime...).
     std::vector<std::string> extraTabs;
     if (def)
         for (auto& k : def->knobs)
             if (!k.tab.empty() && std::find(extraTabs.begin(), extraTabs.end(), k.tab) == extraTabs.end()) extraTabs.push_back(k.tab);
-    // every knob on a named tab (the Slate, like its Nuke gizmo): the first of them is the main tab
+    // every knob on a named tab (the Slate, like its .nk gizmo): the first of them is the main tab
     std::string mainTabName = n->type, mainTabKey;
     if (def && !extraTabs.empty() &&
         std::none_of(def->knobs.begin(), def->knobs.end(), [](const KnobDef& k) { return k.tab.empty(); })) {
@@ -2829,6 +2829,13 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
     } else if (n->type == "Tracker") {
         drawTrackerPanel(app, ui, n);
         for (const char* k : {"tracks", "transform", "reference_frame", "filter", "min_score", "pattern_update"}) shown.insert(k);
+    } else if (n->type == "SplineWarp" && def) {
+        drawKnobs(c, *def, mainTabKey);
+        for (auto& k : def->knobs) shown.insert(k.name);
+        drawSplineWarpSwitch(app, ui, n);
+        drawRotoPanel(app, ui, n);
+        shown.insert("shapes");
+        shown.insert("edit_b");
     } else if (n->type == "Roto" || n->type == "RotoPaint") {
         drawRotoPanel(app, ui, n);
         for (const char* k : {"shapes", "output", "premultiply", "motionblur", "shutter", "shutter_offset"}) shown.insert(k);
@@ -2937,8 +2944,8 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
                 ImGui::SetTooltip("Frames render once and are kept in\n%s\nThe timeline's cache button renders the whole range.",
                                   blender::cacheDir().c_str());
         }
-    } else if (n->type.rfind("Nuke:", 0) == 0) {
-        ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Unsupported Nuke node %s - passes input through.", n->type.substr(5).c_str());
+    } else if (isPlaceholderType(n->type)) {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "Unsupported .nk node %s - passes input through.", placeholderClass(n->type).c_str());
     }
     // Any params the schema doesn't know about.
     for (auto& [key, val] : n->params.data.items()) {
@@ -2994,7 +3001,7 @@ void setParamComp(json& v, int n, int k, double val, double frame, const std::ve
 void drawProperties(App& app, UiState& ui) {
     ImGui::Begin(ui.win("Properties").c_str());
     ui.noteHover("Properties");
-    // Nuke's bin toolbar: how many panels stay open, and clear them all.
+    // the classic bin toolbar: how many panels stay open, and clear them all.
     {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("max panels");

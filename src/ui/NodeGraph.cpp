@@ -1,6 +1,6 @@
 // Node graph: draw and edit the comp.
 //
-// Graph coordinates match Nuke's xpos/ypos (pixels, y down), so imported
+// Graph coordinates match the classic xpos/ypos (pixels, y down), so imported
 // scripts keep their layout. Positions live in Node::ui ("x", "y").
 #include <algorithm>
 #include <cctype>
@@ -22,7 +22,7 @@
 #include "nodes/PrecompNode.h"
 #include "io/MovieIO.h"
 #include "io/ImageIO.h"
-#include "core/NukeExport.h"
+#include "core/NkExport.h"
 #include "core/Schema.h"
 #include "imgui_internal.h"
 
@@ -49,7 +49,7 @@ bool isBackdrop(const Node* n) { return n->type == "Backdrop" || isPrecomp(n); }
 bool isNote(const Node* n) { return n->type == "StickyNote"; }
 bool isAnnotation(const Node* n) { return isBackdrop(n) || isNote(n); }
 
-// A node's label (Node tab) with Nuke's [value knob] filled in.
+// A node's label (Node tab) with the .nk [value knob] filled in.
 std::string expandLabel(const Node* n, std::string t) {
     size_t a;
     while ((a = t.find("[value ")) != std::string::npos) {
@@ -124,7 +124,7 @@ std::string subtitleOnly(const Node* n) {
         auto dot = id.rfind('.');
         return dot == std::string::npos ? id : id.substr(dot + 1);
     }
-    if (n->type.rfind("Nuke:", 0) == 0) return "(unsupported " + n->type.substr(5) + ")";
+    if (isPlaceholderType(n->type)) return "(unsupported " + placeholderClass(n->type) + ")";
     {  // value nodes: what they do
         char b[96];
         auto g = [&](const char* k, double d) { return n->params.num(k, 0, d); };
@@ -146,7 +146,7 @@ std::string subtitleOnly(const Node* n) {
         if (n->type == "Cycle") return "(" + n->params.str("mode_x", "normal") + ")";
         if (n->type == "Combine") return "(" + n->params.str("mode", "add") + ")";
     }
-    // Nuke's "(all)": the channels, when they aren't the node's usual ones
+    // the classic "(all)": the channels, when they aren't the node's usual ones
     if (std::string k = channelKnob(n); !k.empty() && n->type != "Merge") {
         std::string def, cur = channelText(n, k, &def);
         if (!cur.empty() && cur != def) return "(" + cur + ")";
@@ -156,9 +156,9 @@ std::string subtitleOnly(const Node* n) {
 
 bool hexagonal(const Node* n) { return n->type == "FrameHold" || n->type == "TimeOffset"; }
 
-// Nuke's postage stamp: Reads show a thumbnail above their name (Node tab: postage stamp).
+// the classic postage stamp: Reads show a thumbnail above their name (Node tab: postage stamp).
 bool hasStamp(const Node* n) { return n->type == "Read" && n->ui.value("postage_stamp", true); }
-constexpr float kStampW = 88;  // 16:9 inside, about the height Nuke gives its stamps
+constexpr float kStampW = 88;  // 16:9 inside, about the usual stamp height
 float stampHeight(const Node* n) { return hasStamp(n) ? std::round(kStampW * 9.0f / 16.0f) : 0.0f; }
 
 std::vector<std::string> noteLines(const Node* n) {
@@ -173,6 +173,9 @@ std::vector<std::string> noteLines(const Node* n) {
     }
     return lines;
 }
+
+// Nodes are whole, even sizes so their centres (and the pipes snapped to them) land on whole pixels.
+ImVec2 evenSize(float w, float h) { return ImVec2(2.0f * std::ceil(w / 2.0f), 2.0f * std::ceil(h / 2.0f)); }
 
 ImVec2 size(const Node* n) {
     if (n->type == "Dot") return ImVec2(kDot, kDot);
@@ -193,15 +196,15 @@ ImVec2 size(const Node* n) {
     const float stamp = stampHeight(n);
     if (stamp > 0) w = std::max(w, kStampW + 8);
     std::string sub = subtitle(n);
-    if (sub.empty()) return ImVec2(w, kNodeH + stamp);
+    if (sub.empty()) return evenSize(w, kNodeH + stamp);
     int lines = 1 + (int)std::count(sub.begin(), sub.end(), '\n');
-    for (size_t a = 0; a <= sub.size();) {  // labels widen the node, like Nuke's
+    for (size_t a = 0; a <= sub.size();) {  // labels widen the node, as is standard
         size_t b = sub.find('\n', a);
         if (b == std::string::npos) b = sub.size();
         w = std::max(w, std::min(300.0f, ImGui::CalcTextSize(sub.substr(a, b - a).c_str()).x * 0.82f + 16));
         a = b + 1;
     }
-    return ImVec2(w, kNodeHSub + (lines - 1) * (ImGui::GetFontSize() * 0.82f + 1) + stamp);
+    return evenSize(w, kNodeHSub + (lines - 1) * (ImGui::GetFontSize() * 0.82f + 1) + stamp);
 }
 
 // The postage stamps' textures (RGBA8, display-encoded), per node.
@@ -255,12 +258,12 @@ const Stamp* stampFor(App& app, const Node* n) {
 }
 
 ImU32 nodeColor(const Node* n) {
-    if (n->type.rfind("Nuke:", 0) == 0) return categoryColor("?");
+    if (isPlaceholderType(n->type)) return categoryColor("?");
     if (n->ui.contains("tile_color") && n->ui["tile_color"].is_array() && n->ui["tile_color"].size() >= 3) {  // Node tab colour
         const json& c = n->ui["tile_color"];
         return ImGui::ColorConvertFloat4ToU32(ImVec4(c[0].get<float>(), c[1].get<float>(), c[2].get<float>(), 1));
     }
-    if (n->params.has("tile_color")) {  // a colour of the node's own (Nuke's tile_color)
+    if (n->params.has("tile_color")) {  // a colour of the node's own (the classic tile_color)
         auto c = n->params.vec<4>("tile_color", 0, {0.5, 0.5, 0.5, 1});
         return ImGui::ColorConvertFloat4ToU32(ImVec4((float)c[0], (float)c[1], (float)c[2], 1));
     }
@@ -300,7 +303,11 @@ ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
         return ImVec2(p.x, p.y + std::min(s.y * 0.5f, 10.0f) + 14.0f * (i - Node::kKnobBase));
     }
     std::string label = n->inputLabel(i);
-    if (n->type == "Dot" || i == 0) {
+    if (n->type == "Dot") {  // pipes run through a Dot's centre, so a corner made with Dots is square
+        *dir = ImVec2(0, -1);
+        return ImVec2(p.x + s.x / 2, p.y + s.y / 2);
+    }
+    if (i == 0) {
         *dir = ImVec2(0, -1);
         return ImVec2(p.x + s.x / 2, p.y);
     }
@@ -327,6 +334,7 @@ ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
 ImVec2 outputPoint(const Node* n) {
     ImVec2 p = pos(n), s = size(n);
     if (precompOpen(n)) return ImVec2(p.x + s.x / 2, p.y + s.y + kTabH);
+    if (n->type == "Dot") return ImVec2(p.x + s.x / 2, p.y + s.y / 2);
     return ImVec2(p.x + s.x / 2, p.y + s.y);
 }
 
@@ -398,7 +406,7 @@ std::set<std::string> withContents(const Comp& c, std::set<std::string> names, b
 
 void createNode(App& app, UiState& ui, const std::string& type, const json& params, bool branch) {
     if (type == "Read" && !params.contains("file")) {
-        // As in Nuke: the browser first; each file opened (or Next) becomes a Read.
+        // As is standard: the browser first; each file opened (or Next) becomes a Read.
         const ImVec2 at0 = ui.graph.createAt;
         const bool atValid = ui.graph.createAtValid;
         openFileDialog(ui, "Read File(s)", false,
@@ -439,6 +447,10 @@ void createNode(App& app, UiState& ui, const std::string& type, const json& para
     }
     json params0 = params;
     if (type == "ReferenceLink" && !params0.contains("reference_frame")) params0["reference_frame"] = std::round(app.frame);
+    if (type == "Copy" && !params0.contains("from") && !params0.contains("layer_copy")) {  // a new Copy copies the alpha
+        params0["from"] = json::array({"A"});
+        params0["to"] = json::array({"A"});
+    }
     app.checkpoint();
     std::string level = ui.graph.level;
     app.edit([&app, type, params = params0, sel, at, base, branch, level](Comp& c) {
@@ -459,7 +471,7 @@ void createNode(App& app, UiState& ui, const std::string& type, const json& para
         }
         Node* s = c.find(sel);
         if (s && n->maxInputs() > 0) {
-            // Insert into the selected node's outputs, like Nuke (Shift: new branch instead).
+            // Insert into the selected node's outputs, as is standard (Shift: new branch instead).
             if (!branch)
                 for (Node* o : c.outputsOf(s))
                     for (size_t k = 0; k < o->inputs.size(); ++k)
@@ -611,11 +623,11 @@ void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths
         app.message("dropped: " + std::to_string(make.size()) + " node(s)");
         at.x += 130.0f * (float)make.size();  // anything pasted next goes beside them
     }
-    for (auto& nk : nkFiles) {  // a Nuke script dropped: its nodes, pasted where it landed
+    for (auto& nk : nkFiles) {  // a .nk script dropped: its nodes, pasted where it landed
         std::ifstream f(nk, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         std::string err;
-        json nodes = app.nukeToNodes(text, &err);
+        json nodes = app.nkToNodes(text, &err);
         if (!err.empty() || !nodes.is_array()) {
             app.message("error: " + fs::path(nk).filename().string() + ": " + err);
             continue;
@@ -659,7 +671,7 @@ bool graphShake(GraphState::Shake& s, ImVec2 delta, double now) {
     return s.flips.size() >= 6;
 }
 
-// Takes nodes out of their pipes (Nuke's extract): what fed each one now feeds what it fed, and its
+// Takes nodes out of their pipes (the classic extract): what fed each one now feeds what it fed, and its
 // own connections go. Connections among the nodes themselves stay. Returns a message.
 std::string extractNodes(Comp& c, const std::set<std::string>& names) {
     int moved = 0;
@@ -740,18 +752,18 @@ void graphCopy(App& app, bool cut) {
         }
         arr.push_back(jn);
     }
-    // Nuke's clipboard format (pastes into Nuke), carrying the exact nodes for Welder
+    // the classic clipboard format (pastes into .nk apps), carrying the exact nodes for Welder
     nk::ExportResult info;
     ImGui::SetClipboardText(nk::clipboardText(arr, &info).c_str());
-    std::string msg = std::string(cut ? "cut " : "copied ") + std::to_string(arr.size()) + " node(s) - paste in Welder or Nuke";
-    if (info.placeholders) msg += " (" + std::to_string(info.placeholders) + " have no Nuke equivalent: NoOps there)";
+    std::string msg = std::string(cut ? "cut " : "copied ") + std::to_string(arr.size()) + " node(s) - paste in Welder or a .nk app";
+    if (info.placeholders) msg += " (" + std::to_string(info.placeholders) + " have no .nk equivalent: NoOps there)";
     app.message(msg);
     for (auto& w : info.warnings) app.message("  " + w);
     if (cut) graphDelete(app);
 }
 
-// Text from Nuke's clipboard: a .nk fragment ("set cut_paste_input [stack 0]", "Blur {...}").
-static bool looksLikeNuke(const std::string& t) {
+// Text from the .nk clipboard: a .nk fragment ("set cut_paste_input [stack 0]", "Blur {...}").
+static bool looksLikeNk(const std::string& t) {
     if (t.find("cut_paste_input") != std::string::npos || t.find("push $cut_paste_input") != std::string::npos) return true;
     // a node block: Name {\n ... }
     size_t b = t.find(" {\n");
@@ -762,17 +774,17 @@ static bool looksLikeNuke(const std::string& t) {
 void graphPaste(App& app, UiState& ui) {
     const char* clipC = ImGui::GetClipboardText();
     std::string clip = clipC ? clipC : "";
-    json arr = nk::strataNodesIn(clip);  // copied in Welder (also valid Nuke text)
+    json arr = nk::strataNodesIn(clip);  // copied in Welder (also valid .nk text)
     if (arr.is_null()) try {
         json j = json::parse(clip);  // older Welder copies: plain JSON
         if (j.contains("strata_nodes")) arr = j["strata_nodes"];
     } catch (...) {
     }
-    if (arr.is_null() && looksLikeNuke(clip)) {  // nodes copied in Nuke
+    if (arr.is_null() && looksLikeNk(clip)) {  // nodes copied in another .nk app
         std::string err;
-        arr = app.nukeToNodes(clip, &err);
+        arr = app.nkToNodes(clip, &err);
         if (arr.is_null()) {
-            app.message("couldn't paste the Nuke nodes: " + err);
+            app.message("couldn't paste the .nk nodes: " + err);
             return;
         }
     }
@@ -865,7 +877,7 @@ void graphPasteNodes(App& app, UiState& ui, const json& arr) {
                 if (kv.size() > 1 && kv[1].is_string() && rename.count(kv[1].get<std::string>()))
                     c.setInput(made[i], made[i]->knobIndex(kv[0].get<std::string>()), c.find(rename[kv[1].get<std::string>()]));
             }
-            // The top of the pasted tree connects to the node that was selected, like Nuke.
+            // The top of the pasted tree connects to the node that was selected, as is standard.
             if (target && top[i] && !made[i]->input(0) && made[i]->maxInputs() > 0) {
                 bool isRoot = true;
                 for (size_t k = 0; k < ins.size(); ++k)
@@ -1210,7 +1222,7 @@ void graphConvertBox(App& app, Node* box) {
     });
 }
 
-// ---- gizmos: .gizmo (Nuke) and .sgizmo (Welder groups saved as files)
+// ---- gizmos: .gizmo  and .sgizmo (Welder groups saved as files)
 
 std::vector<GizmoEntry> listGizmos(const App& app) {
     std::vector<GizmoEntry> out;
@@ -1228,7 +1240,7 @@ std::vector<GizmoEntry> listGizmos(const App& app) {
             std::string ext = lower(p.extension().string());
             if (ext != ".gizmo" && ext != ".sgizmo") continue;
             std::string name = p.stem().string();
-            if (!seen.insert(lower(name)).second) continue;  // the first folder wins, like Nuke
+            if (!seen.insert(lower(name)).second) continue;  // the first folder wins, as is standard
             out.push_back({name, p.string(), ext == ".sgizmo"});
             if (out.size() > 2000) return out;
         }
@@ -1248,9 +1260,9 @@ void createGizmo(App& app, UiState& ui, const GizmoEntry& g) {
             err = e.what();
         }
     } else {
-        // an instance of the class, through the Nuke importer (which finds the .gizmo)
+        // an instance of the class, through the .nk importer (which finds the .gizmo)
         std::string nk = g.name + " {\n name " + g.name + "1\n}\n";
-        arr = app.nukeToNodes(nk, &err);
+        arr = app.nkToNodes(nk, &err);
     }
     if (arr.is_null() || arr.empty()) {
         app.message("couldn't load gizmo " + g.name + (err.empty() ? "" : ": " + err));
@@ -1885,7 +1897,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             std::string label = n->inputName(i);
             bool isMask = label == "mask";
             ImU32 col = isMask ? IM_COL32(150, 150, 150, 200) : IM_COL32(210, 210, 210, 230);
-            if (src && src->type != "Dot") {  // tinted by the node it comes from, as in Nuke 15
+            if (src && src->type != "Dot") {  // tinted by the node it comes from, as is standard
                 ImVec4 c = ImGui::ColorConvertU32ToFloat4(nodeColor(src));
                 const float mx = std::max({c.x, c.y, c.z, 0.01f}), k = 0.85f / mx;  // full brightness, same hue
                 c = ImVec4(std::min(1.f, c.x * k * 0.85f + 0.12f), std::min(1.f, c.y * k * 0.85f + 0.12f), std::min(1.f, c.z * k * 0.85f + 0.12f),
@@ -1921,7 +1933,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                     } else
                         dl->AddText(font, fs * 0.85f, ImVec2(grab.x + 4, grab.y - fs), IM_COL32(200, 200, 200, 220), label.c_str());
                 }
-            } else if (i < n->maxInputs() && isMask) {  // Nuke's side tab: drag from it to connect a mask
+            } else if (i < n->maxInputs() && isMask) {  // the classic side tab: drag from it to connect a mask
                 const float t = 6 * std::max(0.6f, g.zoom);
                 ImVec2 b = S(ip);
                 ImVec2 tip(b.x + 1 * g.zoom, b.y), back(b.x + t * 1.3f, b.y);
@@ -2001,6 +2013,58 @@ void drawNodeGraph(App& app, UiState& ui) {
                                              : "drag onto a node to connect this input");
         }
     }
+    // A node's top and bottom edges are generous grab zones for its pipes: the top for its main
+    // input (re-connect, or drop in empty space to disconnect), the bottom for a new pipe out of it.
+    // The middle of the node stays for selecting and moving, and nodes too small on screen to
+    // have room for the zones (zoomed far out) don't get them.
+    struct EdgeHit { Node* node = nullptr; int input = -1; bool bottom = false; };
+    auto edgeAt = [&](ImVec2 sp) -> EdgeHit {
+        EdgeHit best;
+        float bestD = 1e9f;
+        for (auto& up : comp.nodes) {
+            Node* n = up.get();
+            if (!vis(n) || isAnnotation(n) || n->type == "Dot") continue;
+            const ImVec2 p0 = S(pos(n)), sz = size(n);
+            const float w = sz.x * g.zoom, h = sz.y * g.zoom;
+            if (h < 14.0f) continue;
+            const float band = std::clamp(h * 0.3f, 5.0f, 12.0f), out = 8.0f, side = 6.0f;
+            if (sp.x < p0.x - side || sp.x > p0.x + w + side) continue;
+            const float top = p0.y, bot = p0.y + h;
+            if (sp.y >= top - out && sp.y <= top + band && n->maxInputs() > 0) {
+                // the top-edge input nearest the mouse (the main input in the middle, extra ones to its right)
+                int bi = -1;
+                float bx = 1e9f;
+                for (int i = 0; i < n->maxInputs(); ++i) {
+                    if (i == 1 || n->inputLabel(i) == "mask") continue;
+                    ImVec2 dir;
+                    const float ix = S(inputPoint(n, i, &dir)).x;
+                    if (dir.y >= 0) continue;
+                    if (std::fabs(ix - sp.x) < bx) { bx = std::fabs(ix - sp.x); bi = i; }
+                }
+                const float d = std::fabs(sp.y - top);
+                if (bi >= 0 && d < bestD) { bestD = d; best = {n, bi, false}; }
+            } else if (sp.y >= bot - band && sp.y <= bot + out) {
+                const float d = std::fabs(sp.y - bot);
+                if (d < bestD) { bestD = d; best = {n, -1, true}; }
+            }
+        }
+        return best;
+    };
+    EdgeHit hoverEdge;
+    if (hovered && g.drag == GraphState::Drag::None && !hoverHandle && !hoverOut) {
+        hoverEdge = edgeAt(io.MousePos);
+        if (hoverEdge.node) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            Node* en = hoverEdge.node;
+            if (hoverEdge.bottom) {
+                dl->AddCircleFilled(outPort(en), 5.0f, IM_COL32(255, 196, 70, 255));
+            } else {
+                ImVec2 dir;
+                const ImVec2 ip = S(inputPoint(en, hoverEdge.input, &dir));
+                dl->AddCircleFilled(ImVec2(ip.x, ip.y - 4), 5.0f, IM_COL32(255, 196, 70, 255));
+            }
+        }
+    }
     for (auto& h : tails)  // a pipe's source end lights up under the mouse
         if (&h == hoverHandle) dl->AddCircleFilled(h.at, 5.0f, IM_COL32(255, 196, 70, 255));
     // Input pipe ends: small rings; the one under the mouse lights up.
@@ -2038,7 +2102,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             dl->AddCircle(c, s.x * 0.5f * g.zoom, sel ? IM_COL32(255, 196, 70, 255) : IM_COL32(20, 20, 20, 255), 0, sel ? 2.0f : 1.0f);
             continue;
         }
-        // Nuke 15's look in our colours: the category colour deepened for the body, its own
+        // The modern look in our colours: the category colour deepened for the body, its own
         // brighter tone for the edge, white text; rounded (time nodes: a hexagon)
         ImVec4 bc = ImGui::ColorConvertU32ToFloat4(base);
         const float lum = 0.3f * bc.x + 0.59f * bc.y + 0.11f * bc.z;
@@ -2170,7 +2234,7 @@ void drawNodeGraph(App& app, UiState& ui) {
 
     // ---- interaction
     const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
-    // Ctrl over a pipe: where a Dot would go (Ctrl+drag makes it, as in Nuke)
+    // Ctrl over a pipe: where a Dot would go (Ctrl+drag makes it, as is standard)
     ImVec2 dotAt;
     const Pipe* dotPipe = hovered && io.KeyCtrl && !io.KeyShift && g.drag == GraphState::Drag::None && !nodeAt(mouseG)
                               ? pipeAt(io.MousePos, 8.0f, nullptr, &dotAt)
@@ -2248,6 +2312,13 @@ void drawNodeGraph(App& app, UiState& ui) {
                 g.drag = GraphState::Drag::FromInput;
                 g.dragNode = hoverHandle->node->name;
                 g.dragInput = hoverHandle->input;
+            } else if (EdgeHit e = edgeAt(io.MousePos); e.node && !io.KeyCtrl && !io.KeyShift &&
+                                                         !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                g.drag = e.bottom ? GraphState::Drag::FromOutput : GraphState::Drag::FromInput;
+                g.dragNode = e.node->name;
+                g.dragInput = e.bottom ? 0 : e.input;
+                g.edgeNode = e.node->name;
+                g.edgeArmed = true;
             } else if (hoverOut || (hit && hit->type != "Dot" && !isAnnotation(hit) && mouseG.y > pos(hit).y + size(hit).y - 4)) {
                 g.drag = GraphState::Drag::FromOutput;
                 g.dragNode = hoverOut ? hoverOut->name : hit->name;
@@ -2316,7 +2387,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 g.moved = true;
                 app.checkpoint();
             }
-            // Snapping (Nuke's): the node under the cursor lines up with a node nearby - its centre
+            // Snapping (the classic): the node under the cursor lines up with a node nearby - its centre
             // under / over another's (x), or level with one (y) - when it comes within a few pixels;
             // drag on past and it lets go. Connected nodes first. Ctrl held: no snapping.
             g.snapX = g.snapY = std::numeric_limits<float>::quiet_NaN();
@@ -2332,33 +2403,66 @@ void drawNodeGraph(App& app, UiState& ui) {
                 if (lead) {
                     const ImVec2 o = g.moveOrig[lead->name], ls = size(lead);
                     const float cx = o.x + d.x + ls.x / 2, cy = o.y + d.y + ls.y / 2;
+                    // Targets for the lead's centre: (1) along its pipes, where the pipe comes out
+                    // dead straight (its output under / level with the input it feeds, its input
+                    // under / level with the output feeding it); (2) any node nearby, centre to centre.
+                    struct Target { bool xAxis; float v, guideFrom; bool linked; };
+                    std::vector<Target> targets;
+                    const ImVec2 lp = pos(lead), lc0(lp.x + ls.x / 2, lp.y + ls.y / 2);
+                    const ImVec2 lo = outputPoint(lead);
+                    const ImVec2 oOff(lo.x - lc0.x, lo.y - lc0.y);  // the lead's output, from its centre
                     std::set<const Node*> linked;
-                    for (Node* in : lead->inputs)
-                        if (in) linked.insert(in);
+                    const int nin = std::max(lead->maxInputs(), (int)lead->inputs.size());
+                    for (int i = 0; i < nin; ++i) {
+                        Node* in = lead->input(i);
+                        if (!in || !vis(in) || g.moveOrig.count(in->name)) continue;
+                        linked.insert(in);
+                        ImVec2 dir;
+                        const ImVec2 ip = inputPoint(lead, i, &dir), op = outputPoint(in);
+                        if (dir.y != 0) targets.push_back({true, op.x - (ip.x - lc0.x), op.y, true});
+                        else targets.push_back({false, op.y - (ip.y - lc0.y), op.x, true});
+                    }
                     for (auto& kv : lead->knobInputs)
                         if (kv.second) linked.insert(kv.second);
-                    for (Node* out : comp.outputsOf(lead)) linked.insert(out);
-                    float bestX = 1e9f, bestY = 1e9f, sx = 0, sy = 0;
+                    for (Node* out : comp.outputsOf(lead)) {
+                        if (!vis(out) || g.moveOrig.count(out->name)) continue;
+                        linked.insert(out);
+                        const int on = std::max(out->maxInputs(), (int)out->inputs.size());
+                        for (int i = 0; i < on; ++i) {
+                            if (out->input(i) != lead) continue;
+                            ImVec2 dir;
+                            const ImVec2 ip = inputPoint(out, i, &dir);
+                            if (dir.y != 0) targets.push_back({true, ip.x - oOff.x, ip.y, true});
+                            else targets.push_back({false, ip.y - oOff.y, ip.x, true});
+                        }
+                    }
                     for (auto& up : comp.nodes) {
                         const Node* c2 = up.get();
                         if (!vis(c2) || isAnnotation(c2) || g.moveOrig.count(c2->name)) continue;
-                        const bool isLinked = linked.count(c2) > 0;
                         const ImVec2 cp = pos(c2), cs = size(c2);
                         const float ox = cp.x + cs.x / 2, oy = cp.y + cs.y / 2;
-                        const float thr = (isLinked ? 12.0f : 8.0f) / g.zoom;  // screen px
-                        const float reach = isLinked ? 1e9f : 500;             // others: only when close by
-                        const float dx = ox - cx, dy = oy - cy;
-                        if (std::fabs(dx) < thr && std::fabs(dy) < reach && std::fabs(dx) - (isLinked ? thr : 0) < bestX) {
-                            bestX = std::fabs(dx) - (isLinked ? thr : 0);
-                            sx = dx;
-                            g.snapX = ox;
-                            g.snapXTo = oy;
-                        }
-                        if (std::fabs(dy) < thr && std::fabs(dx) < reach && std::fabs(dy) - (isLinked ? thr : 0) < bestY) {
-                            bestY = std::fabs(dy) - (isLinked ? thr : 0);
-                            sy = dy;
-                            g.snapY = oy;
-                            g.snapYTo = ox;
+                        const bool isLinked = linked.count(c2) > 0;
+                        if (!isLinked && (std::fabs(ox - cx) > 600 || std::fabs(oy - cy) > 600)) continue;  // others: only nearby
+                        targets.push_back({true, ox, oy, isLinked});
+                        targets.push_back({false, oy, ox, isLinked});
+                    }
+                    // the closest within reach on each axis; pipes and linked nodes reach further
+                    float bestX = 1e9f, bestY = 1e9f, sx = 0, sy = 0;
+                    for (const Target& t : targets) {
+                        const float thr = (t.linked ? 16.0f : 10.0f) / g.zoom;
+                        const float dd = t.v - (t.xAxis ? cx : cy);
+                        const float score = std::fabs(dd) - (t.linked ? 6.0f / g.zoom : 0.0f);  // linked wins a near-tie
+                        if (std::fabs(dd) >= thr) continue;
+                        if (t.xAxis && score < bestX) {
+                            bestX = score;
+                            sx = dd;
+                            g.snapX = t.v;
+                            g.snapXTo = t.guideFrom;
+                        } else if (!t.xAxis && score < bestY) {
+                            bestY = score;
+                            sy = dd;
+                            g.snapY = t.v;
+                            g.snapYTo = t.guideFrom;
                         }
                     }
                     d.x += sx;
@@ -2388,7 +2492,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                     app.edit([&app, names](Comp& c) { app.message(extractNodes(c, names)); });
                 }
             }
-            // One unconnected node (or Dot) over a pipe: it drops into it, as in Nuke
+            // One unconnected node (or Dot) over a pipe: it drops into it, as is standard
             const Pipe* into = nullptr;
             Node* mover = g.moveOrig.size() == 1 ? app.node(g.moveOrig.begin()->first) : nullptr;
             if (g.moved && mover && !isAnnotation(mover) && mover->type != "Group" && mover->maxInputs() > 0) {
@@ -2459,6 +2563,26 @@ void drawNodeGraph(App& app, UiState& ui) {
         case GraphState::Drag::FromOutput: {
             Node* n = app.node(g.dragNode);
             if (!n) { g.drag = GraphState::Drag::None; break; }
+            if (g.edgeArmed) {
+                const float moved = std::hypot(io.MousePos.x - g.dragStartScreen.x, io.MousePos.y - g.dragStartScreen.y);
+                if (moved > 6.0f) {
+                    g.edgeArmed = false;  // a real pipe drag now
+                } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    // released where it was pressed: a plain click on the node, as in its middle
+                    g.edgeArmed = false;
+                    g.drag = GraphState::Drag::None;
+                    if (Node* c = app.node(g.edgeNode)) {
+                        g.lastClicked = c->name;
+                        if (!app.selection.count(c->name)) {
+                            app.selection = {c->name};
+                            g.selOrder = {c->name};
+                        }
+                    }
+                    break;
+                } else {
+                    break;  // not far enough yet to show a pipe
+                }
+            }
             ImVec2 from;
             if (g.drag == GraphState::Drag::FromInput) {
                 ImVec2 dir;
@@ -2582,10 +2706,10 @@ void drawNodeGraph(App& app, UiState& ui) {
         if (ImGui::BeginMenu("Gizmos")) {
             if (g.gizmos.empty()) ImGui::TextDisabled("no gizmos found");
             for (auto& gz : g.gizmos)
-                if (ImGui::MenuItem(gz.name.c_str(), gz.strata ? "welder" : "nuke")) createGizmo(app, ui, gz);
+                if (ImGui::MenuItem(gz.name.c_str(), gz.strata ? "welder" : ".gizmo")) createGizmo(app, ui, gz);
             ImGui::Separator();
             ImGui::TextDisabled("searched: %s", app.userGizmoDir().c_str());
-            ImGui::TextDisabled("  + STRATA_GIZMO_PATH, NUKE_PATH, ~/.nuke");
+            ImGui::TextDisabled("  + WELDER_GIZMO_PATH");
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -2761,7 +2885,7 @@ void drawNodeGraph(App& app, UiState& ui) {
     }
     // Hint line.
     if (comp.nodes.empty()) {
-        const char* hint = "Tab or right-click to add nodes  -  File > Open / Import Nuke Script";
+        const char* hint = "Tab or right-click to add nodes  -  File > Open / Import .nk Script";
         ImVec2 ts = ImGui::CalcTextSize(hint);
         dl->AddText(ImVec2(o.x + (sz.x - ts.x) / 2, o.y + sz.y / 2), IM_COL32(130, 130, 130, 255), hint);
     }

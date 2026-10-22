@@ -73,9 +73,9 @@ cp "$BUILD/welder_tests" "$BUILD/welder_exr_tests" "$STAGE/"   # self-tests, out
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$ROOT/tools/macos/README-MAC.txt" "$STAGE/"
-mkdir -p "$STAGE/examples/nuke"
+mkdir -p "$STAGE/examples/nk"
 cp "$ROOT"/examples/*.weld "$STAGE/examples/"
-cp "$ROOT"/examples/nuke/*.nk "$STAGE/examples/nuke/"
+cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"
 
 # ---- signing: a Developer ID (and notarization) when configured, else ad hoc
 if [ -n "${MAC_SIGN_ID:-}" ]; then

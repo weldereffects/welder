@@ -7,7 +7,7 @@ effect driven by it (DepthMix) doesn't flicker.
 Two kinds:
   relative  disparity (proportional to 1 / distance, near = high), the shape of the
             scene without real units. Each shot segment is scaled so its near end is
-            about 1. Written as "Z" holding the disparity - already Nuke's depth.Z sense.
+            about 1. Written as "Z" holding the disparity - already the classic depth.Z sense.
   metric    distance in metres (Metric-Video-Depth-Anything). Welder turns it into
             depth.Z = 1 / metres, like ScanlineRender's.
 

@@ -1,6 +1,6 @@
 // Creative generators, colour and warps:
 //   Noise         procedural noise (NoiseLib: perlin ... voronoi, dots, plasma), fractal, warped, animated, loopable
-//   Ramp          linear / radial / angular / diamond ramps (Nuke's Ramp knobs, plus shapes and repeats)
+//   Ramp          linear / radial / angular / diamond ramps (the classic Ramp knobs, plus shapes and repeats)
 //   GradientMap   maps a channel (luminance by default) through a colour gradient, with repeat / mirror cycling
 //   HueShift      rotates hue keeping luminance; saturation, brightness
 //   IDistort      moves pixels by a UV vector field (in pixels)
@@ -212,7 +212,7 @@ public:
 };
 
 // ------------------------------------------------------------------ Ramp
-// Nuke's Ramp: p0 (color0, default black) -> p1 (color), type linear / smooth0 /
+// the classic Ramp: p0 (color0, default black) -> p1 (color), type linear / smooth0 /
 // smooth1 / smooth; plus shape (linear, radial, angular, diamond) and repeat.
 class RampNode : public Node {
 public:

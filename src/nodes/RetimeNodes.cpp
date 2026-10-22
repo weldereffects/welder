@@ -1,6 +1,6 @@
 // OFlow and RIFE: motion-compensated retiming.
 //
-// Shared params (Nuke OFlow / Kronos names in brackets):
+// Shared params (OFlow / Kronos names in brackets):
 //   channels ["retimedChannels"]   channels that are interpolated; the rest take the nearest frame
 //   method   ["method"]            "motion" | "blend" | "frame"
 //   timing   ["timing2"]           "output speed" | "input speed" | "frame"

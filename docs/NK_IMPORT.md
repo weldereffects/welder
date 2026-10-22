@@ -1,52 +1,52 @@
-# Importing Nuke scripts
+# Importing .nk scripts
 
 ```
 python3 tools/nk2strata.py shot.nk [-o shot.weld] [--report report.json] [-q] [--gizmo-path DIR ...]
-python3 tools/nk2strata.py clip.nk --fragment -o nodes.json     # nodes copied in Nuke
+python3 tools/nk2strata.py clip.nk --fragment -o nodes.json     # nodes copied in another .nk app
 ```
 
-In the editor, File > Import Nuke Script opens a script, and **Ctrl+V over the
-node graph pastes nodes copied in Nuke** (Nuke's clipboard is .nk text; Welder
+In the editor, File > Import .nk Script opens a script, and **Ctrl+V over the
+node graph pastes nodes copied in another .nk app** (the classic clipboard is .nk text; Welder
 runs it through the importer and pastes the result, wired to the selected node
-like a Nuke paste). The Windows build ships its own Python (`python\`) for this.
+like a .nk paste). The Windows build ships its own Python (`python\`) for this.
 
-The importer reads the .nk file directly — Nuke does not need to be installed.
+The importer reads the .nk file directly — is standard not need to be installed.
 It prints one line per approximation or gap, and `--report` writes the same
 information as JSON (counts, unsupported classes, per-node warnings).
 
-## Exporting to Nuke
+## Exporting to .nk apps
 
 The other direction: **Ctrl+C in Welder's node graph puts the nodes on the
-clipboard in Nuke's format**, so they paste straight into Nuke (the first
-outside input connects to the node selected in Nuke, like a Nuke copy). File >
-Export Nuke Script, or `welder nk comp.weld -o shot.nk`, writes a whole comp
+clipboard in the .nk format**, so they paste straight into .nk apps (the first
+outside input connects to the node selected in the other app, like a .nk copy). File >
+Export .nk Script, or `welder nk comp.weld -o shot.nk`, writes a whole comp
 with its Root (format, frame range, fps, colour management).
 
-The exporter (`src/core/NukeExport.cpp`) is the importer's inverse, so a comp
-survives Welder -> Nuke -> Welder: groups with their knobs, Input / Output,
+The exporter (`src/core/NkExport.cpp`) is the importer's inverse, so a comp
+survives Welder -> .nk -> Welder: groups with their knobs, Input / Output,
 animation curves (interpolation per key), expressions (Welder knob names back
-to Nuke's: Grade `gain` -> `white`, `.0` components -> `.r` / `.x`), masks and
+to the .nk names: Grade `gain` -> `white`, `.0` components -> `.r` / `.x`), masks and
 mix, backdrops, sticky notes, node colours, the Node tab (label, font size,
 hide input, lifetime), the panel knobs (Read frame modes and missing frames,
 Transform filters / skew / motion blur, Reformat types, Merge and Copy layers,
 Grade reverse, Write file type and range), OFX plugins, and nodes that came
-from Nuke untranslated (written back as they were). A Welder node Nuke has no
+from .nk apps untranslated (written back as they were). A Welder node the .nk format has no
 node for (Twirl, Kaleidoscope, Polar, GradientMap, the AI and 3D-tracking
 nodes, ...) becomes a NoOp labelled with what it was, and is listed. Shuffles
 that move several layers or use both inputs, Roto shapes, trackers and movie
 codecs are not exported yet (reported).
 
 The clipboard text also carries the exact Welder nodes, base64-encoded on a
-comment line Nuke skips, so a copy pasted back into Welder loses nothing.
+comment line .nk apps skip, so a copy pasted back into Welder loses nothing.
 
 ## Principles
 
-* **Never drop silently.** A node it can't translate becomes a `Nuke:<Class>`
+* **Never drop silently.** A node it can't translate becomes a `Unsupported:<Class>`
   placeholder that passes input 0 through, keeps its knobs under
-  `nuke_knobs`, and is listed in the report. The rest of the comp still renders.
+  `nk_knobs`, and is listed in the report. The rest of the comp still renders.
 * **Keep the graph.** Node names, wiring, and positions (`ui.x`, `ui.y`) carry over,
   so a future node-graph UI shows the same layout.
-* **Flag every approximation.** If the result won't match Nuke pixel-for-pixel, the report says so.
+* **Flag every approximation.** If the result won't match the original pixel-for-pixel, the report says so.
 
 ## What it understands
 
@@ -60,29 +60,29 @@ comment line Nuke skips, so a copy pasted back into Welder loses nothing.
   Names inside groups that clash with others are made unique (`Blur1_2`), and
   expressions are rewritten to match.
 * Gizmos: a class the importer doesn't know is looked up as `<Class>.gizmo` in
-  the script's folder, `--gizmo-path`, `WELDER_GIZMO_PATH`, `NUKE_PATH`,
-  `~/.nuke` and `~/.welder/gizmos` (two folder levels deep). Found, it is
+  the script's folder, `--gizmo-path`, `WELDER_GIZMO_PATH` and
+  `~/.welder/gizmos` (two folder levels deep). Found, it is
   imported as a group (params `gizmo: <file>`), with the instance's knob
   values over the gizmo's defaults.
 * Expressions: `{{Blur1.size*2}}`, per-component `{{T.translate.x} {frame*2}}`,
   `parent.knob`, `[value Node.knob]`, `[frame]`. They become Welder
   expressions (`{"expr": ...}`, see FILE_FORMAT.md), with node names resolved
-  inside groups first and Nuke knob names mapped to Welder's (Grade `white` ->
+  inside groups first and .nk knob names mapped to Welder's (Grade `white` ->
   `gain` ...). A per-component link to a vector knob (`{T.translate}` in
-  each slot) reads the same component, as in Nuke. Other TCL (`[python ...]`,
+  each slot) reads the same component, as is standard. Other TCL (`[python ...]`,
   `[knob ...]`, `[if ...]`) is not run: the knob keeps its default and the
   report says so.
 * Backdrops (label without HTML, colour, size, font size, z order) and sticky notes.
 * Clones (copied), disabled nodes (kept disabled), node colours (`tile_color`, shown in the graph).
 * The Node tab: label (with `[value knob]` expanded in the graph), font size, hide input, lifetime (use lifetime, start / end).
-* Panels: Welder's properties panels follow Nuke's knob names, order and tabs (Read with its Metadata tab, Transform, Reformat, Merge, Copy, Grade, Write...), so a Nuke artist finds everything where they expect it.
+* Panels: Welder's properties panels follow the classic knob names, order and tabs (Read with its Metadata tab, Transform, Reformat, Merge, Copy, Grade, Write...), so a .nk artist finds everything where they expect it.
 * Knob values: numbers, vectors, quoted strings, animation curves (`{curve L x1 0 x24 1}`, including interpolation flags and tangents).
 * Root: format (and its name), frame range, fps, lock range, proxy mode and scale, project directory, script name.
 * Named formats (HD_1080, UHD_4K, 2K/4K DCP, Super 35, …) and inline format strings.
 
 ## Node mapping
 
-| Nuke | Welder | Notes |
+| .nk class | Welder | Notes |
 |---|---|---|
 | Read, DeepRead | Read | DeepRead read as flat. TCL in paths flagged. Frame range with loop / bounce / black / hold, frame mode (expression, start at, offset), original range, proxy, format, missing frames (`on_error`), premultiplied, auto alpha. Colour space mapped to OCIO (`raw` kept). Movies read directly. |
 | Write | Write | file type, limit to range (first / last); EXR datatype and compression; DPX / TIFF / PNG bit depth and TIFF compression; movies: ProRes (by `mov64_codec` / profile), DNxHR, MJPEG, MPEG-4 (H.264 falls back to ProRes 422 HQ with a warning); colorspace. |
@@ -107,9 +107,9 @@ comment line Nuke skips, so a copy pasted back into Welder loses nothing.
 | Grade | Grade | black→lift, white→gain, add→offset, reverse. (Un)premult by on all colour nodes. |
 | ColorCorrect | ColorCorrect | Custom range lookup curves flagged. |
 | Saturation, Multiply, Add, Gamma, Invert, Clamp, Premult, Unpremult | same | Saturation's luminance math. |
-| Transform, TransformMasked | Transform | Skew X / Y and order, every Nuke filter, clamp, black outside, motion blur with shutter and shutter offset. Non-SRT order flagged. |
+| Transform, TransformMasked | Transform | Skew X / Y and order, every classic filter, clamp, black outside, motion blur with shutter and shutter offset. Non-SRT order flagged. |
 | Position, Reformat, Crop | same | Reformat: to format / to box / scale, turn, black outside, preserve bbox, filter and clamp. |
-| Blur | Blur | Size calibration vs Nuke still to verify. |
+| Blur | Blur | Size calibration vs the original still to verify. |
 | Defocus, ZDefocus2, VectorBlur2 | Blur | Approximation, flagged. |
 | Sharpen, Dilate, FilterErode, Erode | Sharpen, Dilate | FilterErode approximated. |
 | Shuffle | Shuffle | Classic in/out/red/green/blue/alpha knobs. |
@@ -118,7 +118,7 @@ comment line Nuke skips, so a copy pasted back into Welder loses nothing.
 | IBKColourV3, IBKGimmeV3 | IBKColour, IBKGimme | Screen type, weights, screen subtraction, bkg luminance. IBKColour's size/off/mult/patch knobs are reported (Welder fills the screen itself). |
 | Keyer | Keyer | Operation and range. |
 | Tracker4 | Tracker | The tracks table: names, enable, T/R/S, positions per frame, match error (as a score), keyframes, pattern and search boxes; transform mode and reference frame. Track offsets are reported, not applied. |
-| PlanarTracker (NukeX) | PlanarTracker | The first shape's points as the region; the tracked corners pt1..pt4 per frame become homography keys relative to the reference frame (ptref); the surface is the corners on the reference frame. |
+| PlanarTracker (advanced-edition) | PlanarTracker | The first shape's points as the region; the tracked corners pt1..pt4 per frame become homography keys relative to the reference frame (ptref); the surface is the corners on the reference frame. |
 | CornerPin2D | CornerPin2D | to1-4, from1-4 (animated), invert, filter. |
 | Difference | Difference | Offset, gain. |
 | ChromaKeyer | ChromaKeyer | Screen colour; tolerances map loosely (flagged). |
@@ -133,26 +133,26 @@ comment line Nuke skips, so a copy pasted back into Welder loses nothing.
 | Project3D, Project3D2 | Project3D | crop; projecting on front / back only is reported. |
 | ScanlineRender | ScanlineRender | Antialiasing; bg, obj/scn and cam inputs. Motion blur samples and non-perspective projections are reported. |
 | Card3D | Card3D | translate, rotate, scaling, uniform_scale, pivot, rot_order, lens-in focal / h.aperture, filter; the img and cam inputs. |
-| CameraTracker (NukeX) | CameraTracker | The node and its inputs only: its tracks and solve aren't read (reported); track and solve again, or export the camera from Nuke. |
+| CameraTracker (advanced-edition) | CameraTracker | The node and its inputs only: its tracks and solve aren't read (reported); track and solve again, or export the camera from .nk apps. |
 | OFlow2, OFlow, Kronos | OFlow | Method, timing (output speed / input speed / frame, animated), input range, retimed channels, vector detail, smoothness, flicker compensation, luminance weights, shutter samples / time / automatic, resampling. Kronos local motion estimation uses OFlow's estimator (reported). |
 | Dot, NoOp, PostageStamp | Dot | |
 | Group / Input / Output | Group / Input / Output | Groups stay groups, with their user knobs; gizmos found on the gizmo path become groups. |
 | `OFX<plugin.id>_v<N>` | OFX | Knobs become plugin values; `if_missing: bypass` so a missing plugin warns instead of failing. |
 | BackdropNode, StickyNote | Backdrop, StickyNote | |
 | Viewer | – | UI-only, dropped. |
-| anything else | `Nuke:<Class>` placeholder | Reported. |
+| anything else | `Unsupported:<Class>` placeholder | Reported. |
 
 ## Known gaps (next up)
 
 * **TCL in expressions** beyond `[frame]` and `[value …]` (Python callbacks, `[knob …]`, `[if …]`) isn't run; the knob keeps its default and is reported.
 * Expressions on knobs the importer reads through a computation (rather than copying them straight over) fall back to the default and are reported.
-* **Colour management**: the Root's OCIO / colour settings become `project.color`, and Read / Write colour spaces map to the OCIO studio config's names (Nuke's default spaces, ACES and camera spaces). Spaces the studio config doesn't have (e.g. Nuke-default "Cineon") are reported; use raw + Log2Lin for Cineon.
+* **Colour management**: the Root's OCIO / colour settings become `project.color`, and Read / Write colour spaces map to the OCIO studio config's names (the classic default spaces, ACES and camera spaces). Spaces the studio config doesn't have (e.g. the classic app-default "Cineon") are reported; use raw + Log2Lin for Cineon.
 * **Primatte, Tracker3, lights and shaders, Deep, Text.** Gizmos whose .gizmo file isn't on the gizmo path stay placeholders.
-* Blur size and some filter kernels need calibration against Nuke renders.
+* Blur size and some filter kernels need calibration against the original renders.
 
 ## Verifying a translation
 
 The goal is pixel parity. The workflow for each new node mapping is:
-render a small test script in Nuke, render the translated comp in Welder,
+render a small test script in .nk apps, render the translated comp in Welder,
 and diff the EXRs. Sending real (even stripped-down) scripts is the fastest
 way to find gaps.

@@ -1,6 +1,6 @@
 // The 3D system: geometry, transforms, materials and scene evaluation.
 //
-// 3D nodes (Nuke's names and conventions: +Y up, cameras look down -Z,
+// 3D nodes (the classic names and conventions: +Y up, cameras look down -Z,
 // transforms are scale-rotate-translate about a pivot, rotations in degrees):
 //   Axis          a transform others can be parented to (input: axis)
 //   Card, Cube, Sphere, Cylinder, ReadGeo (OBJ)

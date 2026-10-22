@@ -37,7 +37,7 @@ public:
             }
         }
         if (idx.empty()) return;
-        // Nuke's "(un)premult by": divide the colour by alpha before, multiply after
+        // the classic "(un)premult by": divide the colour by alpha before, multiply after
         const std::string up = params.str("unpremult", "none");
         const int ua = up == "none" || up.empty() ? -1 : out.ch(up);
         const bool invUp = params.flag("invert_unpremult", false);
@@ -96,7 +96,7 @@ protected:
     }
 };
 
-// Nuke's Grade:  A = multiply*(gain-lift)/(whitepoint-blackpoint)
+// the classic Grade:  A = multiply*(gain-lift)/(whitepoint-blackpoint)
 //                B = offset + lift - A*blackpoint
 //                out = pow(A*in + B, 1/gamma)   (gamma only applied to positive values)
 class GradeNode : public PixelOp {
@@ -110,7 +110,7 @@ class GradeNode : public PixelOp {
         auto off = params.vec<4>("offset", f, {0, 0, 0, 0});
         auto gam = params.vec<4>("gamma", f, {1, 1, 1, 1});
         bool bclamp = params.flag("black_clamp", true), wclamp = params.flag("white_clamp", false);
-        if (params.flag("reverse", false)) {  // Nuke's reverse: the inverse of the grade
+        if (params.flag("reverse", false)) {  // the classic reverse: the inverse of the grade
             const int n = out.nch();
             const size_t count = (size_t)out.bounds.width() * out.bounds.height();
             for (size_t k = 0; k < idx.size(); ++k) {
@@ -210,7 +210,7 @@ class SaturationNode : public PixelOp {
         float s = (float)params.num("saturation", a.frame, 1.0);
         int r = out.ch("R"), g = out.ch("G"), b = out.ch("B");
         if (r < 0 || g < 0 || b < 0) return;
-        // Nuke's luminance math
+        // the classic luminance math
         const std::string m = params.str("mode", "Rec 709");
         const int mode = m == "CCIR 601" ? 1 : m == "Average" ? 2 : m == "Maximum" ? 3 : 0;
         for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
@@ -229,7 +229,7 @@ class SaturationNode : public PixelOp {
 
 // ColorCorrect: master / shadows / midtones / highlights, each with
 // saturation, contrast (pivot 0.18), gamma, gain, offset. Range weights use
-// smooth falloffs similar to Nuke's default lookup curves.
+// smooth falloffs similar to the .nk default lookup curves.
 class ColorCorrectNode : public PixelOp {
     struct Range {
         std::array<double, 4> sat, con, gam, gain, off;

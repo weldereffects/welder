@@ -1,0 +1,19 @@
+{
+  "source": "/home/claude/strata/examples/nk/shot010_comp_v003.nk",
+  "nodes_total": 23,
+  "translated": 21,
+  "with_warnings": 2,
+  "unsupported_classes": {
+    "Vectorfield": 1
+  },
+  "warnings": [
+    {
+      "node": "BG_Plate",
+      "message": "CheckerBoard approximated (2 colours, no centre lines)"
+    },
+    {
+      "node": "ShowLUT",
+      "message": "node class 'Vectorfield' is not supported yet; passing input 0 through"
+    }
+  ]
+}
