@@ -8,6 +8,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      mac_deps:
+        description: "Mac: build OpenColorIO, FFmpeg and ncnn too (off = a quick compile check, far fewer minutes)"
+        type: boolean
+        default: true
 
 jobs:
   linux:
@@ -22,6 +27,7 @@ jobs:
           dnf install -y libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
                          mesa-libGL-devel git
           dnf install -y nasm || dnf --enablerepo=powertools install -y nasm || true
+          git config --global --add safe.directory '*'
           pipx install cmake || true; pipx install ninja || true
           echo "/root/.local/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
@@ -40,7 +46,9 @@ jobs:
           fi
       - run: tools/package_linux.sh
       - uses: actions/upload-artifact@v4
-        with: { name: linux, path: "dist/*.tar.gz" }
+        with:
+          name: linux
+          path: "dist/*.tar.gz"
 
   macos:
     # Mac minutes cost 10x on private repositories: only for version tags and when run by hand
@@ -49,8 +57,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: macos-14, arch: arm64 }    # Apple silicon
-          - { runner: macos-13, arch: x86_64 }   # Intel
+          - { runner: macos-15, arch: arm64 }          # Apple silicon
+          - { runner: macos-15-intel, arch: x86_64 }   # Intel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -61,12 +69,14 @@ jobs:
           key: deps-macos-${{ matrix.arch }}-${{ hashFiles('tools/build_ocio.sh', 'tools/build_ffmpeg.sh', 'tools/build_ncnn.sh') }}
       - name: build and package
         env:
-          STRATA_BUILD_DEPS: "1"
+          STRATA_BUILD_DEPS: ${{ (github.event_name == 'workflow_dispatch' && !inputs.mac_deps) && '0' || '1' }}
           # signing / notarization, once there is an Apple Developer account (repository secrets):
           MAC_SIGN_ID: ${{ secrets.MAC_SIGN_ID }}
         run: tools/package_macos.sh
       - uses: actions/upload-artifact@v4
-        with: { name: macos-${{ matrix.arch }}, path: "dist/*.zip" }
+        with:
+          name: macos-${{ matrix.arch }}
+          path: "dist/*.zip"
 
   windows:
     runs-on: ubuntu-24.04
@@ -90,7 +100,9 @@ jobs:
           fi
       - run: tools/package_windows.sh
       - uses: actions/upload-artifact@v4
-        with: { name: windows, path: "dist/*.zip" }
+        with:
+          name: windows
+          path: "dist/*.zip"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -99,7 +111,9 @@ jobs:
     permissions: { contents: write }
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: out, merge-multiple: true }
+        with:
+          path: out
+          merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
