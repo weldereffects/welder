@@ -9,7 +9,10 @@ set -o pipefail
 rc=${PIPESTATUS[0]}
 if [ "$rc" != 0 ]; then
   # the step's tail, plus the tail of any build log the dependency scripts left
-  tailtxt=$(tail -n 40 "$log")
+  errs=$(grep -E "error:|Error |FAILED:" "$log" | grep -v "^ *[0-9]* |" | sort -u | head -n 40)
+  tailtxt="$errs
+--- last lines
+$(tail -n 25 "$log")"
   for f in $(ls -t ../deps/*/build/*.log ../deps/*/build/make.log 2>/dev/null | head -2); do
     tailtxt="$tailtxt
 --- $f

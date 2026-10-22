@@ -285,7 +285,7 @@ std::shared_ptr<const Splats> loadPlyCached(const std::string& path, std::string
         if (err) *err = "can't find " + path;
         return nullptr;
     }
-    std::string stamp = std::to_string(t.time_since_epoch().count());
+    std::string stamp = std::to_string((long long)t.time_since_epoch().count());  // (an __int128 on macOS)
     {
         std::lock_guard<std::mutex> l(m);
         auto it = cache.find(path);

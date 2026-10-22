@@ -46,7 +46,7 @@ else
 fi
 
 cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release ${ARGS[@]+"${ARGS[@]}"}
-cmake --build "$BUILD" -j"$NCPU"
+cmake --build "$BUILD" -j"$NCPU" ${CI:+-- -k 0}   # on CI: every error in one go
 
 echo "== engine tests"
 "$BUILD/strata_tests" | tail -1
