@@ -49,9 +49,9 @@ cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release ${ARGS[@]+"${AR
 cmake --build "$BUILD" -j"$NCPU" ${CI:+-- -k 0}   # on CI: every error in one go
 
 echo "== engine tests"
-"$BUILD/strata_tests" | tail -1
+"$BUILD/strata_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
 echo "== EXR tests"
-"$BUILD/strata_exr_tests" 2>/dev/null | tail -1
+"$BUILD/strata_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
 
 # ---- Strata.app: the editor and the command-line renderer side by side in Contents/MacOS
 rm -rf "$STAGE"

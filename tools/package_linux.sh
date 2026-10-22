@@ -37,9 +37,9 @@ cmake -S "$ROOT" -B "$BUILD" "${GEN[@]}" -DCMAKE_BUILD_TYPE=Release \
 cmake --build "$BUILD" -j"$(nproc)"
 
 echo "== engine tests"
-"$BUILD/strata_tests" | tail -1
+"$BUILD/strata_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
 echo "== EXR tests"
-"$BUILD/strata_exr_tests" 2>/dev/null | tail -1
+"$BUILD/strata_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin/lib" "$STAGE/tools" "$STAGE/docs"
