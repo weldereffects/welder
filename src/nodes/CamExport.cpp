@@ -80,7 +80,7 @@ std::string nukeCamera(const camsolve::Solution& s, const std::string& name) {
     o << " haperture " << num(s.haperture) << "\n";
     o << " vaperture " << num(vaperture(s)) << "\n";
     o << " name " << name << "\n";
-    o << " label \"solved in Strata: error " << num(s.rms) << " px\"\n";
+    o << " label \"solved in Welder: error " << num(s.rms) << " px\"\n";
     o << " selected true\n}\n";
     return o.str();
 }
@@ -99,8 +99,8 @@ std::string chan(const camsolve::Solution& s) {
 
 std::string blender(const camsolve::Solution& s, const std::string& name, double fps) {
     std::ostringstream o;
-    o << "# Camera solved in Strata. In Blender: Scripting workspace > Open > this file > Run Script.\n";
-    o << "# Y-up (Nuke / Strata) is converted to Blender's Z-up.\n";
+    o << "# Camera solved in Welder. In Blender: Scripting workspace > Open > this file > Run Script.\n";
+    o << "# Y-up (Nuke / Welder) is converted to Blender's Z-up.\n";
     o << "import bpy\nfrom mathutils import Matrix, Vector\n\n";
     o << "NAME = " << "\"" << name << "\"\n";
     o << "FOCAL = " << num(s.focal) << "\nSENSOR_WIDTH = " << num(s.haperture) << "\n";
@@ -152,7 +152,7 @@ scene.render.resolution_y = HEIGHT
 scene.render.fps = int(round(FPS))
 scene.frame_start = CAMERAS[0][0]
 scene.frame_end = CAMERAS[-1][0]
-print('Strata camera imported:', NAME, len(CAMERAS), 'frames,', len(POINTS), 'points')
+print('Welder camera imported:', NAME, len(CAMERAS), 'frames,', len(POINTS), 'points')
 )";
     return o.str();
 }

@@ -1,6 +1,6 @@
 // GPU compute through Vulkan, for the nodes that are slow on the CPU.
 //
-// Vulkan is loaded at run time (vulkan-1.dll / libvulkan.so.1), so Strata runs
+// Vulkan is loaded at run time (vulkan-1.dll / libvulkan.so.1), so Welder runs
 // the same without it: every GPU path has the CPU code behind it, and any GPU
 // failure falls back to the CPU for that call. Kernels are GLSL compute shaders
 // compiled to SPIR-V at build time (src/gpu/shaders) and embedded.

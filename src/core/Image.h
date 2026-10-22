@@ -1,4 +1,4 @@
-// Strata — open-source node-based compositor
+// Welder — open-source node-based compositor
 // Core image types. Coordinates follow the Nuke convention: pixel (0,0) is the
 // bottom-left of the format, +y is up. Boxes are half-open: [x1,x2) x [y1,y2).
 #pragma once

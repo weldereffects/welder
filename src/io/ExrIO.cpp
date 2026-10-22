@@ -47,7 +47,7 @@ std::string compressionName(Imf::Compression c) {
     return "unknown";
 }
 
-// Swap image rows top <-> bottom (EXR is y-down, Strata is y-up).
+// Swap image rows top <-> bottom (EXR is y-down, Welder is y-up).
 void flipRows(Image& img) {
     const int H = img.bounds.height();
     const size_t rowFloats = (size_t)img.bounds.width() * img.nch();
@@ -186,7 +186,7 @@ ExrFile readExr(const std::string& path) {
         out.format.height = disp.max.y - disp.min.y + 1;
         out.format.pixelAspect = h0.pixelAspectRatio() > 0 ? h0.pixelAspectRatio() : 1.0;
 
-        // Strata coordinates: x - disp.min.x, y = disp.max.y - y_exr.
+        // Welder coordinates: x - disp.min.x, y = disp.max.y - y_exr.
         Box bounds(uni.min.x - disp.min.x, disp.max.y - uni.max.y, uni.max.x - disp.min.x + 1, disp.max.y - uni.min.y + 1);
         ChannelSet finalCs = cs;
         if (lumaOnly) finalCs.insert(finalCs.begin(), {"R", "G", "B"});
@@ -238,7 +238,7 @@ void writeExr(const std::string& path, const Image& src, const Format& fmt, cons
     if (cit == compressionMap().end()) throw RenderError("unknown EXR compression '" + o.compression + "'");
     if (src.channels.empty()) throw RenderError("nothing to write (no channels): " + path);
 
-    // Data window in Strata coordinates, then in EXR coordinates (y-down from the top of the format).
+    // Data window in Welder coordinates, then in EXR coordinates (y-down from the top of the format).
     Box dwS = o.dataWindowFromBbox && !src.bounds.empty() ? src.bounds : Box(0, 0, fmt.width, fmt.height);
     Imath::Box2i disp(Imath::V2i(0, 0), Imath::V2i(fmt.width - 1, fmt.height - 1));
     Imath::Box2i dw(Imath::V2i(dwS.x1, fmt.height - dwS.y2), Imath::V2i(dwS.x2 - 1, fmt.height - 1 - dwS.y1));

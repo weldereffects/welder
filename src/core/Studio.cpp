@@ -1,5 +1,7 @@
 #include "Studio.h"
 
+#include "Brand.h"
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -17,13 +19,7 @@ json gConfig = json::object();
 
 std::string path() {
     if (const char* e = std::getenv("STRATA_STUDIO_CONFIG"); e && *e) return e;
-#if defined(_WIN32)
-    const char* base = std::getenv("APPDATA");
-    return base ? (fs::path(base) / "Strata" / "studio.json").string() : "studio.json";
-#else
-    const char* home = std::getenv("HOME");
-    return home ? (fs::path(home) / ".config" / "strata" / "studio.json").string() : "studio.json";
-#endif
+    return (fs::path(brand::configDir()) / "studio.json").string();
 }
 
 const json& config() {

@@ -1,6 +1,6 @@
 """Tests for the worker's depth task (Video Depth Anything). Needs numpy and OpenCV; the network
-itself is replaced by a stand-in (PyTorch and the weights aren't needed), so this checks what Strata's
-side of the task does: frames in, cut splitting, scaling, the outputs Strata reads, model names.
+itself is replaced by a stand-in (PyTorch and the weights aren't needed), so this checks what Welder's
+side of the task does: frames in, cut splitting, scaling, the outputs Welder reads, model names.
 Run: python -m unittest tests/test_ml_depth.py
 """
 

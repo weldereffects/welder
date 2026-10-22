@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
-project(strata VERSION 0.1.0 LANGUAGES C CXX)
+project(welder VERSION 0.1.0 LANGUAGES C CXX)
+if(WIN32)  # the program icon and version details for both programs
+  enable_language(RC)
+  configure_file(src/ui/welder.rc.in ${CMAKE_BINARY_DIR}/welder.rc @ONLY)
+  set(WELDER_RC ${CMAKE_BINARY_DIR}/welder.rc)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -81,6 +86,7 @@ add_library(strata_core STATIC
   src/core/Process.cpp
   src/core/Paths.cpp
   src/core/Studio.cpp
+  src/core/Brand.cpp
   src/nodes/BlenderNode.cpp
   src/nodes/NoiseLib.cpp
   src/nodes/CreativeNodes.cpp
@@ -280,24 +286,24 @@ if(NOT MSVC)
 endif()
 
 # ---------------------------------------------------------------- CLI
-add_executable(strata src/cli/main.cpp)
-target_link_libraries(strata PRIVATE strata_core)
+add_executable(welder src/cli/main.cpp ${WELDER_RC})
+target_link_libraries(welder PRIVATE strata_core)
 
 # ---------------------------------------------------------------- tests
 enable_testing()
-add_executable(strata_tests tests/engine_tests.cpp)
-target_include_directories(strata_tests PRIVATE tests)
-target_link_libraries(strata_tests PRIVATE strata_core)
-add_test(NAME engine COMMAND strata_tests)
-add_executable(strata_exr_tests tests/exr_tests.cpp)
-target_link_libraries(strata_exr_tests PRIVATE strata_core)
-add_test(NAME exr COMMAND strata_exr_tests)
+add_executable(welder_tests tests/engine_tests.cpp)
+target_include_directories(welder_tests PRIVATE tests)
+target_link_libraries(welder_tests PRIVATE strata_core)
+add_test(NAME engine COMMAND welder_tests)
+add_executable(welder_exr_tests tests/exr_tests.cpp)
+target_link_libraries(welder_exr_tests PRIVATE strata_core)
+add_test(NAME exr COMMAND welder_exr_tests)
 
 # OFX host tests need the sample plugins: tools/build_test_plugins.sh <openfx> build/ofx-test-plugins
-add_executable(strata_ofx_tests tests/ofx_tests.cpp)
-target_link_libraries(strata_ofx_tests PRIVATE strata_core)
+add_executable(welder_ofx_tests tests/ofx_tests.cpp)
+target_link_libraries(welder_ofx_tests PRIVATE strata_core)
 if(EXISTS ${CMAKE_BINARY_DIR}/ofx-test-plugins)
-  add_test(NAME ofx COMMAND strata_ofx_tests ${CMAKE_BINARY_DIR}/ofx-test-plugins)
+  add_test(NAME ofx COMMAND welder_ofx_tests ${CMAKE_BINARY_DIR}/ofx-test-plugins)
 endif()
 
 find_package(Python3 COMPONENTS Interpreter)
@@ -310,8 +316,8 @@ if(Python3_FOUND)
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
-# ---------------------------------------------------------------- editor (strata_ui)
-option(STRATA_BUILD_UI "Build the Strata editor" ON)
+# ---------------------------------------------------------------- editor (welder_ui)
+option(STRATA_BUILD_UI "Build the Welder editor" ON)
 if(STRATA_BUILD_UI)
   set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -336,7 +342,11 @@ if(STRATA_BUILD_UI)
     target_compile_definitions(strata_imgui PUBLIC GL_SILENCE_DEPRECATION)  # OpenGL 4.1 still works on macOS
   endif()
 
-  add_executable(strata_ui WIN32
+  include(cmake/embed.cmake)
+  embed_file(${CMAKE_SOURCE_DIR}/assets/brand/welder-splash.png welder_splash_png splash_src)
+  embed_file(${CMAKE_SOURCE_DIR}/assets/brand/welder-icon-64.png welder_icon_png icon_src)
+  set(WELDER_EMBEDDED ${splash_src} ${icon_src})
+  add_executable(welder_ui WIN32
     src/ui/main.cpp
     src/ui/App.cpp
     src/ui/Viewer.cpp
@@ -360,16 +370,19 @@ if(STRATA_BUILD_UI)
   src/ui/TrackMaskTool.cpp
   src/ui/AppML.cpp
   src/ui/MLPanel.cpp
-  src/ui/CurveEditor.cpp)
-  target_link_libraries(strata_ui PRIVATE strata_core strata_imgui)
-  target_compile_definitions(strata_ui PRIVATE STRATA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  src/ui/CurveEditor.cpp
+  src/ui/Splash.cpp
+  ${WELDER_EMBEDDED}
+  ${WELDER_RC})
+  target_link_libraries(welder_ui PRIVATE strata_core strata_imgui)
+  target_compile_definitions(welder_ui PRIVATE STRATA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   if(NOT MSVC)
-    target_compile_options(strata_ui PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_compile_options(welder_ui PRIVATE -Wall -Wextra -Wno-unused-parameter)
   endif()
-  add_custom_command(TARGET strata_ui POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:strata_ui>/fonts
+  add_custom_command(TARGET welder_ui POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:welder_ui>/fonts
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Medium.ttf $<TARGET_FILE_DIR:strata_ui>/fonts/)
+            ${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Medium.ttf $<TARGET_FILE_DIR:welder_ui>/fonts/)
 endif()
 
 # Retime quality / speed check (not part of ctest): build/retime_bench [w h]

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Adds Strata to your desktop's application menu (for you only; nothing outside your home folder).
-# Run it again after moving the folder. Remove: rm ~/.local/share/applications/strata.desktop
+# Adds Welder to your desktop's application menu (for you only; nothing outside your home folder).
+# Run it again after moving the folder. Remove: rm ~/.local/share/applications/welder.desktop
 set -e
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 mkdir -p "$HOME/.local/share/applications"
-cat > "$HOME/.local/share/applications/strata.desktop" <<DESK
+cat > "$HOME/.local/share/applications/welder.desktop" <<DESK
 [Desktop Entry]
 Type=Application
-Name=Strata
+Name=Welder
 Comment=Node-based compositor
-Exec="$HERE/Strata" %f
+Exec="$HERE/Welder" %f
 Path=$HERE
 Terminal=false
 Categories=Graphics;Video;AudioVideo;
-MimeType=application/x-strata;
+MimeType=application/x-welder;
 DESK
-[ -f "$HERE/bin/strata.png" ] && echo "Icon=$HERE/bin/strata.png" >> "$HOME/.local/share/applications/strata.desktop"
+[ -f "$HERE/bin/welder.png" ] && echo "Icon=$HERE/bin/welder.png" >> "$HOME/.local/share/applications/welder.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-echo "Strata is in your applications menu."
+echo "Welder is in your applications menu."

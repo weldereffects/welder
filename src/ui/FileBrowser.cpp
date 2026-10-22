@@ -754,7 +754,7 @@ void drawFileDialog(App& app, UiState& ui) {
                 {"images", "*.exr *.dpx *.tif *.tiff *.png *.jpg *.jpeg *.tga *.bmp *.hdr"},
                 {"movies", "*.mov *.mp4 *.mkv *.avi *.mxf *.m4v *.webm *.mts"},
                 {"Nuke scripts", "*.nk"},
-                {"Strata comps", "*.strata"}};
+                {"Welder comps", "*.weld *.strata"}};
             for (auto& [label, f] : presets)
                 if (ImGui::Selectable((std::string(label) + (f.empty() ? "" : "   " + f)).c_str(), d.filter == f)) d.filter = f;
             ImGui::EndCombo();

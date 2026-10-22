@@ -22,7 +22,7 @@ for m in "${MODELS[@]}"; do
 done
 cp "$TMP/tnt/LICENSE" "$DEST/LICENSE-rife-ncnn-vulkan.txt" 2>/dev/null || true
 cat > "$DEST/README.txt" <<'TXT'
-RIFE models for Strata's RIFE node: ncnn conversions of Practical-RIFE
+RIFE models for Welder's RIFE node: ncnn conversions of Practical-RIFE
 (https://github.com/hzwer/Practical-RIFE, MIT licence) from
 https://github.com/TNTwise/rife-ncnn-vulkan (MIT licence).
 Add another model by copying its folder (flownet.param + flownet.bin) here.

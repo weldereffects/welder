@@ -317,7 +317,7 @@ struct Parser {
             rr->path = path(q.s);
             r = rr;
         } else
-            throw ExprError("[" + cmd + " ...] is a TCL command Strata doesn't run (only [frame] and [value ...])");
+            throw ExprError("[" + cmd + " ...] is a TCL command Welder doesn't run (only [frame] and [value ...])");
         need("]");
         return r;
     }

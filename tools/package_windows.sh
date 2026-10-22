@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, test and package Strata for Windows x64 from Linux.
+# Build, test and package Welder for Windows x64 from Linux.
 #
 #   tools/package_windows.sh [path-to-openfx-repo]
 #
@@ -13,13 +13,13 @@
 #           fetched when missing) - shipped as python\ for the Nuke importer.
 #   (default ../deps/ncnn-win) enables the RIFE node; its models come from
 #   models/rife (tools/fetch_rife_models.sh fetches them if missing).
-# Output: dist/strata-<version>-win64.zip
+# Output: dist/welder-<version>-win64.zip
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OFX=${1:-}
 BUILD="$ROOT/build-win"
-VERSION=$(grep -oP 'project\(strata VERSION \K[0-9.]+' "$ROOT/CMakeLists.txt")
-STAGE="$ROOT/dist/strata-$VERSION-win64"
+VERSION=$(grep -oP 'project\(welder VERSION \K[0-9.]+' "$ROOT/CMakeLists.txt")
+STAGE="$ROOT/dist/welder-$VERSION-win64"
 
 NCNN_WIN=${NCNN_WIN:-$ROOT/../deps/ncnn-win}
 NCNN_ARGS=()
@@ -54,12 +54,12 @@ WINE=$(command -v wine64 || command -v wine || ls /usr/lib/wine/wine64 2>/dev/nu
 if [ -n "$WINE" ]; then
   export WINEDEBUG=-all WINEPREFIX="${WINEPREFIX:-$ROOT/build-win/.wine}"
   echo "== engine tests (Windows build, via Wine)"
-  "$WINE" "$BUILD/strata_tests.exe" | tail -1
+  "$WINE" "$BUILD/welder_tests.exe" | tail -1
   echo "== EXR tests (Windows build, via Wine)"
-  "$WINE" "$BUILD/strata_exr_tests.exe" 2>/dev/null | tail -1
+  "$WINE" "$BUILD/welder_exr_tests.exe" 2>/dev/null | tail -1
   if [ -d "$BUILD/ofx-test-plugins" ]; then
     echo "== OFX tests (Windows build, via Wine)"
-    "$WINE" "$BUILD/strata_ofx_tests.exe" "$BUILD/ofx-test-plugins" | tail -1
+    "$WINE" "$BUILD/welder_ofx_tests.exe" "$BUILD/ofx-test-plugins" | tail -1
   fi
 else
   echo "(wine not found: Windows binaries built but not tested)"
@@ -67,8 +67,8 @@ fi
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin" "$STAGE/tools" "$STAGE/docs"
-cp "$BUILD"/strata.exe "$BUILD"/strata_tests.exe "$BUILD"/strata_exr_tests.exe "$BUILD"/strata_ofx_tests.exe "$STAGE/bin/"
-cp "$BUILD"/strata_ui.exe "$STAGE/bin/"
+cp "$BUILD"/welder.exe "$BUILD"/welder_tests.exe "$BUILD"/welder_exr_tests.exe "$BUILD"/welder_ofx_tests.exe "$STAGE/bin/"
+cp "$BUILD"/welder_ui.exe "$STAGE/bin/"
 if [ -d "$NCNN_WIN/lib" ] && [ -f "$NCNN_WIN/lib/cmake/ncnn/ncnnConfig.cmake" ]; then
   mkdir -p "$STAGE/bin/models" && cp -r "$ROOT/models/rife" "$STAGE/bin/models/rife"
 fi
@@ -92,14 +92,14 @@ python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$STAGE/"
 mkdir -p "$STAGE/examples/nuke"
-cp "$ROOT"/examples/*.strata "$STAGE/examples/"
+cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nuke/*.nk "$STAGE/examples/nuke/"
 python3 "$ROOT/tools/nk2strata.py" "$STAGE/examples/nuke/shot010_comp_v003.nk" -q   # pre-translated copy
 cp "$ROOT/tools/windows/README-WINDOWS.txt" "$STAGE/"
 cp "$ROOT/tools/windows/try-it.bat" "$STAGE/"
-cp "$ROOT/tools/windows/Strata.bat" "$STAGE/"
+cp "$ROOT/tools/windows/Welder.bat" "$STAGE/"
 # Windows text files: CRLF line endings.
-python3 - "$STAGE/try-it.bat" "$STAGE/Strata.bat" "$STAGE/README-WINDOWS.txt" "$STAGE/bin/ml/setup-ml.bat" <<'PY'
+python3 - "$STAGE/try-it.bat" "$STAGE/Welder.bat" "$STAGE/README-WINDOWS.txt" "$STAGE/bin/ml/setup-ml.bat" <<'PY'
 import sys
 for p in sys.argv[1:]:
     t = open(p, newline="").read().replace("\r\n", "\n").replace("\n", "\r\n")
@@ -107,12 +107,12 @@ for p in sys.argv[1:]:
 PY
 
 # Zips (each under 30 MB, all sharing the top folder so they unpack into one):
-#   strata-<v>-win64.zip          the app, docs, examples
-#   strata-<v>-win64-rife-models.zip   bin/models/rife (the RIFE node's networks)
-#   strata-<v>-win64-tests.zip    the engine and EXR self-tests
-#   strata-<v>-win64-ofx-tests.zip  the OFX host test and its test plugins
-#   strata-<v>-win64-python.zip   python/ (runs the Nuke importer: import, paste from Nuke)
-python3 - "$ROOT/dist" "strata-$VERSION-win64" <<'PY'
+#   welder-<v>-win64.zip          the app, docs, examples
+#   welder-<v>-win64-rife-models.zip   bin/models/rife (the RIFE node's networks)
+#   welder-<v>-win64-tests.zip    the engine and EXR self-tests
+#   welder-<v>-win64-ofx-tests.zip  the OFX host test and its test plugins
+#   welder-<v>-win64-python.zip   python/ (runs the Nuke importer: import, paste from Nuke)
+python3 - "$ROOT/dist" "welder-$VERSION-win64" <<'PY'
 import os, sys, zipfile
 dist, top = sys.argv[1], sys.argv[2]
 parts = {"": [], "-rife-models": [], "-tests": [], "-ofx-tests": [], "-python": []}
@@ -123,7 +123,7 @@ for d, _, files in os.walk(os.path.join(dist, top)):
             parts["-rife-models"].append(rel)
         elif rel.startswith(top + "/python/"):
             parts["-python"].append(rel)
-        elif rel.startswith(top + "/ofx-test-plugins/") or f == "strata_ofx_tests.exe":
+        elif rel.startswith(top + "/ofx-test-plugins/") or f == "welder_ofx_tests.exe":
             parts["-ofx-tests"].append(rel)
         elif rel.startswith(top + "/bin/") and "_tests" in f:
             parts["-tests"].append(rel)

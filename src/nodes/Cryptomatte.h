@@ -1,7 +1,7 @@
 // Cryptomatte (the open spec Blender, Arnold, Redshift, V-Ray... write): each
 // layer `<name>00`, `<name>01`, ... holds two (id, coverage) pairs in R G / B A,
 // ranked by coverage. An id is the MurmurHash3 of the object / material name,
-// as a float. EXR headers carry manifests (name -> id); Strata keeps every one
+// as a float. EXR headers carry manifests (name -> id); Welder keeps every one
 // it reads in a registry, so picked ids show their names.
 #pragma once
 

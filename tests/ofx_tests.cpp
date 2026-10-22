@@ -1,6 +1,6 @@
 // OFX host tests, run against OpenFX's own sample plugins.
 // Build them with tools/build_test_plugins.sh, then:
-//   strata_ofx_tests <plugin dir>
+//   welder_ofx_tests <plugin dir>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>

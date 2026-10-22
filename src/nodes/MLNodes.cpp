@@ -101,7 +101,7 @@ bool isML(const Node* n) { return dynamic_cast<const MLNode*>(n) != nullptr; }
 
 // ================================================================= cameras
 json cameraJson(const cam3d::Camera& c, int frame, int W, int H) {
-    // Strata camera axes (x right, y up, looking down -z) -> OpenCV (x right, y down, z forward)
+    // Welder camera axes (x right, y up, looking down -z) -> OpenCV (x right, y down, z forward)
     M3 Rcv = c.R * M3::diag(1, -1, -1);
     json m = json::array();
     for (int r = 0; r < 3; ++r) m.push_back({Rcv.m[r][0], Rcv.m[r][1], Rcv.m[r][2], c.C[r]});

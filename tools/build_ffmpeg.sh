@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build a small static FFmpeg (LGPL, no external codecs) for Strata's movie I/O.
+# Build a small static FFmpeg (LGPL, no external codecs) for Welder's movie I/O.
 #
 #   tools/build_ffmpeg.sh <src-dir> <install-dir> [--windows] [<zlib-prefix>]
 #
 # Reads ProRes, H.264, HEVC, DNxHD/HR, MJPEG, MPEG-2/4, VP9, FFV1, PNG, QuickTime
 # RLE, v210, DV and raw video in MOV / MP4 / MKV / AVI / MXF / TS; writes ProRes,
 # DNxHD/HR, MJPEG, MPEG-4, FFV1, PNG and raw video. (H.264 encoding needs libx264,
-# which is GPL, so it is left out.) Then configure Strata with
+# which is GPL, so it is left out.) Then configure Welder with
 # -DSTRATA_FFMPEG_DIR=<install-dir>.
 set -euo pipefail
 SRC=$(mkdir -p "$1" && cd "$1" && pwd)
@@ -34,7 +34,7 @@ if [ "$WIN" = "--windows" ]; then
          --cc=x86_64-w64-mingw32-gcc-posix --cxx=x86_64-w64-mingw32-g++-posix --enable-w32threads)
 else
   ARGS+=(--enable-pthreads)
-  if [ "$(uname)" = Darwin ]; then  # nothing from Apple's frameworks: Strata links only what it names
+  if [ "$(uname)" = Darwin ]; then  # nothing from Apple's frameworks: Welder links only what it names
     ARGS+=(--disable-iconv --disable-securetransport --disable-videotoolbox --disable-audiotoolbox
            --disable-avfoundation --disable-coreimage --disable-appkit --disable-metal)
   fi

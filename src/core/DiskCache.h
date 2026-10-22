@@ -40,7 +40,7 @@ public:
     void flush();  // wait for queued writes (tests)
 
     const std::string& dir() const { return dir_; }
-    // %LOCALAPPDATA%\Strata\cache on Windows, $XDG_CACHE_HOME/strata or ~/.cache/strata elsewhere.
+    // %LOCALAPPDATA%\Welder\cache on Windows, $XDG_CACHE_HOME/strata or ~/.cache/strata elsewhere.
     static std::string defaultDir();
 
 private:

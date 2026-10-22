@@ -1,4 +1,4 @@
-// OpenFX 1.4 host for Strata (CPU, float RGBA / Alpha, tiled rendering).
+// OpenFX 1.4 host for Welder (CPU, float RGBA / Alpha, tiled rendering).
 //
 // Structure:
 //   PropSet / ImageObj ........ property sets handed to plugins
@@ -6,10 +6,10 @@
 //   ClipObj / EffectObj ....... clips and effect descriptors / instances
 //   PluginEntry ............... one plugin inside a binary; loads lazily
 //   suites .................... the C function tables plugins fetch
-//   OfxNode ................... the Strata node that runs an effect instance
+//   OfxNode ................... the Welder node that runs an effect instance
 //
 // Pixel data: OFX canonical coordinates are y-up with the origin at the
-// bottom-left, the same as Strata, so images are passed without flipping.
+// bottom-left, the same as Welder, so images are passed without flipping.
 // Inputs a plugin will need are pre-fetched (via its regions of interest)
 // before the render action, so a plugin that is not thread safe never holds
 // its lock while upstream nodes render.
@@ -336,8 +336,8 @@ PropSet& hostProps() {
     static PropSet* p = [] {
         auto* h = new PropSet;
         h->setString(kOfxPropType, {kOfxTypeImageEffectHost});
-        h->setString(kOfxPropName, {"org.strata.compositor"});
-        h->setString(kOfxPropLabel, {"Strata"});
+        h->setString(kOfxPropName, {"com.welderfx.welder"});
+        h->setString(kOfxPropLabel, {"Welder"});
         h->setInt(kOfxPropAPIVersion, {1, 4});
         h->setInt(kOfxPropVersion, {0, 1, 0});
         h->setString(kOfxPropVersionLabel, {STRATA_VERSION});
@@ -1026,7 +1026,7 @@ EffectObj* PluginEntry::contextDescriptor(const std::string& ctx) {
 
 // ======================================================================= OfxNode
 
-// OFX canonical coordinates are full-resolution pixels; Strata works in pixels
+// OFX canonical coordinates are full-resolution pixels; Welder works in pixels
 // at the render scale, so rects from plugins are multiplied by the scale.
 OfxRectD scaleRect(OfxRectD r, double s) { return OfxRectD{r.x1 * s, r.y1 * s, r.x2 * s, r.y2 * s}; }
 

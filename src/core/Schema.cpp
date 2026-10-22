@@ -1031,7 +1031,7 @@ std::vector<NodeDef> build() {
                   C("device", "device", "auto", {"auto", "gpu", "cpu"}), I("samples", "samples", 64, 1, 4096),
                   B("denoise", "denoise", true), B("transparent", "transparent bg", true),
                   C("camera", "camera", "input", {"input", "file"}),
-                  C("geometry", "Strata geometry", "visible", {"visible", "shadow catcher", "holdout"}),
+                  C("geometry", "Welder geometry", "visible", {"visible", "shadow catcher", "holdout"}),
                   C("shader", "geometry shader", "principled", {"principled", "emission"}),
                   Div("Passes"), B("pass_depth", "depth", true), B("pass_normal", "normal", false),
                   B("pass_vector", "motion vectors", false), B("pass_position", "position", false),
@@ -1044,11 +1044,11 @@ std::vector<NodeDef> build() {
                   I("frames_ahead", "frames per launch", 8, 1, 1000),
                   Txt("python", "python",
                       "Runs inside Blender after the scene is set up: bpy, scene and job are defined.")},
-                 "Renders with your Blender (Cycles / EEVEE) through the Strata camera (cam), with Strata geometry (scn) "
+                 "Renders with your Blender (Cycles / EEVEE) through the Welder camera (cam), with Welder geometry (scn) "
                  "as visible objects, shadow catchers or holdouts; a .blend is optional. Frames render in the background "
                  "and are cached; passes arrive as channels (depth.Z, N, P, forward/backward, diffdir, ...)."});
     d.push_back({"ReadSplat", "3D", xform({Div("File"), File("file", "file")}),
-                 "Reads Gaussian splats (.ply from Strata, Postshot, nerfstudio, Polycam, ...) for SplatRender and the 3D view."});
+                 "Reads Gaussian splats (.ply from Welder, Postshot, nerfstudio, Polycam, ...) for SplatRender and the 3D view."});
     d.push_back({"SplatRender", "3D",
                  {C("colorspace", "splat colours", "sRGB", {"sRGB", "linear"}), B("antialiased", "antialiased", true),
                   B("z_channel", "depth.Z output", true)},

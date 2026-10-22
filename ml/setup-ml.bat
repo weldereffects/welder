@@ -1,15 +1,16 @@
 @echo off
-rem Strata ML setup: the Python environments the ML worker runs in.
+rem Welder ML setup: the Python environments the ML worker runs in.
 rem   venv        Python 3.12, PyTorch 2.8 (CUDA 12.8): LTX-2.5, Alpha Gen, MapAnything, NeRF
 rem   venv-splat  Python 3.10, PyTorch 2.4 (CUDA 12.4) with gsplat's prebuilt kernels: Gaussian splats
-rem Usage: setup-ml.bat [ml home]    (Strata's "Set up ML" button runs this for you)
+rem Usage: setup-ml.bat [ml home]    (Welder's "Set up ML" button runs this for you)
 setlocal EnableExtensions
 set "MLHOME=%~1"
-if "%MLHOME%"=="" set "MLHOME=%LOCALAPPDATA%\Strata\ml"
+if "%MLHOME%"=="" if not exist "%LOCALAPPDATA%\Welder\ml" if exist "%LOCALAPPDATA%\Strata\ml" set "MLHOME=%LOCALAPPDATA%\Strata\ml"
+if "%MLHOME%"=="" set "MLHOME=%LOCALAPPDATA%\Welder\ml"
 set "HERE=%~dp0"
 set "UV_LINK_MODE=copy"
 echo.
-echo  Strata ML setup
+echo  Welder ML setup
 echo  ---------------
 echo  Installs into: %MLHOME%
 echo  Needs an NVIDIA GPU with a current driver and about 15 GB of disk.
@@ -17,7 +18,7 @@ echo  The models themselves are downloaded later, from each node's panel.
 echo.
 if not exist "%MLHOME%" mkdir "%MLHOME%"
 
-rem Strata asks a running worker to stop first (its python.exe and DLLs would be in use): wait for it
+rem Welder asks a running worker to stop first (its python.exe and DLLs would be in use): wait for it
 set WAITS=0
 :waitworker
 if not exist "%MLHOME%\stop" goto :workerstopped
@@ -96,7 +97,7 @@ echo  with a much slower PyTorch rasteriser. Everything else is ready.
 :done
 echo ok> "%MLHOME%\setup-ok.txt"
 echo.
-echo  Done. Strata starts the ML worker by itself when a node needs it.
+echo  Done. Welder starts the ML worker by itself when a node needs it.
 echo  For gated models (LTX), accept the licence on Hugging Face and paste a Read token
 echo  into the HF token field of a node's ML panel.
 echo.

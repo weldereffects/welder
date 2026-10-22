@@ -18,7 +18,7 @@ from .dpt import DPTHead
 from .motion_module.motion_module import TemporalModule
 try:
     from easydict import EasyDict
-except ImportError:  # (Strata) a plain stand-in: only attribute reads are needed
+except ImportError:  # (Welder) a plain stand-in: only attribute reads are needed
     class EasyDict(dict):
         def __getattr__(self, k):
             try:

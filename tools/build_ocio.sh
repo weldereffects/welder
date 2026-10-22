@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build OpenColorIO 2.5 (static) and its dependencies for Strata's colour management.
+# Build OpenColorIO 2.5 (static) and its dependencies for Welder's colour management.
 #
 #   tools/build_ocio.sh <src-dir> <install-dir> [--windows]
 #
 # <src-dir> holds checkouts (cloned here if missing):
 #   OpenColorIO v2.5.2, yaml-cpp 0.8.0, libexpat R_2_6_4, pystring v1.1.4,
 #   zlib v1.3.1, minizip-ng 4.0.7   (Imath comes from third_party/imath)
-# Then configure Strata with -DSTRATA_OCIO_DIR=<install-dir>.
+# Then configure Welder with -DSTRATA_OCIO_DIR=<install-dir>.
 set -euo pipefail
 SRC=$(mkdir -p "$1" && cd "$1" && pwd)
 OUT=$(mkdir -p "$2" && cd "$2" && pwd)

@@ -1,20 +1,20 @@
-Strata for Windows (x64)
+Welder for Windows (x64)
 ========================
 
 No install needed. Unzip anywhere. The download comes in up to five zips
-that all unpack into the same strata-0.1.0-win64 folder: unzip them into
+that all unpack into the same welder-0.1.0-win64 folder: unzip them into
 the same place.
-  strata-0.1.0-win64.zip              the app (required)
-  strata-0.1.0-win64-python.zip       Python for the Nuke importer (python\):
+  welder-0.1.0-win64.zip              the app (required)
+  welder-0.1.0-win64-python.zip       Python for the Nuke importer (python\):
                                       importing .nk scripts and pasting nodes
                                       copied in Nuke (or have Python 3 installed)
-  strata-0.1.0-win64-rife-models.zip  the RIFE node's networks (bin\models\rife)
-  strata-0.1.0-win64-tests.zip        self-tests (optional)
-  strata-0.1.0-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
+  welder-0.1.0-win64-rife-models.zip  the RIFE node's networks (bin\models\rife)
+  welder-0.1.0-win64-tests.zip        self-tests (optional)
+  welder-0.1.0-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
 
 THE EDITOR
-  Double-click Strata.bat (or bin\strata_ui.exe).
-  Drag a .strata comp or a Nuke .nk script onto Strata.bat to open it.
+  Double-click Welder.bat (or bin\welder_ui.exe).
+  Drag a .weld comp or a Nuke .nk script onto Welder.bat to open it.
 
   Layout: viewer top-left with the timeline under it, node graph below,
   properties on the right, node toolbar on the far left.
@@ -38,7 +38,7 @@ THE EDITOR
     D                   disable / enable;  N rename;  I node info
     Ctrl+C/X/V          copy / cut / paste;  Alt+C duplicate;  Alt+B duplicate+branch
                         Ctrl+V also pastes nodes copied in Nuke (its clipboard text),
-                        and nodes copied in Strata paste straight into Nuke
+                        and nodes copied in Welder paste straight into Nuke
     Ctrl+G              group the selected nodes;  Ctrl+Alt+G expand a group
     Ctrl+Enter          open the selected group (nothing selected: back up a level)
     Ctrl+D              disconnect;  Shift+X swap A/B;  Ctrl+A select all
@@ -146,7 +146,7 @@ THE EDITOR
     NVIDIA, AMD, Intel; the driver provides it, nothing to install). Results
     match the CPU's, so viewer and farm renders agree. Edit > Preferences shows
     the GPU in use; "Use the GPU" off keeps everything on the CPU. Command line:
-    strata render ... --no-gpu. Small jobs stay on the CPU (quicker than the
+    welder render ... --no-gpu. Small jobs stay on the CPU (quicker than the
     round trip); more nodes move to the GPU over time.
 
   CAD GRAIN (Filter > CADGrain; after DasGrain)
@@ -305,11 +305,11 @@ THE EDITOR
     transforms, and ones that do nothing, are skipped over.
 
   CRASH REPORTS
-    If Strata crashes it writes a report to %APPDATA%\Strata\crashes
-    (crash-<date>-<time>.txt, plus a .dmp memory dump). The next time Strata
+    If Welder crashes it writes a report to %APPDATA%\Welder\crashes
+    (crash-<date>-<time>.txt, plus a .dmp memory dump). The next time Welder
     starts it says so, with buttons to open that folder or copy the report:
     send the .txt to get the crash fixed. It names where it crashed and the
-    last files Strata was reading.
+    last files Welder was reading.
 
   POSTAGE STAMPS
     Read nodes show a thumbnail of the current frame in the node graph (as
@@ -325,7 +325,7 @@ THE EDITOR
     Drag files from Explorer (or anywhere else) onto the window. Images and
     movies become Reads (several frames of one sequence make one Read, and a
     folder brings in every sequence and movie inside it). .nk scripts are
-    pasted as nodes; .strata comps open (you're asked to save first if needed);
+    pasted as nodes; .weld comps open (you're asked to save first if needed);
     .obj -> ReadGeo, .ply -> ReadSplat, LUTs (.cube .3dl .cdl ...) ->
     OCIOFileTransform, .gizmo -> the gizmo. New nodes land under the mouse.
 
@@ -351,10 +351,10 @@ THE EDITOR
     to scrub (missing frames in red). Backspace goes up, Enter opens.
 
   PREFERENCES (Edit > Preferences, Shift+S)
-    Cache folder: one folder for everything Strata caches - the disk cache
+    Cache folder: one folder for everything Welder caches - the disk cache
     of finished frames, BlenderRender's frames, the AI nodes' job files and
     temporary files - with each one's size, a Clear button, and the disk
-    cache's size limit. Put it on a fast drive with room. STRATA_CACHE_DIR
+    cache's size limit. Put it on a fast drive with room. WELDER_CACHE_DIR
     overrides it.
 
   TIMELINE (laid out like Nuke's; fixed height - only the viewer and node
@@ -637,10 +637,10 @@ THE EDITOR
     ReadSplat / SplatRender (3D group) read and render splat .ply files.
     They run on your NVIDIA GPU (24 GB, e.g. RTX 3090 / 4090; LTX also wants
     ~64 GB of system RAM, or set "weights" to disk) through the ML worker, a
-    Python process Strata starts by itself:
+    Python process Welder starts by itself:
     1. Open an AI node's properties: in the ML section click "Set up ML". A
        console window installs Python, PyTorch and the model code into
-       %LOCALAPPDATA%\Strata\ml (about 15 GB; run it again any time).
+       %LOCALAPPDATA%\Welder\ml (about 15 GB; run it again any time).
        This includes the Gaussian splat environment (venv-splat: PyTorch
        2.4 + gsplat's CUDA kernels); the GaussianSplat panel shows whether
        it's there. Nothing else to install (no CUDA toolkit).
@@ -658,16 +658,16 @@ THE EDITOR
        changed reuses the result.
 
   BLENDER (BlenderRender in the 3D toolbar group)
-    Renders with your own Blender (4.2 or later, from blender.org; Strata
+    Renders with your own Blender (4.2 or later, from blender.org; Welder
     finds it in Program Files, or set "blender executable") using Cycles or
     EEVEE, in the background.
     cam  a Camera or a solved CameraTracker: Blender renders through exactly
          that camera, every frame
-    scn  Strata geometry (Card, Cube, ReadGeo, a Scene...): sent with its
+    scn  Welder geometry (Card, Cube, ReadGeo, a Scene...): sent with its
          textures and Project3D projections as visible objects, shadow
          catchers (multiply your plate by the "shadow" layer) or holdouts
     .blend file (optional): your scene, lights and objects; without one the
-    scene holds only what Strata sends. Pick passes (depth, normals, motion
+    scene holds only what Welder sends. Pick passes (depth, normals, motion
     vectors, position, diffuse / glossy, AO, cryptomatte...): they arrive as
     layers in the viewer's layer menu.
     Frames render once and are cached (%TEMP%\strata_blender); a frame starts
@@ -777,7 +777,7 @@ THE EDITOR
     background so it plays in real time. Played frames are kept too; the
     green line on the timeline shows what's cached. Any edit makes them stale.
     Disk cache (Render > Disk Cache, 20 GB by default, in
-    %LOCALAPPDATA%\Strata\cache): frames that took a while to render are also
+    %LOCALAPPDATA%\Welder\cache): frames that took a while to render are also
     written to disk, keyed by what they contain, so they come back after an
     undo, after the RAM cache let them go, or the next time you open the comp.
 
@@ -787,8 +787,8 @@ THE EDITOR
     Root > Group bar at the top of the node graph comes back out. A group's
     panel can add knobs of its own ("add knob..."); nodes inside read them
     with expressions like parent.amount. "save as gizmo" keeps the group in
-    %APPDATA%\Strata\gizmos; Gizmos in the right-click menu (and Tab) lists
-    those and the Nuke .gizmo files on NUKE_PATH, STRATA_GIZMO_PATH and in
+    %APPDATA%\Welder\gizmos; Gizmos in the right-click menu (and Tab) lists
+    those and the Nuke .gizmo files on NUKE_PATH, WELDER_GIZMO_PATH and in
     %USERPROFILE%\.nuke.
     Right-click > Backdrop around selection frames nodes in a coloured box:
     drag its title bar to move it with what's on it, its corner to resize.
@@ -809,7 +809,7 @@ THE EDITOR
     The timeline's first/last fields also edit the frame range unless it's
     locked. Imported Nuke scripts bring their Root settings along.
     The first media in a new script: when the first Read gets its file
-    (from the file browser, a drag and drop, or typing the path), Strata
+    (from the file browser, a drag and drop, or typing the path), Welder
     asks whether to set the project's frame range and resolution to the
     media's - each has its own tick box, Enter matches, Esc keeps the
     project as it is, Ctrl+Z undoes. Only the first Read asks, only once,
@@ -817,10 +817,10 @@ THE EDITOR
     Edit > Preferences > "Offer to match the project to the first Read"
     turns it off.
 
-  Keys Strata doesn't have features for yet (clones, the second viewer
+  Keys Welder doesn't have features for yet (clones, the second viewer
   input...) print a note in Messages instead of doing nothing.
 
-  Layout is saved to %APPDATA%\Strata\layout.ini (delete it to reset).
+  Layout is saved to %APPDATA%\Welder\layout.ini (delete it to reset).
 
 QUICK TOUR (command line)
   Double-click try-it.bat. It runs the self-tests, renders the demo comps,
@@ -843,7 +843,7 @@ SLATE (Image group)
   - The slate is fitted to the plate's width, centred. It's the same picture
     on every frame.
   Your studio's defaults - the slate art, vendor, show, artist, and the Nuke
-  gizmo your slates come from - go in studio.json in %APPDATA%\Strata:
+  gizmo your slates come from - go in studio.json in %APPDATA%\Welder:
     {"slate": {"background": "\\\\server\\share\\slate\\art.exr",
                "vendor": "My Studio", "show": "My Show", "artist": "Me"},
      "nuke":  {"slate_gizmos": ["MY_SLATE_GIZMO"],
@@ -912,9 +912,9 @@ PSYCHEDELIC LOOKS THAT STAY IN THE PLATE
   Feedback (flow = the VectorGenerator, zoom 1.01, hue shift 5).
 
 COMMAND-LINE RENDERER
-  bin\strata.exe render examples\demo.strata -f 1-24 -v
-  bin\strata.exe node   examples\demo.strata Look -o look.exr -f 12
-  bin\strata.exe info   examples\demo.strata
+  bin\welder.exe render examples\demo.weld -f 1-24 -v
+  bin\welder.exe node   examples\demo.weld Look -o look.exr -f 12
+  bin\welder.exe info   examples\demo.weld
 
 FILE FORMATS
   EXR: every OpenEXR compression (incl. DWAA/DWAB, B44, PXR24), multi-part
@@ -932,11 +932,11 @@ FILE FORMATS
 
 NUKE SCRIPTS (the importer runs on the Python in python\ - the -python zip -
 or on an installed Python 3)
-  In the editor: File > Import Nuke Script (Ctrl+I), or drag the .nk onto Strata.bat.
-  Copy nodes in Nuke and press Ctrl+V over Strata's node graph to paste them;
-  copy in Strata and paste in Nuke the same way. File > Export Nuke Script
-  writes a whole comp as a .nk (also: bin\strata.exe nk comp.strata -o shot.nk).
-  Strata nodes Nuke has no node for (Twirl, Kaleidoscope, GradientMap, ...)
+  In the editor: File > Import Nuke Script (Ctrl+I), or drag the .nk onto Welder.bat.
+  Copy nodes in Nuke and press Ctrl+V over Welder's node graph to paste them;
+  copy in Welder and paste in Nuke the same way. File > Export Nuke Script
+  writes a whole comp as a .nk (also: bin\welder.exe nk comp.weld -o shot.nk).
+  Welder nodes Nuke has no node for (Twirl, Kaleidoscope, GradientMap, ...)
   arrive in Nuke as labelled NoOps that pass their input through.
   Command line:  python\python.exe tools\nk2strata.py C:\path\to\shot.nk
   Groups stay groups (with their knobs), gizmos come in as groups when their
@@ -945,8 +945,8 @@ or on an installed Python 3)
   Untranslatable nodes are listed in the Messages tab and shown red in the graph.
 
 OFX PLUGINS
-  Strata looks in C:\Program Files\Common Files\OFX\Plugins and in the
-  folders listed in OFX_PLUGIN_PATH (separate with ;). Strata.bat adds the
+  Welder looks in C:\Program Files\Common Files\OFX\Plugins and in the
+  folders listed in OFX_PLUGIN_PATH (separate with ;). Welder.bat adds the
   bundled ofx-test-plugins folder. Installed plugins appear under the OFX
   toolbar button and in Tab search.
   Commercial plugins (Sapphire, Neat Video, ...) are untested so far; plugins

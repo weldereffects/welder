@@ -1,5 +1,5 @@
 {
- "_comment": "Models the Strata ML worker can download. Strata reads this file too (to show what a node needs). Files go to <ml home>/models/<id>/; a finished download writes <id>/.complete.",
+ "_comment": "Models the Welder ML worker can download. Welder reads this file too (to show what a node needs). Files go to <ml home>/models/<id>/; a finished download writes <id>/.complete.",
  "models": {
   "ltx-2.5": {
    "label": "LTX-2.5 22B (distilled transformer, Gemma text encoder, VAEs, upscaler)",

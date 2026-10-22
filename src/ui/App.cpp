@@ -2,6 +2,7 @@
 #include "App.h"
 
 #include <cstring>
+#include "core/Brand.h"
 #include "core/CacheDir.h"
 #include "io/MovieIO.h"
 #include "core/FrameList.h"
@@ -1975,7 +1976,7 @@ void App::batchLoop(RenderRequest r) {
 }
 
 // Nuke's frame server: the comp saved to a temporary file, rendered by several
-// `strata render` processes at once. Image sequences split their frames into
+// `welder render` processes at once. Image sequences split their frames into
 // one contiguous chunk per process; a movie needs its frames in order, so each
 // movie Write gets a process of its own. Progress comes from their logs.
 void App::frameServerLoop(const RenderRequest& r, const std::vector<Node*>& writes) {
@@ -1984,17 +1985,17 @@ void App::frameServerLoop(const RenderRequest& r, const std::vector<Node*>& writ
         batchStatus_.error = m;
     };
 #if defined(_WIN32)
-    fs::path cli = fs::path(exeDir) / "strata.exe";
+    fs::path cli = fs::path(exeDir) / "welder.exe";
 #else
-    fs::path cli = fs::path(exeDir) / "strata";
+    fs::path cli = fs::path(exeDir) / "welder";
 #endif
     std::error_code ec;
-    if (!fs::exists(cli, ec)) return fail("frame server: the strata command-line renderer is missing next to the editor (" + cli.string() + ")");
+    if (!fs::exists(cli, ec)) return fail("frame server: the welder command-line renderer is missing next to the editor (" + cli.string() + ")");
     // the comp as it is now, with relative paths still resolving where they did
     std::string tag = std::to_string((long long)std::chrono::steady_clock::now().time_since_epoch().count());
     fs::path tmp = fs::path(cacheDir("tmp")) / ("render_" + tag);
     fs::create_directories(tmp, ec);
-    fs::path compFile = tmp / "comp.strata";
+    fs::path compFile = tmp / "comp.weld";
     std::vector<std::string> movies, seqs;
     {
         std::shared_lock<std::shared_timed_mutex> cl(compM);
@@ -2240,17 +2241,11 @@ std::string App::toolsDir() const {
     return "";
 }
 
-// Python for the Nuke importer: the copy shipped next to Strata (Windows
+// Python for the Nuke importer: the copy shipped next to Welder (Windows
 // builds bundle one), then whatever is installed.
 std::string App::userGizmoDir() const {
     if (!settingsPath.empty()) return (fs::path(settingsPath).parent_path() / "gizmos").string();
-#if defined(_WIN32)
-    const char* b = std::getenv("APPDATA");
-    return (b ? fs::path(b) / "Strata" / "gizmos" : fs::path("gizmos")).string();
-#else
-    const char* h = std::getenv("HOME");
-    return (h ? fs::path(h) / ".config" / "strata" / "gizmos" : fs::path("gizmos")).string();
-#endif
+    return (fs::path(brand::configDir()) / "gizmos").string();
 }
 
 std::vector<std::string> App::gizmoDirs() const {
@@ -2360,7 +2355,7 @@ std::vector<std::string> App::gizmoArgs() const {
 bool App::importNuke(const std::string& nkPath, std::string* err) {
     fs::path nk(nkPath);
     fs::path out = nk;
-    out.replace_extension(".strata");
+    out.replace_extension(".weld");
     fs::path report = nk;
     report.replace_extension(".import_report.json");
     std::vector<std::string> args = {nk.string(), "-o", out.string(), "--report", report.string(), "-q"};

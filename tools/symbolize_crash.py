@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Turn a Strata crash report's module+offset lines into function names.
+"""Turn a Welder crash report's module+offset lines into function names.
 
-    tools/symbolize_crash.py build-win/strata_ui.exe crash-XXXX.txt
+    tools/symbolize_crash.py build-win/welder_ui.exe crash-XXXX.txt
 
 Uses the exe's symbol table (nm), so it needs the exact exe that crashed."""
 import bisect, re, subprocess, sys

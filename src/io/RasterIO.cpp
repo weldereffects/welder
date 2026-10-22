@@ -233,7 +233,7 @@ void writeDpx(const std::string& path, const Raster& src, int bits, double fps) 
     o.put32(28, 384);   // industry header
     o.put32(32, 0);     // user data
     o.str(36, fs::path(u8(path)).filename().string(), 100);
-    o.str(160, "Strata", 100);
+    o.str(160, "Welder", 100);
     o.put32(660, 0xffffffffu);  // no encryption
     o.put16(768, 0);            // left to right, top to bottom
     o.put16(770, 1);
@@ -753,7 +753,7 @@ void writeTiff(const std::string& path, const Raster& src, int bits, const std::
     uint32_t fmtAt = n > 2 ? place([&] { for (int i = 0; i < n; ++i) o.u16(isFloat ? 3 : 1); }) : 0;
     uint32_t offAt = strips > 1 ? place([&] { for (auto v : offs) o.u32(v); }) : 0;
     uint32_t cntAt = strips > 1 ? place([&] { for (auto v : counts) o.u32(v); }) : 0;
-    std::string sw = "Strata";
+    std::string sw = "Welder";
     uint32_t swAt = place([&] { for (char c : sw) o.u8((uint8_t)c); o.u8(0); });
     uint32_t resAt = place([&] { o.u32(72); o.u32(1); });
 

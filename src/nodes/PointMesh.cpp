@@ -207,7 +207,7 @@ geo::Mesh build(const std::vector<V3>& pts, const cam3d::Camera& cam, double W, 
 }
 
 std::string toObj(const geo::Mesh& m, const std::string& name) {
-    std::string s = "# Strata PointsToMesh\no " + name + "\n";
+    std::string s = "# Welder PointsToMesh\no " + name + "\n";
     // merge corners that are the same point (same position, uv and normal)
     std::map<std::array<float, 8>, int> index;
     std::vector<int> corner(m.P.size() / 3);

@@ -17,7 +17,7 @@
 namespace strata {
 
 struct ExrFile {
-    std::shared_ptr<Image> image;  // bounds = union of data windows, in Strata (y-up) coordinates
+    std::shared_ptr<Image> image;  // bounds = union of data windows, in Welder (y-up) coordinates
     Format format;                 // from the display window
     std::vector<std::string> parts;  // part names (empty strings for unnamed parts)
     std::string compression;         // of the first part

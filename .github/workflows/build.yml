@@ -1,4 +1,4 @@
-# Builds Welder (Strata) for Windows, Linux and macOS (Apple silicon and Intel) on GitHub's machines.
+# Builds Welder (Welder) for Windows, Linux and macOS (Apple silicon and Intel) on GitHub's machines.
 # Every push / pull request: build + self-tests. A tag (v0.2.0 ...): also a GitHub Release with
 # every download attached. Run by hand: Actions > build > Run workflow.
 name: build

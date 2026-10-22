@@ -39,7 +39,7 @@ bool isMoviePath(const std::string& path) {
 
 bool available() { return false; }
 static RenderError noFFmpeg(const std::string& p) {
-    return RenderError("movie files need FFmpeg, which this build of Strata doesn't include: " + p);
+    return RenderError("movie files need FFmpeg, which this build of Welder doesn't include: " + p);
 }
 Info probe(const std::string& path) { throw noFFmpeg(path); }
 std::shared_ptr<const raster::Raster> readFrame(const std::string& path, int) { throw noFFmpeg(path); }
@@ -340,7 +340,7 @@ std::shared_ptr<Reader> reader(const std::string& path) {
     return r;
 }
 
-// A movie Strata (re)writes: drop its decoders, whatever its timestamp says.
+// A movie Welder (re)writes: drop its decoders, whatever its timestamp says.
 void forget(const std::string& path) {
     std::lock_guard<std::mutex> l(gReadersM);
     gReaders.remove_if([&](auto& r) { return r.second->path == path; });

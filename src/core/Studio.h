@@ -2,7 +2,7 @@
 // the Nuke gizmo a studio's slates come from, and so on. One file per machine (or one shared
 // by pointing STRATA_STUDIO_CONFIG at it):
 //   $STRATA_STUDIO_CONFIG, else studio.json in the config folder
-//   (%APPDATA%\Strata on Windows, ~/.config/strata elsewhere). No file: no studio defaults.
+//   (%APPDATA%\Welder on Windows, ~/.config/strata elsewhere). No file: no studio defaults.
 //
 //   {
 //     "slate": {"background": "//server/share/slate/art.exr", "vendor": "...", "show": "...", "artist": "..."},

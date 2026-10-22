@@ -1,17 +1,17 @@
-Strata for Linux (x86_64)
+Welder for Linux (x86_64)
 =========================
 
 No install needed. Unpack anywhere. The download comes in up to three
 tarballs that all unpack into the same folder: unpack them in the same place.
-  strata-<version>-linux-x86_64.tar.gz              the app (required)
-  strata-<version>-linux-x86_64-rife-models.tar.gz  the RIFE node's networks
-  strata-<version>-linux-x86_64-tests.tar.gz        self-tests (optional)
+  welder-<version>-linux-x86_64.tar.gz              the app (required)
+  welder-<version>-linux-x86_64-rife-models.tar.gz  the RIFE node's networks
+  welder-<version>-linux-x86_64-tests.tar.gz        self-tests (optional)
 
-    tar xzf strata-<version>-linux-x86_64.tar.gz
-    cd strata-<version>-linux-x86_64
-    ./Strata
+    tar xzf welder-<version>-linux-x86_64.tar.gz
+    cd welder-<version>-linux-x86_64
+    ./Welder
 
-  ./install-desktop-entry.sh   adds Strata to your applications menu.
+  ./install-desktop-entry.sh   adds Welder to your applications menu.
 
 WHAT IT NEEDS
   - A 64-bit distribution with glibc as new as the one it was built on
@@ -25,8 +25,8 @@ WHAT IT NEEDS
     nodes copied in Nuke) and, after bin/ml/setup-ml.sh, the AI nodes.
 
 THE COMMAND LINE RENDERER
-  bin/strata comp.strata            renders the comp's Write nodes
-  bin/strata --help                 everything else
+  bin/welder comp.weld            renders the comp's Write nodes
+  bin/welder --help                 everything else
 
 Everything else (hotkeys, nodes, Nuke import) is as on Windows: see
 README.md and docs/.

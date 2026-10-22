@@ -1,11 +1,11 @@
-# Strata -> Blender render bridge. Strata's BlenderRender node runs
+# Welder -> Blender render bridge. Welder's BlenderRender node runs
 #
 #   blender -b [scene.blend] --python-exit-code 1 -P strata_bridge.py -- job.json
 #
-# The job (written by Strata) holds the render settings, the Strata camera and
+# The job (written by Welder) holds the render settings, the Welder camera and
 # geometry per frame (already in Blender's Z-up world), the passes to enable and
 # the frames to render. Each frame is written as a multilayer EXR to a temporary
-# name and renamed when complete, so Strata never reads a half-written file.
+# name and renamed when complete, so Welder never reads a half-written file.
 # Works with Blender 4.2 and later (EEVEE Next and Cycles).
 import json
 import math
@@ -193,13 +193,13 @@ def material_for(o, idx):
     tex = o.get("texture")
     if tex:
         img = bpy.data.images.load(tex["path"], check_existing=True)
-        for cs in ("Linear Rec.709", "Linear"):  # Strata writes textures as linear Rec.709 EXRs
+        for cs in ("Linear Rec.709", "Linear"):  # Welder writes textures as linear Rec.709 EXRs
             try:
                 img.colorspace_settings.name = cs
                 break
             except TypeError:
                 pass
-        img.alpha_mode = "PREMUL"  # Strata's images are premultiplied
+        img.alpha_mode = "PREMUL"  # Welder's images are premultiplied
         tn = nt.nodes.new("ShaderNodeTexImage")
         tn.image = img
         proj = o.get("projection")

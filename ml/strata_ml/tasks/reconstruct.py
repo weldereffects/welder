@@ -6,7 +6,7 @@ result seeds GaussianSplat / NeRF training, and the Reconstruct node exposes
 it directly: a camera, a coloured point cloud and a depth.Z pass.
 
 World space: MapAnything's world is the first frame's camera (OpenCV axes,
-metres). It is turned to Strata's (+Y up, the first camera looking down -Z)
+metres). It is turned to Welder's (+Y up, the first camera looking down -Z)
 by flipping Y and Z. Cameras are written as c2w matrices with OpenCV camera
 axes in that world, at the plate's pixel size.
 """
@@ -31,7 +31,7 @@ def _model(ctx):
 
 
 def infer_frames(ctx, rgbs_linear, max_points=300000, conf_quantile=0.3, want_depth=False):
-    """rgbs_linear: list of H x W x 3 linear images. Returns cameras (c2w OpenCV axes, Strata world, plate pixels),
+    """rgbs_linear: list of H x W x 3 linear images. Returns cameras (c2w OpenCV axes, Welder world, plate pixels),
     points (N x 6 xyz rgb) and optionally depth maps (z, plate size, 0 where unknown)."""
     import torch
     from PIL import Image

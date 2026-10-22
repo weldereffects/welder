@@ -43,7 +43,7 @@ def srgb_decode(x):
 
 # ---------------------------------------------------------------- frames
 class FrameSeq:
-    """Frames Strata wrote for a job input: in/<name>.<frame>.npy, H x W x C float, top row first."""
+    """Frames Welder wrote for a job input: in/<name>.<frame>.npy, H x W x C float, top row first."""
 
     def __init__(self, jobdir, spec):
         self.jobdir = jobdir
@@ -78,7 +78,7 @@ class FrameSeq:
 
 # ---------------------------------------------------------------- where models live
 def model_dirs(home):
-    """<home>/models (downloads), then the folders Strata lists in <home>/model_dirs.json (the Strata
+    """<home>/models (downloads), then the folders Welder lists in <home>/model_dirs.json (the Welder
     folder's models/, for models installed by hand) and STRATA_ML_MODEL_DIRS."""
     dirs = [os.path.join(home, "models")]
     try:
@@ -201,7 +201,7 @@ class JobContext:
         return os.path.join(self.models_dir, model_id)
 
     def require_model(self, model_id):
-        """The installed model's folder: downloaded, or put by hand in the Strata folder's models/."""
+        """The installed model's folder: downloaded, or put by hand in the Welder folder's models/."""
         d = find_model(self.home, model_id)
         if d is None:
             dirs = model_dirs(self.home)

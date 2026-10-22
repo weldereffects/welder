@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, test and package Strata for Linux x86_64.
+# Build, test and package Welder for Linux x86_64.
 #
 #   tools/package_linux.sh
 #
@@ -7,12 +7,12 @@
 #   OCIO_LINUX, FFMPEG_LINUX, NCNN_LINUX  - colour management, movies, the RIFE node (all linked statically).
 # The C++ runtime is linked in; libgomp travels in bin/lib (found through RUNPATH $ORIGIN/lib). The result runs on distributions with at
 # least the glibc of the machine that built it (build on the oldest system you want to support).
-# Output: dist/strata-<version>-linux-x86_64.tar.gz (+ -rife-models, -tests)
+# Output: dist/welder-<version>-linux-x86_64.tar.gz (+ -rife-models, -tests)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD="$ROOT/build-linux"
-VERSION=$(grep -oP 'project\(strata VERSION \K[0-9.]+' "$ROOT/CMakeLists.txt")
-TOP="strata-$VERSION-linux-x86_64"
+VERSION=$(grep -oP 'project\(welder VERSION \K[0-9.]+' "$ROOT/CMakeLists.txt")
+TOP="welder-$VERSION-linux-x86_64"
 STAGE="$ROOT/dist/$TOP"
 
 ARGS=()
@@ -37,17 +37,17 @@ cmake -S "$ROOT" -B "$BUILD" "${GEN[@]}" -DCMAKE_BUILD_TYPE=Release \
 cmake --build "$BUILD" -j"$(nproc)"
 
 echo "== engine tests"
-"$BUILD/strata_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
+"$BUILD/welder_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
 echo "== EXR tests"
-"$BUILD/strata_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
+"$BUILD/welder_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/bin/lib" "$STAGE/tools" "$STAGE/docs"
-cp "$BUILD"/strata "$BUILD"/strata_ui "$BUILD"/strata_tests "$BUILD"/strata_exr_tests "$STAGE/bin/"
-strip "$STAGE"/bin/strata "$STAGE"/bin/strata_ui "$STAGE"/bin/strata_tests "$STAGE"/bin/strata_exr_tests
+cp "$BUILD"/welder "$BUILD"/welder_ui "$BUILD"/welder_tests "$BUILD"/welder_exr_tests "$STAGE/bin/"
+strip "$STAGE"/bin/welder "$STAGE"/bin/welder_ui "$STAGE"/bin/welder_tests "$STAGE"/bin/welder_exr_tests
 # the OpenMP runtime (part of GCC; not on every system)
 for lib in libgomp.so.1; do
-  p=$(ldd "$BUILD/strata_ui" | awk -v l="$lib" '$1 == l {print $3}')
+  p=$(ldd "$BUILD/welder_ui" | awk -v l="$lib" '$1 == l {print $3}')
   [ -n "$p" ] && cp -L "$p" "$STAGE/bin/lib/"
 done
 [ "$HAVE_NCNN" = 1 ] && mkdir -p "$STAGE/bin/models" && cp -r "$ROOT/models/rife" "$STAGE/bin/models/rife"
@@ -60,12 +60,12 @@ python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$STAGE/"
 mkdir -p "$STAGE/examples/nuke"
-cp "$ROOT"/examples/*.strata "$STAGE/examples/"
+cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nuke/*.nk "$STAGE/examples/nuke/"
 cp "$ROOT/tools/linux/README-LINUX.txt" "$STAGE/"
-install -m 755 "$ROOT/tools/linux/strata-launcher.sh" "$STAGE/Strata"
+install -m 755 "$ROOT/tools/linux/welder-launcher.sh" "$STAGE/Welder"
 install -m 755 "$ROOT/tools/linux/install-desktop-entry.sh" "$STAGE/install-desktop-entry.sh"
-cp "$ROOT/tools/linux/strata.png" "$STAGE/bin/strata.png" 2>/dev/null || true
+cp "$ROOT/assets/brand/welder-icon-256.png" "$STAGE/bin/welder.png"
 
 # Tarballs sharing the top folder (they unpack into one):
 #   <top>.tar.gz              the app, docs, examples
@@ -73,7 +73,7 @@ cp "$ROOT/tools/linux/strata.png" "$STAGE/bin/strata.png" 2>/dev/null || true
 #   <top>-tests.tar.gz        the engine and EXR self-tests
 cd "$ROOT/dist"
 rm -f "$TOP".tar.gz "$TOP"-rife-models.tar.gz "$TOP"-tests.tar.gz
-tar czf "$TOP-tests.tar.gz" "$TOP/bin/strata_tests" "$TOP/bin/strata_exr_tests"
+tar czf "$TOP-tests.tar.gz" "$TOP/bin/welder_tests" "$TOP/bin/welder_exr_tests"
 [ -d "$TOP/bin/models" ] && tar czf "$TOP-rife-models.tar.gz" "$TOP/bin/models"
-tar czf "$TOP.tar.gz" --exclude="$TOP/bin/models" --exclude="$TOP/bin/strata_tests" --exclude="$TOP/bin/strata_exr_tests" "$TOP"
+tar czf "$TOP.tar.gz" --exclude="$TOP/bin/models" --exclude="$TOP/bin/welder_tests" --exclude="$TOP/bin/welder_exr_tests" "$TOP"
 for f in "$TOP"*.tar.gz; do echo "packaged: $ROOT/dist/$f ($(du -h "$f" | cut -f1))"; done

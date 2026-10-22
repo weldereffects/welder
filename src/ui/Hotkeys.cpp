@@ -3,7 +3,7 @@
 // Like Nuke, the panel under the mouse decides what a key does: B over the
 // node graph inserts a Blur, B over the viewer shows the blue channel.
 // shortcuts() is the reference table shown in Help > Keyboard Shortcuts; keys
-// Nuke has for features Strata doesn't have yet are listed as unavailable and
+// Nuke has for features Welder doesn't have yet are listed as unavailable and
 // say so in the status bar when pressed, instead of doing something else.
 #include <cstdlib>
 #include <algorithm>
@@ -165,7 +165,7 @@ bool key(ImGuiKey k, bool ctrl = false, bool shift = false, bool alt = false, bo
     return mods(ctrl, shift, alt) && ImGui::IsKeyPressed(k, repeat);
 }
 
-void unavailable(App& app, const char* what) { app.message(std::string(what) + " isn't available in Strata yet"); }
+void unavailable(App& app, const char* what) { app.message(std::string(what) + " isn't available in Welder yet"); }
 
 // Keyframe times of the nodes whose panels are open (for Alt/Ctrl+arrows).
 std::vector<double> keyTimes(App& app) {

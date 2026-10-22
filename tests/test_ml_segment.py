@@ -1,5 +1,5 @@
 """Tests for the worker's TrackMask task (SAM 2.1). Needs numpy and Pillow; SAM 2 itself is replaced
-by a stand-in predictor (PyTorch and the weights aren't needed), so this checks Strata's side: frames
+by a stand-in predictor (PyTorch and the weights aren't needed), so this checks Welder's side: frames
 to JPEGs, clicks scaled to them, tracking forwards and backwards from the first clicked frame, the
 mattes written, the tag echoed - and that the bundled SAM 2 code is complete.
 Run: python -m unittest tests/test_ml_segment.py

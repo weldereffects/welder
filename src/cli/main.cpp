@@ -1,9 +1,9 @@
 // strata — command-line renderer.
 //
-//   strata render <comp.strata> [-f 1-100] [-w Write1,Write2] [-t threads] [--cache-mb N] [-v]
-//   strata node   <comp.strata> <NodeName> -o out.exr [-f frame]
-//   strata info   <comp.strata>
-//   strata nk     <comp.strata> [-o shot.nk]       (a Nuke script)
+//   welder render <comp.weld> [-f 1-100] [-w Write1,Write2] [-t threads] [--cache-mb N] [-v]
+//   welder node   <comp.weld> <NodeName> -o out.exr [-f frame]
+//   welder info   <comp.weld>
+//   welder nk     <comp.weld> [-o shot.nk]       (a Nuke script)
 //   strata types
 //   strata ofx-list [plugin paths...]
 #include <chrono>
@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "gpu/Gpu.h"
+#include "../core/Brand.h"
 #include "../core/Comp.h"
 #include "../core/Platform.h"
 #include "../core/Engine.h"
@@ -31,11 +32,11 @@ namespace {
 void usage() {
     std::cerr << "strata " STRATA_VERSION " — open-source node-based compositor (headless)\n\n"
                  "usage:\n"
-                 "  strata render <comp.strata> [-f 1-100|1-100x2|1,5,9] [-w Write1,..] [-t threads] [--cache-mb N] [--scale 0.5] [-c] [-v] [--no-gpu]\n"
-                 "  strata node   <comp.strata> <NodeName> -o out.(exr|dpx|tif|png|jpg) [-f frame]\n"
-                 "  strata info   <comp.strata>\n"
-                 "  strata nk     <comp.strata> [-o shot.nk]   (export to a Nuke script)\n"
-                 "  strata bench  <comp.strata> <Node> [EditedNode] [-f frame]\n"
+                 "  welder render <comp.weld> [-f 1-100|1-100x2|1,5,9] [-w Write1,..] [-t threads] [--cache-mb N] [--scale 0.5] [-c] [-v] [--no-gpu]\n"
+                 "  welder node   <comp.weld> <NodeName> -o out.(exr|dpx|tif|png|jpg) [-f frame]\n"
+                 "  welder info   <comp.weld>\n"
+                 "  welder nk     <comp.weld> [-o shot.nk]   (export to a Nuke script)\n"
+                 "  welder bench  <comp.weld> <Node> [EditedNode] [-f frame]\n"
                  "  strata types\n"
                  "  strata ofx-list [dir ...]   (also searches $OFX_PLUGIN_PATH)\n";
 }
@@ -287,6 +288,7 @@ int cmdInfo(const Args& a) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    strata::brand::aliasEnv();
     registerBuiltinNodes();
     registerOfxPlugins();
     if (argc < 2) { usage(); return 2; }

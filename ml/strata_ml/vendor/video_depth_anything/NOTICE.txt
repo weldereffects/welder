@@ -2,7 +2,7 @@ Video Depth Anything - code from https://github.com/DepthAnything/Video-Depth-An
 at commit 4f5ae23172ba60fd7bc11ef671cca678842c7072 (2025-10-07), Copyright (2025) Bytedance Ltd.
 and/or its affiliates, Apache License 2.0 (LICENSE in this folder). DINOv2 parts: Meta Platforms, Apache 2.0.
 
-Changes for Strata: utils/util.py is _vda_util.py (imported relatively); the streaming
+Changes for Welder: utils/util.py is _vda_util.py (imported relatively); the streaming
 module (video_depth_stream.py) is left out; empty __init__.py files added;
 dpt_temporal.py falls back to a plain dict when easydict is not installed.
 

@@ -196,11 +196,13 @@ std::string home() {
 #ifdef _WIN32
     const char* la = std::getenv("LOCALAPPDATA");
     std::string base = la && *la ? la : (std::string(std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : "C:") + "\\AppData\\Local");
-    return base + "\\Strata\\ml";
+    if (!fs::exists(base + "\\Welder\\ml") && fs::exists(base + "\\Strata\\ml")) return base + "\\Strata\\ml";  // models from before the rename
+    return base + "\\Welder\\ml";
 #else
     const char* x = std::getenv("XDG_DATA_HOME");
     std::string base = x && *x ? x : std::string(std::getenv("HOME") ? std::getenv("HOME") : "/tmp") + "/.local/share";
-    return base + "/strata/ml";
+    if (!fs::exists(base + "/welder/ml") && fs::exists(base + "/strata/ml")) return base + "/strata/ml";  // models from before the rename
+    return base + "/welder/ml";
 #endif
 }
 
@@ -270,7 +272,7 @@ const json& registry() {
 
 // ------------------------------------------------------------ where models live
 // Downloads go to <ml home>/models/<id>. Models installed by hand go in the
-// Strata folder's models/<id> (installDir), or a folder named in
+// Welder folder's models/<id> (installDir), or a folder named in
 // STRATA_ML_MODELS (several separated by ';' on Windows, ':' elsewhere). The
 // worker gets the same list through <ml home>/model_dirs.json.
 std::string installDir() {
@@ -396,11 +398,11 @@ std::string prepareInstallFolder(const std::string& id) {
         t += "\nDownload the whole repository (every file, keeping its folders), e.g.\n"
              "  hf download " + info.value("repo", std::string()) + " --local-dir \"<this folder>\"\n";
     else {
-        t += "\nFiles (the subfolders are optional: Strata finds each file by name):\n";
+        t += "\nFiles (the subfolders are optional: Welder finds each file by name):\n";
         for (auto& f : info.value("files", json::array())) t += "  " + f.get<std::string>() + "\n";
         t += "\nOr: hf download " + info.value("repo", std::string()) + " <file> --local-dir \"<this folder>\"\n";
     }
-    t += "\nStrata shows the model as ready as soon as every file is here.\n";
+    t += "\nWelder shows the model as ready as soon as every file is here.\n";
     writeFileAtomic(S(d / "PUT_FILES_HERE.txt"), t);
     return S(d);
 }
@@ -472,7 +474,7 @@ WorkerInfo workerInfo() {
 bool launchWorker(std::string* err) {
     std::string pkg = packageDir();
     if (pkg.empty()) {
-        if (err) *err = "the ml folder (strata_ml_worker.py) is missing next to Strata";
+        if (err) *err = "the ml folder (strata_ml_worker.py) is missing next to Welder";
         return false;
     }
     std::string py = pythonPath();
@@ -501,7 +503,7 @@ void stopWorker() {
 bool runSetup(std::string* err) {
     std::string pkg = packageDir();
     if (pkg.empty()) {
-        if (err) *err = "the ml folder is missing next to Strata";
+        if (err) *err = "the ml folder is missing next to Welder";
         return false;
     }
     std::string h = home();

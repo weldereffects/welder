@@ -1,4 +1,4 @@
-# The Strata ML worker's Python packages (PyTorch is installed first, from
+# The Welder ML worker's Python packages (PyTorch is installed first, from
 # PyTorch's CUDA index: see setup-ml.bat / setup-ml.sh).
 numpy
 scipy

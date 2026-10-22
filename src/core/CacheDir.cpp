@@ -18,11 +18,11 @@ std::string defaultCacheRoot() {
 #if defined(_WIN32)
     const char* base = std::getenv("LOCALAPPDATA");
     if (!base) base = std::getenv("APPDATA");
-    p = base ? fs::path(base) / "Strata" / "cache" : fs::path("strata-cache");
+    p = base ? fs::path(base) / "Welder" / "cache" : fs::path("welder-cache");
 #else
     const char* xdg = std::getenv("XDG_CACHE_HOME");
     const char* home = std::getenv("HOME");
-    p = xdg && *xdg ? fs::path(xdg) / "strata" : home ? fs::path(home) / ".cache" / "strata" : fs::path("strata-cache");
+    p = xdg && *xdg ? fs::path(xdg) / "welder" : home ? fs::path(home) / ".cache" / "welder" : fs::path("welder-cache");
 #endif
     return p.string();
 }

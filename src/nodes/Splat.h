@@ -1,5 +1,5 @@
 // Gaussian splats: loading (.ply, the INRIA 3DGS layout every splat tool
-// writes), and a CPU renderer for Strata's cameras.
+// writes), and a CPU renderer for Welder's cameras.
 //
 // Nodes:
 //   ReadSplat      reads a .ply (inputs: axis), with the usual 3D transform knobs

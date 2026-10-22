@@ -1,4 +1,4 @@
-// A composition: the node graph plus project settings, loaded from a .strata
+// A composition: the node graph plus project settings, loaded from a .weld
 // (JSON) file. See docs/FILE_FORMAT.md.
 #pragma once
 
@@ -50,7 +50,7 @@ public:
     std::filesystem::path baseDir;  // relative file paths resolve against this
     std::vector<std::unique_ptr<Node>> nodes;
     std::vector<std::string> warnings;
-    std::string scriptPath;  // the .strata file it was loaded from / saved to ("" = unsaved); not saved in it
+    std::string scriptPath;  // the .weld file it was loaded from / saved to ("" = unsaved); not saved in it
 
     static std::unique_ptr<Comp> loadFile(const std::filesystem::path& p);
     static std::unique_ptr<Comp> fromJson(const json& j, const std::filesystem::path& baseDir);

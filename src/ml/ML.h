@@ -1,20 +1,20 @@
-// The link to the Strata ML worker (ml/ in the source tree, ml/ next to the
+// The link to the Welder ML worker (ml/ in the source tree, ml/ next to the
 // executable): a Python process on the GPU machine that runs the AI nodes'
 // jobs (LTX IC-LoRAs, Alpha Gen, Gaussian splat and NeRF training,
-// MapAnything). Strata and the worker share a directory (the ML home):
+// MapAnything). Welder and the worker share a directory (the ML home):
 //
 //   worker.json            the worker's heartbeat
 //   queue/<key>            jobs waiting
 //   (jobs: <cache folder>/ml-jobs/<key>/, older ones <ml home>/jobs/<key>/: job.json, in/, out/, status.json, result.json, cancel)
 //   models/<id>/.complete  downloaded models (registry: ml/strata_ml/models.json)
-//   model_dirs.json        more folders with models (the Strata folder's models/, installed by hand)
+//   model_dirs.json        more folders with models (the Welder folder's models/, installed by hand)
 //   venv/                  the Python environment setup-ml makes
 //
 // A job's key is a hash of everything it depends on, so running a node again
 // with the same inputs and settings reuses the finished result.
 //
 // Frames go both ways as .npy files: float16 (or float32), H x W x C, top row
-// first (Strata's images are bottom row first).
+// first (Welder's images are bottom row first).
 #pragma once
 
 #include <filesystem>
@@ -35,7 +35,7 @@ inline std::string pathString(const std::filesystem::path& p) {
 }
 
 // ------------------------------------------------------------ locations
-std::string home();                        // STRATA_ML_HOME, else %LOCALAPPDATA%/Strata/ml or ~/.local/share/strata/ml
+std::string home();                        // STRATA_ML_HOME, else %LOCALAPPDATA%/Welder/ml or ~/.local/share/strata/ml
 void setHome(const std::string& dir);      // override (empty = default)
 void setAppDir(const std::string& exeDir); // where to look for ml/ next to the executable
 std::string packageDir();                  // the directory with strata_ml_worker.py ("" if not found)
@@ -44,7 +44,7 @@ std::string pythonPath();                  // the venv's python ("" when setup h
 // ------------------------------------------------------------ registry and models
 const json& registry();                    // models.json (empty object if missing)
 bool modelReady(const std::string& id);
-// Where models are found: <ml home>/models (downloads), the Strata folder's
+// Where models are found: <ml home>/models (downloads), the Welder folder's
 // models/ (installed by hand: installDir), STRATA_ML_MODELS. A model is ready
 // when its folder has every file models.json lists (found by name, at any depth
 // below), or a config.json for whole-repository models, or a finished download.

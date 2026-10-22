@@ -1,6 +1,6 @@
-// Strata editor.
+// Welder editor.
 //
-//   strata_ui [comp.strata | script.nk] [--frame N] [--view Node] [--select Node]
+//   welder_ui [comp.weld | script.nk] [--frame N] [--view Node] [--select Node]
 //             [--props Node,Node] [--size 1600x900] [--screenshot out.png] [--ofx-path dir]
 //             [--graph-level Group]
 //
@@ -31,6 +31,8 @@
 #include "ml/ML.h"
 #include "ofx/OfxHost.h"
 #include "stb_image_write.h"
+#include "Splash.h"
+#include "core/Brand.h"
 
 namespace fs = std::filesystem;
 using namespace strata;
@@ -69,18 +71,7 @@ Options parse(int argc, char** argv) {
     return o;
 }
 
-std::string configDir() {
-#if defined(_WIN32)
-    const char* base = std::getenv("APPDATA");
-    fs::path p = base ? fs::path(base) / "Strata" : fs::path(".");
-#else
-    const char* home = std::getenv("HOME");
-    fs::path p = home ? fs::path(home) / ".config" / "strata" : fs::path(".");
-#endif
-    std::error_code ec;
-    fs::create_directories(p, ec);
-    return p.string();
-}
+std::string configDir() { return brand::configDir(); }
 
 void applyTheme() {
     ImGuiStyle& s = ImGui::GetStyle();
@@ -183,6 +174,11 @@ std::string findFont(const std::string& exeDir) {
     return "";
 }
 
+bool envFlag(const char* name) {
+    const char* v = std::getenv(name);
+    return v && *v && std::string(v) != "0";
+}
+
 }  // namespace
 
 // Files dropped on the window (GLFW calls this during event polling).
@@ -192,33 +188,41 @@ void onDrop(GLFWwindow*, int count, const char** paths) {
 }
 
 int main(int argc, char** argv) {
+    brand::aliasEnv();
     Options opt = parse(argc, argv);
-    crash::install((fs::path(configDir()) / "crashes").string(), "Strata");
+    crash::install((fs::path(configDir()) / "crashes").string(), "Welder");
     if (const char* tc = std::getenv("STRATA_TEST_CRASH"); tc && *tc) {  // checks the crash report
         crash::crumb(std::string("test crash: ") + tc);
         if (std::string(tc) == "throw") std::thread([] { throw std::runtime_error("test exception from a worker thread"); }).join();
         volatile int* p = nullptr;
         *p = 1;
     }
-    registerBuiltinNodes();
-    registerOfxPlugins();
-    if (!opt.ofxPath.empty()) addOfxSearchPath(opt.ofxPath);
-
     if (!glfwInit()) {
         std::fprintf(stderr, "error: cannot initialise the window system\n");
         return 1;
     }
+    // The splash stays up while plug-ins are found and the file loads (not for scripted screenshots).
+    const bool useSplash = opt.screenshot.empty() && !opt.idScan && !envFlag("WELDER_NO_SPLASH") && !envFlag("STRATA_NO_SPLASH");
+    if (useSplash) splash::show();
+    registerBuiltinNodes();
+    registerOfxPlugins();
+    if (!opt.ofxPath.empty()) addOfxSearchPath(opt.ofxPath);
+    splash::pump();
+
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 #if defined(__APPLE__)
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
-    GLFWwindow* win = glfwCreateWindow(opt.width, opt.height, "Strata", nullptr, nullptr);
+    if (useSplash) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);  // shown once loading is done
+    GLFWwindow* win = glfwCreateWindow(opt.width, opt.height, "Welder", nullptr, nullptr);
     if (!win) {
         std::fprintf(stderr, "error: cannot create an OpenGL 3.3 window\n");
         return 1;
     }
+    splash::setWindowIcon(win);
+    splash::pump();
     glfwMakeContextCurrent(win);
     glfwSetDropCallback(win, onDrop);
     glfwSwapInterval(opt.idScan ? 0 : 1);
@@ -263,6 +267,7 @@ int main(int argc, char** argv) {
     // Finished renders wake the event loop immediately (it sleeps while idle).
     app.onResult = [] { glfwPostEmptyEvent(); };
 
+    splash::pump();
     UiState ui;
     if (opt.screenshot.empty()) ui.lastCrash = crash::takePreviousReport();
 
@@ -285,6 +290,11 @@ int main(int argc, char** argv) {
         for (auto it = list.rbegin(); it != list.rend(); ++it) app.openPanel(*it);
     }
     if (!app.viewed.empty()) app.viewerSlots[1] = app.viewed;
+    if (useSplash) {
+        splash::close(win);
+        glfwShowWindow(win);
+        glfwFocusWindow(win);
+    }
     ui.graph.needsFrame = true;
     app.requestView();
 
@@ -395,8 +405,8 @@ int main(int argc, char** argv) {
                 app.settingsPath = (d / "settings.json").string();
                 app.clearRecent();
                 std::string err;
-                for (int i = 1; i <= 12; ++i) app.save((d / ("shot" + std::to_string(i) + ".strata")).string(), &err);
-                app.open((d / "shot5.strata").string(), &err);
+                for (int i = 1; i <= 12; ++i) app.save((d / ("shot" + std::to_string(i) + ".weld")).string(), &err);
+                app.open((d / "shot5.weld").string(), &err);
                 std::string list;
                 for (auto& r : app.recentFiles) list += fs::path(r).stem().string() + " ";
                 app.recentFiles.clear();
@@ -997,7 +1007,7 @@ int main(int argc, char** argv) {
             }
         }
 
-        std::string title = "Strata - " + (app.compPath.empty() ? std::string("untitled") : fs::path(app.compPath).filename().string()) +
+        std::string title = "Welder - " + (app.compPath.empty() ? std::string("untitled") : fs::path(app.compPath).filename().string()) +
                             (app.dirty ? " *" : "");
         if (title != lastTitle) {
             glfwSetWindowTitle(win, title.c_str());

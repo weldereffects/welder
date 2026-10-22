@@ -1,5 +1,5 @@
 // EXR I/O tests: every compression, multi-part, tiled, data windows, layers.
-// Files are created with the OpenEXR library directly, then read through Strata.
+// Files are created with the OpenEXR library directly, then read through Welder.
 #include <ImfChannelList.h>
 #include <ImfFrameBuffer.h>
 #include <ImfHeader.h>
@@ -58,7 +58,7 @@ static Image strataPattern(int W, int H) {
 }
 
 int main() {
-    fs::path tmp = fs::temp_directory_path() / "strata_exr_tests";
+    fs::path tmp = fs::temp_directory_path() / "welder_exr_tests";
     fs::create_directories(tmp);
     const int W = 64, H = 40;
     Format fmt;
@@ -80,7 +80,7 @@ int main() {
             CHECK(f.image->ch("depth.Z") >= 0);
             bool lossy = comp == "pxr24" || comp == "b44" || comp == "b44a" || comp == "dwaa" || comp == "dwab";
             double eps = lossy ? 0.05 : 1e-6;
-            // Strata (10, 30) is EXR row H-1-30 = 9.
+            // Welder (10, 30) is EXR row H-1-30 = 9.
             CHECK_NEAR(f.image->at(10, 30, f.image->ch("R")), 0.10, eps);
             CHECK_NEAR(f.image->at(10, 30, f.image->ch("G")), 0.09, eps);
             CHECK_NEAR(f.image->at(10, 30, f.image->ch("depth.Z")), (10 + 9) * 0.25, lossy ? 0.2 : 1e-6);

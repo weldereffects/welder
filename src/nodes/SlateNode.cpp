@@ -60,7 +60,7 @@ struct Font {
     bool ok = false;
 };
 
-// The font file, else Arial, else what this machine has (Liberation Sans / DejaVu), else Strata's own.
+// The font file, else Arial, else what this machine has (Liberation Sans / DejaVu), else Welder's own.
 std::shared_ptr<const Font> loadFont(const std::string& want, std::string* used) {
     static std::mutex m;
     static std::map<std::string, std::shared_ptr<const Font>> cache;

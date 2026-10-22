@@ -53,7 +53,7 @@ bool isColorKnob(const std::string& k) {
     return c.count(k) > 0;
 }
 
-// Strata param -> Nuke knob, by Strata node type (where they differ).
+// Welder param -> Nuke knob, by Welder node type (where they differ).
 std::string nukeKnob(const std::string& type, const std::string& p) {
     static const std::map<std::pair<std::string, std::string>, std::string> m = {
         {{"Grade", "lift"}, "black"},          {{"Grade", "gain"}, "white"},
@@ -69,7 +69,7 @@ std::string nukeKnob(const std::string& type, const std::string& p) {
     return it != m.end() ? it->second : p;
 }
 
-// Strata channel -> Nuke ("R" -> rgba.red, "diffuse.G" -> diffuse.green).
+// Welder channel -> Nuke ("R" -> rgba.red, "diffuse.G" -> diffuse.green).
 std::string nukeChannel(const std::string& c) {
     static const std::map<std::string, std::string> s = {{"R", "red"}, {"G", "green"}, {"B", "blue"}, {"A", "alpha"}};
     auto dot = c.find('.');
@@ -100,10 +100,10 @@ std::string nukeChannels(const json& v) {
 
 // ------------------------------------------------------------------ expressions
 struct Names {
-    std::map<std::string, std::string> type;  // node -> Strata type (what the export knows)
+    std::map<std::string, std::string> type;  // node -> Welder type (what the export knows)
 };
 
-// Strata expression -> Nuke's: knob names and numbered components.
+// Welder expression -> Nuke's: knob names and numbered components.
 std::string exprToNuke(const std::string& text, const Names& names) {
     std::string out;
     size_t i = 0;
@@ -150,7 +150,7 @@ std::string exprToNuke(const std::string& text, const Names& names) {
     return out;
 }
 
-// A label in braces, so Nuke evaluates [value ...] in it as Strata does.
+// A label in braces, so Nuke evaluates [value ...] in it as Welder does.
 std::string tclLabel(const std::string& s) {
     int depth = 0;
     bool ok = s.find('\\') == std::string::npos;
@@ -259,7 +259,7 @@ struct Writer {
             if (maskAt >= 0) b.mask = in(n, maskAt);
         };
         auto warn = [&](const std::string& w) { warnings.push_back(name + ": " + w); };
-        auto filter = [&] {  // Strata's filter names are Nuke's, lower-case (plus bilinear)
+        auto filter = [&] {  // Welder's filter names are Nuke's, lower-case (plus bilinear)
             if (!has("filter") || !p["filter"].is_string()) return;
             std::string f = p["filter"].get<std::string>();
             for (auto& c : f) c = (char)std::tolower((unsigned char)c);
@@ -772,8 +772,8 @@ struct Writer {
         b.main = {in(n, 0)};
         std::string type = n.value("type", "?");
         b.knobs.push_back({"tile_color", "0xb0404aff"});
-        b.knobs.push_back({"label", word("Strata " + type + (why.empty() ? "" : "\n(" + why + ")"))});
-        warnings.push_back(n.value("name", "?") + ": Strata's " + type + " has no Nuke equivalent; it became a NoOp" +
+        b.knobs.push_back({"label", word("Welder " + type + (why.empty() ? "" : "\n(" + why + ")"))});
+        warnings.push_back(n.value("name", "?") + ": Welder's " + type + " has no Nuke equivalent; it became a NoOp" +
                            (why.empty() ? "" : " (" + why + ")"));
         ++placeholders;
         return b;
@@ -973,7 +973,7 @@ ExportResult exportCompJson(const json& j) {
     json fmtj = j.value("format", json::object());
     int W = fmtj.value("width", 1920), H = fmtj.value("height", 1080);
     double par = fmtj.value("pixel_aspect", 1.0);
-    std::string fname = fmtj.value("name", "Strata");
+    std::string fname = fmtj.value("name", "Welder");
     json pr = j.value("project", json::object());
     json col = pr.value("color", json::object());
     double first = 1, last = 1;

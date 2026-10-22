@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build, test and package Strata for macOS (on a Mac: Apple silicon or Intel, whichever this one is).
+# Build, test and package Welder for macOS (on a Mac: Apple silicon or Intel, whichever this one is).
 #
 #   tools/package_macos.sh
 #
@@ -9,13 +9,13 @@
 # Optional signing: MAC_SIGN_ID="Developer ID Application: ..." signs the app; with
 #   MAC_NOTARY_PROFILE=<notarytool keychain profile> it is notarized and stapled too.
 #   Without them the app is ad-hoc signed: users right-click > Open the first time.
-# Output: dist/strata-<version>-macos-<arch>.zip (Strata.app, docs, examples)
+# Output: dist/welder-<version>-macos-<arch>.zip (Welder.app, docs, examples)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ARCH=$(uname -m)   # arm64 | x86_64
 BUILD="$ROOT/build-macos-$ARCH"
-VERSION=$(sed -n 's/^project(strata VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")
-TOP="strata-$VERSION-macos-$ARCH"
+VERSION=$(sed -n 's/^project(welder VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")
+TOP="welder-$VERSION-macos-$ARCH"
 STAGE="$ROOT/dist/$TOP"
 DEPS="$ROOT/../deps"
 NCPU=$(sysctl -n hw.ncpu)
@@ -49,17 +49,17 @@ cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release ${ARGS[@]+"${AR
 cmake --build "$BUILD" -j"$NCPU" ${CI:+-- -k 0}   # on CI: every error in one go
 
 echo "== engine tests"
-"$BUILD/strata_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
+"$BUILD/welder_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
 echo "== EXR tests"
-"$BUILD/strata_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
+"$BUILD/welder_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
 
-# ---- Strata.app: programs in Contents/MacOS, everything else in Contents/Resources (as signing requires)
+# ---- Welder.app: programs in Contents/MacOS, everything else in Contents/Resources (as signing requires)
 rm -rf "$STAGE"
-APP="$STAGE/Strata.app"
+APP="$STAGE/Welder.app"
 MAC="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
 mkdir -p "$MAC" "$RES" "$STAGE/docs" "$STAGE/tools"
-cp "$BUILD/strata_ui" "$BUILD/strata" "$MAC/"
+cp "$BUILD/welder_ui" "$BUILD/welder" "$MAC/"
 mkdir -p "$RES/fonts" && cp "$ROOT/third_party/imgui/fonts/Roboto-Medium.ttf" "$RES/fonts/"
 [ "$HAVE_NCNN" = 1 ] && mkdir -p "$RES/models" && cp -r "$ROOT/models/rife" "$RES/models/rife"
 mkdir -p "$RES/ml"
@@ -67,24 +67,24 @@ cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements
 find "$RES/ml" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$RES/tools" && cp "$ROOT/tools/nk2strata.py" "$RES/tools/"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
-[ -f "$ROOT/tools/macos/Strata.icns" ] && cp "$ROOT/tools/macos/Strata.icns" "$RES/"
+cp "$ROOT/assets/brand/Welder.icns" "$RES/"
 sed "s/@VERSION@/$VERSION/g" "$ROOT/tools/macos/Info.plist" > "$APP/Contents/Info.plist"
-cp "$BUILD/strata_tests" "$BUILD/strata_exr_tests" "$STAGE/"   # self-tests, outside the app
+cp "$BUILD/welder_tests" "$BUILD/welder_exr_tests" "$STAGE/"   # self-tests, outside the app
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$ROOT/tools/macos/README-MAC.txt" "$STAGE/"
 mkdir -p "$STAGE/examples/nuke"
-cp "$ROOT"/examples/*.strata "$STAGE/examples/"
+cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nuke/*.nk "$STAGE/examples/nuke/"
 
 # ---- signing: a Developer ID (and notarization) when configured, else ad hoc
 if [ -n "${MAC_SIGN_ID:-}" ]; then
   codesign --force --options runtime --timestamp --entitlements "$ROOT/tools/macos/entitlements.plist" \
-           --sign "$MAC_SIGN_ID" "$MAC/strata" "$MAC/strata_ui"
+           --sign "$MAC_SIGN_ID" "$MAC/welder" "$MAC/welder_ui"
   codesign --force --options runtime --timestamp --entitlements "$ROOT/tools/macos/entitlements.plist" \
            --sign "$MAC_SIGN_ID" "$APP"
 else  # ad hoc: the programs, then the bundle (which seals Resources)
-  codesign --force --sign - "$MAC/strata" "$MAC/strata_ui"
+  codesign --force --sign - "$MAC/welder" "$MAC/welder_ui"
   codesign --force --sign - "$APP"
 fi
 codesign --verify --strict --verbose=2 "$APP"

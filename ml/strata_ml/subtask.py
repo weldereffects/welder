@@ -2,7 +2,7 @@
 
 Gaussian splat training uses gsplat, whose prebuilt CUDA wheels exist for
 PyTorch 2.4 / Python 3.10 only (newer versions compile their kernels on
-first use, which needs the CUDA toolkit and a C++ compiler). Strata's setup
+first use, which needs the CUDA toolkit and a C++ compiler). Welder's setup
 makes a second environment for it (venv-splat); the worker, which runs on
 the newer PyTorch the LTX pipelines need, hands the training to it:
 

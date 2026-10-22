@@ -41,6 +41,7 @@
 #include "nodes/MLNodes.h"
 #include "nodes/Splat.h"
 #include "gpu/Gpu.h"
+#include "core/Brand.h"
 #include "nodes/Stabilize.h"
 #include "nodes/PrecompNode.h"
 #include "nodes/BlenderNode.h"
@@ -190,7 +191,7 @@ int main(int argc, char** argv) {
     NodeRegistry::instance().add("TestPattern", [] { return std::make_unique<TestPattern>(); });
     NodeRegistry::instance().add("MovingScene", [] { return std::make_unique<MovingScene>(); });
     NodeRegistry::instance().add("TestTexture", [] { return std::make_unique<synth::TestTexture>(); });
-    auto tmp = std::filesystem::temp_directory_path() / "strata_tests";
+    auto tmp = std::filesystem::temp_directory_path() / "welder_tests";
     std::filesystem::create_directories(tmp);
 
     test("merge over (premultiplied)", [] {
@@ -493,14 +494,14 @@ int main(int argc, char** argv) {
         CHECK(t2.find("push $cut_paste_input\nBlur {\n size 4\n name B\n selected true\n}") != std::string::npos);
         CHECK(has("Merge2 {\n inputs 2\n operation plus\n mix 0.5"));
         CHECK(has("Group {\n inputs 1\n addUserKnob {20 User}\n addUserKnob {7 amount R 0 10}\n amount 3\n"));
-        CHECK(has(" multiply {{parent.amount} 1 1 {G.white.a}}"));  // Strata names -> Nuke's
+        CHECK(has(" multiply {{parent.amount} 1 1 {G.white.a}}"));  // Welder names -> Nuke's
         CHECK(has("end_group"));
         CHECK(has("NoOp {"));
         CHECK(r.placeholders == 1 && r.nodes == 10);
         // the Grade's inputs are pushed mask first, input 0 last (on top)
         size_t g = t.find("Grade {"), pm = t.rfind("push", g);
         CHECK(pm != std::string::npos && t.compare(pm, 12, "push $N1000\n") == 0);
-        // the clipboard: Nuke text plus the exact Strata nodes on a comment line
+        // the clipboard: Nuke text plus the exact Welder nodes on a comment line
         std::string clip = nk::clipboardText(nodes);
         CHECK(clip.rfind("# strata_nodes_b64: ", 0) == 0);
         CHECK(clip.substr(0, clip.find('\n')).find_first_of("{}\"[]$") == std::string::npos);
@@ -695,7 +696,7 @@ int main(int argc, char** argv) {
         CHECK(ft.width == 48 && ft.height == 64);
     });
 
-    test("ML: models installed by hand in the Strata folder's models/ are found", [&] {
+    test("ML: models installed by hand in the Welder folder's models/ are found", [&] {
         const json& reg = ml::registry();  // loaded before the app dir changes
         if (!reg.contains("models")) {
             std::printf("    (no ml package next to the tests: skipped)\n");
@@ -2204,7 +2205,7 @@ int main(int argc, char** argv) {
             const std::string rel = c->resolvePath("plates/a.exr");
             std::printf("  relative under the project: %s\n", rel.c_str());
             CHECK(rel.rfind("D:/shows/demo", 0) == 0);
-            CHECK(absolutePath("\\\\Server\\Share\\x.strata") == "\\\\Server\\Share\\x.strata");
+            CHECK(absolutePath("\\\\Server\\Share\\x.weld") == "\\\\Server\\Share\\x.weld");
         }
     });
     test("Noise: alpha is the noise's luminance by default", [] {
@@ -2864,7 +2865,7 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(img, 2, 2, "A"), 0, 1e-6);
     });
 
-    test("ML: camera conversion for the worker (OpenCV) matches Strata's projection", [] {
+    test("ML: camera conversion for the worker (OpenCV) matches Welder's projection", [] {
         cam3d::Camera cam;
         cam.R = cam3d::eulerToMatrix(cam3d::V3(12, -30, 5), "ZXY");
         cam.C = cam3d::V3(1, 2, 3);
@@ -2886,7 +2887,7 @@ int main(int argc, char** argv) {
         double vc = j["fy"].get<double>() * pc[1] / pc[2] + j["cy"].get<double>();
         CHECK(pc[2] > 0);
         CHECK_NEAR(uc, u, 1e-6);
-        CHECK_NEAR(H - vc, v, 1e-6);  // Strata's rows go up
+        CHECK_NEAR(H - vc, v, 1e-6);  // Welder's rows go up
     });
 
     test("ML nodes: showing a finished job (AlphaGen matte, Reconstruct depth + camera, LTX upscale)", [] {
@@ -2932,7 +2933,7 @@ int main(int argc, char** argv) {
                                     {"params", {{"preset", "Pixel Upscaler x2"}, {"ml", {{"main", {{"result", "ltx-c"}}}}}}}},
                                    {{"name", "AG2"}, {"type", "AlphaGen"}, {"inputs", {"K"}}}}));
         auto img = render(*c, "AG");
-        CHECK_NEAR(px(img, 10, 0, "A"), 1, 0.02);   // Strata's bottom row = the npy's last row
+        CHECK_NEAR(px(img, 10, 0, "A"), 1, 0.02);   // Welder's bottom row = the npy's last row
         CHECK_NEAR(px(img, 10, H - 1, "A"), 0, 0.02);
         CHECK_NEAR(px(img, 10, 0, "R"), 0.5, 0.02);  // premultiplied
         CHECK_NEAR(px(img, 10, H - 1, "R"), 0, 0.02);
@@ -4340,7 +4341,7 @@ int main(int argc, char** argv) {
         auto c = comp(m, W, H);
         c->firstFrame = 1001;
         c->lastFrame = 1236;
-        c->scriptPath = "/shows/demo/sh010/DEMO_sh010_comp_v008.strata";
+        c->scriptPath = "/shows/demo/sh010/DEMO_sh010_comp_v008.weld";
         // the studio's defaults (studio.json)
         const std::filesystem::path sc = std::filesystem::temp_directory_path() / "strata_test_studio.json";
         {
@@ -4598,8 +4599,8 @@ int main(int argc, char** argv) {
         CHECK_NEAR(out.px(0, 0)[out.ch("G")], 0.2, 1e-6);
         CHECK_NEAR(out.px(0, 0)[out.ch("depth.Z")], 0.25, 1e-6);   // 1 / distance
         CHECK_NEAR(out.px(1, 0)[out.ch("depth.Z")], 0.0, 1e-6);    // background
-        CHECK_NEAR(out.px(0, 0)[out.ch("N.Z")], -1.0, 1e-6);       // Blender +Y (away) is Strata -Z
-        CHECK_NEAR(out.px(1, 0)[out.ch("N.Y")], 1.0, 1e-6);        // Blender +Z (up) is Strata +Y
+        CHECK_NEAR(out.px(0, 0)[out.ch("N.Z")], -1.0, 1e-6);       // Blender +Y (away) is Welder -Z
+        CHECK_NEAR(out.px(1, 0)[out.ch("N.Y")], 1.0, 1e-6);        // Blender +Z (up) is Welder +Y
         CHECK_NEAR(out.px(0, 0)[out.ch("shadow.R")], 0.5, 1e-6);
         CHECK_NEAR(out.px(0, 0)[out.ch("diffdir.G")], 0.25, 1e-6);
         {  // motion vectors: X Y towards the previous frame, Z W negated into "towards the next"
@@ -4614,7 +4615,7 @@ int main(int argc, char** argv) {
             CHECK_NEAR(vo.px(0, 0)[vo.ch("forward.v")], -1, 1e-6);
             CHECK_NEAR(vo.px(0, 0)[vo.ch("cryptoobject00.R")], 0.7, 1e-6);
         }
-        // Strata (x, y, z) -> Blender (x, -z, y)
+        // Welder (x, y, z) -> Blender (x, -z, y)
         geo::M4 b = blender::toBlender(geo::M4::translate({1, 2, 3}));
         CHECK_NEAR(b.m[0][3], 1, 1e-12);
         CHECK_NEAR(b.m[1][3], -3, 1e-12);
@@ -4696,6 +4697,35 @@ int main(int argc, char** argv) {
             if (d.path().filename().string().rfind("job_", 0) == 0) ++jobs;
         CHECK(jobs == 1);  // frame 1 launched Blender for 1-3; frame 3 was then already there
         std::printf("    %d frames rendered by %d Blender launch(es)\n", exrs, jobs);
+    });
+    test("Brand: comp extensions, WELDER_* settings, the Strata-era settings folder", [] {
+        CHECK(brand::isCompFile("a/shot_v001.weld") && brand::isCompFile("C:\\x\\OLD.STRATA") && !brand::isCompFile("a.nk"));
+#if !defined(_WIN32)
+        setenv("WELDER_TEST_ALIAS", "yes", 1);
+        unsetenv("STRATA_TEST_ALIAS");
+        setenv("WELDER_TEST_KEEP", "new", 1);
+        setenv("STRATA_TEST_KEEP", "old", 1);
+        brand::aliasEnv();
+        CHECK(std::string(std::getenv("STRATA_TEST_ALIAS") ? std::getenv("STRATA_TEST_ALIAS") : "") == "yes");
+        CHECK(std::string(std::getenv("STRATA_TEST_KEEP")) == "old");  // an explicit STRATA_ one stays
+        // settings from the Strata days are copied into the Welder folder once (crash reports aren't)
+        namespace fs = std::filesystem;
+        fs::path home = fs::temp_directory_path() / "welder_brand_home";
+        fs::remove_all(home);
+        fs::create_directories(home / ".config" / "strata" / "gizmos");
+        fs::create_directories(home / ".config" / "strata" / "crashes");
+        std::ofstream(home / ".config" / "strata" / "settings.json") << "{\"x\": 1}";
+        std::ofstream(home / ".config" / "strata" / "gizmos" / "g.sgizmo") << "{}";
+        std::string oldHome = std::getenv("HOME") ? std::getenv("HOME") : "";
+        setenv("HOME", home.string().c_str(), 1);
+        std::string dir = brand::configDir();
+        setenv("HOME", oldHome.c_str(), 1);
+        CHECK(fs::path(dir) == home / ".config" / "welder");
+        CHECK(fs::exists(fs::path(dir) / "settings.json") && fs::exists(fs::path(dir) / "gizmos" / "g.sgizmo"));
+        CHECK(!fs::exists(fs::path(dir) / "crashes"));
+        CHECK(fs::exists(home / ".config" / "strata" / "settings.json"));  // the old folder is left alone
+        fs::remove_all(home);
+#endif
     });
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

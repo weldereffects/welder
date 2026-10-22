@@ -13,7 +13,7 @@ model gives the first estimate, the per-shot optimisation refines it.
 
 nerf_train writes out/nerf.pt and out/cameras.json (refined), plus the
 reconstruction of each training frame; nerf_render renders RGBA + depth from
-any cameras Strata sends.
+any cameras Welder sends.
 """
 
 import math

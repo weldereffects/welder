@@ -7,7 +7,7 @@
 # with the glslang submodule (git submodule update --init glslang). The build
 # has Vulkan compute (GPU) support through ncnn's built-in loader, so no
 # Vulkan SDK is needed; without a Vulkan driver at run time it uses the CPU.
-# Then configure Strata with -DSTRATA_NCNN_DIR=<install-dir>.
+# Then configure Welder with -DSTRATA_NCNN_DIR=<install-dir>.
 set -euo pipefail
 SRC=$(cd "$1" && pwd)
 OUT=$(mkdir -p "$2" && cd "$2" && pwd)

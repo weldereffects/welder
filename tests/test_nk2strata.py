@@ -234,7 +234,7 @@ class Knobs(unittest.TestCase):
         self.assertEqual(n["B"]["params"]["size"], {"expr": "C.color.r*10"})
         self.assertEqual(n["G"]["params"]["gain"], {"expr": "B.size/10"})
         self.assertEqual(n["G"]["params"]["multiply"], [{"expr": "frame"}, {"expr": "[value B.size]"}, 1.0, 1.0])
-        # a per-component link reads the same component, under Strata's knob name (white -> gain)
+        # a per-component link reads the same component, under Welder's knob name (white -> gain)
         self.assertEqual(n["T"]["params"]["translate"], [{"expr": "G.gain.0"}, {"expr": "G.gain.1"}])
         self.assertEqual(n["T"]["params"]["rotate"]["keys"], [[1.0, 0.0], [10.0, 90.0]])
         self.assertFalse(any("expression" in w["message"] for w in report["warnings"]))
@@ -381,7 +381,7 @@ Grade {
 
 
 class EndToEnd(unittest.TestCase):
-    """The example script translates and loads in the Strata CLI (if built)."""
+    """The example script translates and loads in the Welder CLI (if built)."""
 
     def test_example_loads(self):
         exe = os.path.join(ROOT, "build", "strata")
@@ -390,7 +390,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(report["nodes_total"], 23)  # with the backdrop and the group's Input / Output
         if not os.path.exists(exe):
             self.skipTest("strata not built")
-        with tempfile.NamedTemporaryFile("w", suffix=".strata", delete=False, dir=os.path.dirname(nk)) as f:
+        with tempfile.NamedTemporaryFile("w", suffix=".weld", delete=False, dir=os.path.dirname(nk)) as f:
             json.dump(comp, f)
             path = f.name
         try:
@@ -1186,12 +1186,12 @@ class CGImport(unittest.TestCase):
 
 
 class ExportRoundTrip(unittest.TestCase):
-    """Strata -> Nuke (strata nk) -> Strata (this importer) keeps the comp."""
+    """Welder -> Nuke (welder nk) -> Welder (this importer) keeps the comp."""
 
     def roundtrip(self, comp_path):
         exe = os.path.join(ROOT, "build", "strata")
         if not os.path.exists(exe):
-            self.skipTest("build/strata not built")
+            self.skipTest("build/welder not built")
         d = tempfile.mkdtemp()
         nk = os.path.join(d, "x.nk")
         r = subprocess.run([exe, "nk", comp_path, "-o", nk], capture_output=True, text=True)
@@ -1200,7 +1200,7 @@ class ExportRoundTrip(unittest.TestCase):
         return json.load(open(comp_path)), back
 
     def test_groups_example(self):
-        a, b = self.roundtrip(os.path.join(ROOT, "examples", "groups.strata"))
+        a, b = self.roundtrip(os.path.join(ROOT, "examples", "groups.weld"))
         na = {n["name"]: n for n in a["nodes"]}
         nb = {n["name"]: n for n in b["nodes"]}
         self.assertEqual(set(na), set(nb))
@@ -1218,7 +1218,7 @@ class ExportRoundTrip(unittest.TestCase):
 
     def test_imported_script_survives(self):
         d = tempfile.mkdtemp()
-        st = os.path.join(d, "shot.strata")
+        st = os.path.join(d, "shot.weld")
         comp, _ = nk2strata.convert(os.path.join(ROOT, "examples", "nuke", "shot010_comp_v003.nk"))
         json.dump(comp, open(st, "w"))
         a, b = self.roundtrip(st)
@@ -1235,7 +1235,7 @@ class ExportRoundTrip(unittest.TestCase):
         src = os.path.join(d, "panel.nk")
         open(src, "w").write(PANEL_NK)
         comp, _ = nk2strata.convert(src)
-        st = os.path.join(d, "panel.strata")
+        st = os.path.join(d, "panel.weld")
         json.dump(comp, open(st, "w"))
         a, b = self.roundtrip(st)
         na = {n["name"]: n for n in a["nodes"]}

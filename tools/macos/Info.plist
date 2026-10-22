@@ -2,22 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Strata</string>
-  <key>CFBundleDisplayName</key><string>Strata</string>
-  <key>CFBundleIdentifier</key><string>org.strata.compositor</string>
+  <key>CFBundleName</key><string>Welder</string>
+  <key>CFBundleDisplayName</key><string>Welder</string>
+  <key>CFBundleIdentifier</key><string>com.welderfx.welder</string>
   <key>CFBundleVersion</key><string>@VERSION@</string>
   <key>CFBundleShortVersionString</key><string>@VERSION@</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>strata_ui</string>
-  <key>CFBundleIconFile</key><string>Strata</string>
+  <key>CFBundleExecutable</key><string>welder_ui</string>
+  <key>CFBundleIconFile</key><string>Welder</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
-      <key>CFBundleTypeName</key><string>Strata comp</string>
-      <key>CFBundleTypeExtensions</key><array><string>strata</string></array>
+      <key>CFBundleTypeName</key><string>Welder comp</string>
+      <key>CFBundleTypeExtensions</key><array><string>weld</string><string>strata</string></array>
       <key>CFBundleTypeRole</key><string>Editor</string>
     </dict>
     <dict>

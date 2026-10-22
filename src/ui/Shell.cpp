@@ -33,7 +33,7 @@ bool typingInText() { return ImGui::GetIO().WantTextInput; }
 // ------------------------------------------------------------------ file actions
 
 static void doOpen(App& app, UiState& ui) {
-    openFileDialog(ui, "Open comp", false, {".strata"}, [&app, &ui](const std::string& p) {
+    openFileDialog(ui, "Open comp", false, {".weld", ".strata"}, [&app, &ui](const std::string& p) {
         std::string err;
         if (!app.open(p, &err)) app.message("error: " + err);
         ui.graph.needsFrame = true;
@@ -68,7 +68,7 @@ static void doExportNuke(App& app, UiState& ui) {
 }
 
 static void doSaveAs(App& app, UiState& ui) {
-    openFileDialog(ui, "Save comp as", true, {".strata"}, [&app](const std::string& p) {
+    openFileDialog(ui, "Save comp as", true, {".weld"}, [&app](const std::string& p) {
         std::string err;
         if (!app.save(p, &err)) app.message("error: " + err);
     }, app.compPath.empty() ? "" : fs::path(app.compPath).parent_path().string());
@@ -206,7 +206,7 @@ void drawMenuBar(App& app, UiState& ui) {
     }
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("Keyboard Shortcuts")) ui.showShortcuts = true;
-        if (ImGui::MenuItem("About Strata")) ui.showAbout = true;
+        if (ImGui::MenuItem("About Welder")) ui.showAbout = true;
         ImGui::EndMenu();
     }
     // Title / status on the right.
@@ -520,7 +520,7 @@ static void drawPreferences(App& app, UiState& ui) {
     }
     ImGui::Spacing();
     ImGui::SeparatorText("Caches");
-    ImGui::TextWrapped("One folder holds everything Strata caches: the disk cache of finished frames, BlenderRender's frames, "
+    ImGui::TextWrapped("One folder holds everything Welder caches: the disk cache of finished frames, BlenderRender's frames, "
                        "the AI nodes' job files and temporary files. Put it on a fast drive with room to spare.");
     ImGui::Spacing();
     kit::rowLabel("cache folder");
@@ -977,9 +977,9 @@ static void drawMatchProject(App& app, UiState& ui) {
 void drawDialogs(App& app, UiState& ui) {
     drawMatchProject(app, ui);
     drawPreferences(app, ui);
-    if (!ui.lastCrash.empty() && !ImGui::IsPopupOpen("Strata closed unexpectedly")) ImGui::OpenPopup("Strata closed unexpectedly");
-    if (ImGui::BeginPopupModal("Strata closed unexpectedly", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("Strata crashed last time. It wrote a report of what happened:");
+    if (!ui.lastCrash.empty() && !ImGui::IsPopupOpen("Welder closed unexpectedly")) ImGui::OpenPopup("Welder closed unexpectedly");
+    if (ImGui::BeginPopupModal("Welder closed unexpectedly", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Welder crashed last time. It wrote a report of what happened:");
         ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.4f, 1), "%s", ui.lastCrash.c_str());
         ImGui::TextDisabled("Sending the .txt report (and the .dmp next to it, if asked) helps fix it.");
         if (ImGui::Button("Open the folder")) ml::openFolder(crash::dir());
@@ -1043,7 +1043,7 @@ void drawDialogs(App& app, UiState& ui) {
     }
     ImGui::SetNextWindowSize(ImVec2(760, 600), ImGuiCond_Appearing);
     if (ImGui::BeginPopupModal("Keyboard shortcuts", nullptr)) {
-        ImGui::TextDisabled("Nuke's default hotkeys. The panel under the mouse decides what a key does. Greyed rows are Nuke keys for features Strata doesn't have yet.");
+        ImGui::TextDisabled("Nuke's default hotkeys. The panel under the mouse decides what a key does. Greyed rows are Nuke keys for features Welder doesn't have yet.");
         ImGui::BeginChild("##keys", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()));
         std::string ctx;
         for (auto& sc : shortcuts()) {
@@ -1088,11 +1088,11 @@ void drawDialogs(App& app, UiState& ui) {
     }
 
     if (ui.showAbout) {
-        ImGui::OpenPopup("About Strata");
+        ImGui::OpenPopup("About Welder");
         ui.showAbout = false;
     }
-    if (ImGui::BeginPopupModal("About Strata", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Strata %s", STRATA_VERSION);
+    if (ImGui::BeginPopupModal("About Welder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Welder %s", STRATA_VERSION);
         ImGui::TextDisabled("Open-source node-based compositor. 32-bit float, tiled, OpenFX.");
         if (ImGui::Button("Close")) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();

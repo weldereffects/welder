@@ -1,4 +1,4 @@
-"""Tests for the Strata ML worker (ml/). Needs numpy and PyTorch (CPU is fine);
+"""Tests for the Welder ML worker (ml/). Needs numpy and PyTorch (CPU is fine);
 skipped without them. Run: python -m unittest tests/test_ml_worker.py
 
 Covers the job protocol (queue, status, cancel, errors), the Gaussian splat
@@ -88,7 +88,7 @@ def synthetic_scene(n_frames=8, w=48, h=36, seed=0):
                 torch.full((N,), 0.9), t((cols - 0.5) / C0, dtype=torch.float32)[:, None, :],
                 torch.linalg.inv(t(c2w, dtype=torch.float32))[None], t([[[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]]]),
                 w, h, sh_degree=0, backgrounds=torch.zeros(1, 3))
-        rgb = srgb_decode(img[0].numpy())  # Strata hands the worker linear frames
+        rgb = srgb_decode(img[0].numpy())  # Welder hands the worker linear frames
         imgs.append(np.concatenate([rgb, alpha[0].numpy()], axis=2))
     return means, cols, cams, imgs
 
@@ -199,7 +199,7 @@ class WorkerTests(unittest.TestCase):
         self.assertIn("not installed", status(jd)["message"])
 
     def test_models_installed_by_hand(self):
-        """Models put in the Strata folder's models/ (listed in model_dirs.json) are found, files by name."""
+        """Models put in the Welder folder's models/ (listed in model_dirs.json) are found, files by name."""
         from strata_ml.util import JobContext, find_model
         hand = tempfile.mkdtemp(prefix="strata-models-")
         try:
@@ -403,9 +403,9 @@ class WorkerTests(unittest.TestCase):
 STRATA_CLI = os.path.join(HERE, "..", "build", "strata")
 
 
-@unittest.skipUnless(HAVE and os.path.exists(STRATA_CLI), "needs torch and build/strata")
+@unittest.skipUnless(HAVE and os.path.exists(STRATA_CLI), "needs torch and build/welder")
 class SplatRenderCrossCheck(unittest.TestCase):
-    """Strata's C++ SplatRender against the trainer's rasteriser: same splats, same camera, same picture."""
+    """Welder's C++ SplatRender against the trainer's rasteriser: same splats, same camera, same picture."""
 
     def test_cpp_matches_python(self):
         import subprocess
@@ -429,7 +429,7 @@ class SplatRenderCrossCheck(unittest.TestCase):
             yaw = 20.0
             a = math.radians(yaw)
             eye = np.array([5 * math.sin(a), 0.3, 5 * math.cos(a)])
-            # Strata camera: rotate Y by yaw (looks down -Z) -> OpenCV c2w = R_y * diag(1,-1,-1)
+            # Welder camera: rotate Y by yaw (looks down -Z) -> OpenCV c2w = R_y * diag(1,-1,-1)
             Ry = np.array([[math.cos(a), 0, math.sin(a)], [0, 1, 0], [-math.sin(a), 0, math.cos(a)]])
             c2w = np.eye(4)
             c2w[:3, :3] = Ry @ np.diag([1, -1, -1])
@@ -450,10 +450,10 @@ class SplatRenderCrossCheck(unittest.TestCase):
                 {"name": "Render", "type": "SplatRender", "inputs": [None, "Splats", "Cam"],
                  "params": {"colorspace": "linear", "antialiased": False}},
                 {"name": "Out", "type": "Write", "inputs": ["Render"], "params": {"file": os.path.join(tmp, "out.####.exr")}}]}
-            cp = os.path.join(tmp, "c.strata")
+            cp = os.path.join(tmp, "c.weld")
             with open(cp, "w") as f:
                 json.dump(comp, f)
-            # PNG: Strata writes sRGB-encoded 8-bit; decode back to compare
+            # PNG: Welder writes sRGB-encoded 8-bit; decode back to compare
             out = os.path.join(tmp, "o.png")
             r = subprocess.run([STRATA_CLI, "node", cp, "Render", "-o", out, "-f", "1"], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)

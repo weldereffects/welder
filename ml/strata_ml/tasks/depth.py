@@ -8,7 +8,7 @@ Two kinds:
   relative  disparity (proportional to 1 / distance, near = high), the shape of the
             scene without real units. Each shot segment is scaled so its near end is
             about 1. Written as "Z" holding the disparity - already Nuke's depth.Z sense.
-  metric    distance in metres (Metric-Video-Depth-Anything). Strata turns it into
+  metric    distance in metres (Metric-Video-Depth-Anything). Welder turns it into
             depth.Z = 1 / metres, like ScanlineRender's.
 
 Weights (models.json): Small - Apache 2.0; Base / Large - CC-BY-NC-4.0 (non-commercial).
@@ -57,7 +57,7 @@ def load_model(ctx, kind, size):
 
 
 class _Progress:
-    """Stands in for the model's tqdm: reports each window to Strata (and is the cancel point)."""
+    """Stands in for the model's tqdm: reports each window to Welder (and is the cancel point)."""
 
     def __init__(self, it, report):
         self.items = list(it)

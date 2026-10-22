@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-nk2strata — translate a Nuke script (.nk) into a Strata comp (.strata).
+nk2strata — translate a Nuke script (.nk) into a Welder comp (.weld).
 
-    python3 tools/nk2strata.py shot.nk -o shot.strata [--report report.json]
+    python3 tools/nk2strata.py shot.nk -o shot.weld [--report report.json]
     python3 tools/nk2strata.py clip.nk --fragment -o nodes.json   (Nuke's clipboard -> {"strata_nodes": [...]})
 
 What it does
   * Parses the .nk TCL subset Nuke writes: node blocks, the node stack
-    (set / push / [stack 0]), clones, layers, groups (as Strata groups, with
+    (set / push / [stack 0]), clones, layers, groups (as Welder groups, with
     their user knobs), gizmos (from .gizmo files on the gizmo path), backdrops,
     sticky notes, knob values including animation curves ({curve x1 0 x10 1})
     and expressions (Nuke's expression language; node and knob names are
-    rewritten to the Strata ones; TCL beyond [frame] / [value] is reported).
-  * Maps each Nuke node class to the matching Strata node and knob names to
-    Strata params. OFX nodes (OFX<plugin.id>_v<major>) become Strata OFX nodes
+    rewritten to the Welder ones; TCL beyond [frame] / [value] is reported).
+  * Maps each Nuke node class to the matching Welder node and knob names to
+    Welder params. OFX nodes (OFX<plugin.id>_v<major>) become Welder OFX nodes
     with their knobs passed through as plugin parameter values.
   * Anything it can't translate faithfully is reported, never silently dropped:
     unsupported classes become pass-through placeholders (so the rest of the
@@ -48,7 +48,7 @@ UNSUPPORTED_SPACES = ("cineon", "panalog", "viperlog", "redlog", "ploglin", "slo
 
 
 def nuke_movie_codec(k, warn):
-    """Nuke's mov64 / ffmpeg codec knobs -> a Strata movie codec."""
+    """Nuke's mov64 / ffmpeg codec knobs -> a Welder movie codec."""
     codec = str(k.get("mov64_codec", k.get("codec", k.get("mov.codec", "")))).lower()
     prof = " ".join(str(k.get(x, "")) for x in ("mov_prores_codec_profile", "mov64_dnxhd_codec_profile",
                                                   "mov64_dnxhr_codec_profile", "dnxhd_codec_profile")).lower()
@@ -87,7 +87,7 @@ def nuke_movie_codec(k, warn):
 
 
 def nuke_colorspace(cs):
-    """A Read / Write / OCIO knob value -> a Strata colour space ("default" stays)."""
+    """A Read / Write / OCIO knob value -> a Welder colour space ("default" stays)."""
     cs = cs.strip().strip('"')
     if not cs or cs.startswith("default"):
         return "default"
@@ -211,14 +211,17 @@ NUM_RE = re.compile(r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$")
 
 
 def studio_config():
-    """The studio's own defaults (studio.json: $STRATA_STUDIO_CONFIG, else %APPDATA%/Strata or ~/.config/strata),
-    as Strata reads them; {} when there are none."""
-    p = os.environ.get("STRATA_STUDIO_CONFIG")
+    """The studio's own defaults (studio.json: $WELDER_STUDIO_CONFIG, else %APPDATA%/Welder or ~/.config/welder,
+    else the Strata-era folder), as Welder reads them; {} when there are none."""
+    p = os.environ.get("WELDER_STUDIO_CONFIG") or os.environ.get("STRATA_STUDIO_CONFIG")
     if not p:
         if os.name == "nt":
-            p = os.path.join(os.environ.get("APPDATA", "."), "Strata", "studio.json")
+            base = os.environ.get("APPDATA", ".")
+            cands = [os.path.join(base, "Welder", "studio.json"), os.path.join(base, "Strata", "studio.json")]
         else:
-            p = os.path.join(os.path.expanduser("~"), ".config", "strata", "studio.json")
+            base = os.path.join(os.path.expanduser("~"), ".config")
+            cands = [os.path.join(base, "welder", "studio.json"), os.path.join(base, "strata", "studio.json")]
+        p = next((c for c in cands if os.path.isfile(c)), cands[0])
     try:
         with open(p, encoding="utf-8") as f:
             c = json.load(f)
@@ -319,7 +322,7 @@ TCL_OK = re.compile(r"\[\s*(frame|value\s+[\w.]+)\s*\]")
 
 def expr_text(word):
     """The expression inside a knob word ({Blur1.size*2}, "...", bare), or None
-    when it uses TCL Strata doesn't run."""
+    when it uses TCL Welder doesn't run."""
     t = str(word).strip()
     if getattr(word, "kind", "bare") == "brace" and t.startswith("{") and t.endswith("}"):
         t = t[1:-1].strip()
@@ -332,7 +335,7 @@ def expr_text(word):
 
 
 def expr_value(word):
-    """A knob value holding expressions -> a Strata value (numbers, curves and
+    """A knob value holding expressions -> a Welder value (numbers, curves and
     {"expr": text} per component), or None if something can't be translated."""
     s = str(word)
     if getattr(word, "kind", "bare") == "brace":
@@ -357,7 +360,7 @@ def expr_value(word):
     return out[0] if len(out) == 1 else out
 
 
-# Nuke knob -> Strata param, where they differ, by Strata node type (references
+# Nuke knob -> Welder param, where they differ, by Welder node type (references
 # in expressions; knobs the script itself sets are learned while translating).
 KNOB_RENAMES = {
     ("Grade", "white"): "gain", ("Grade", "black"): "lift", ("Grade", "add"): "offset",
@@ -365,7 +368,7 @@ KNOB_RENAMES = {
     ("Transform", "translate"): "translate", ("Merge", "mix"): "mix",
 }
 
-# Nuke's addUserKnob type codes -> Strata group knob types
+# Nuke's addUserKnob type codes -> Welder group knob types
 USER_KNOB_TYPES = {1: "string", 2: "string", 3: "int", 4: "choice", 6: "bool", 7: "float", 8: "float",
                    12: "xy", 13: "xyz", 14: "xy", 15: "box", 16: "float", 18: "color", 19: "color",
                    20: "divider", 26: "divider", 41: "link"}
@@ -478,7 +481,7 @@ def channel_name(nk):
 
 
 def channel_set(value):
-    """Nuke channel-set knob -> Strata selection ('rgb', 'rgba', 'alpha', 'all', layer or list)."""
+    """Nuke channel-set knob -> Welder selection ('rgb', 'rgba', 'alpha', 'all', layer or list)."""
     words = [str(w) for w in split_words(str(value))] if getattr(value, "kind", "") == "brace" else str(value).split()
     words = [w for w in words if not w.startswith("-")]
     if len(words) == 1:
@@ -764,7 +767,7 @@ def roto_transform(group):
 
 
 def roto_item(group, warn):
-    """A Strata shape / stroke from a cubiccurve / curvegroup group, or None."""
+    """A Welder shape / stroke from a cubiccurve / curvegroup group, or None."""
     name = str(group[1]) if len(group) > 1 else "Shape"
     ctype = next((str(x) for x in group[2:5] if not isinstance(x, list) and not roto_is_num(x)), "bezier")
     attrs = roto_attrs(group)
@@ -866,7 +869,7 @@ def roto_item(group, warn):
 
 
 def roto_shapes(text, warn):
-    """Strata items (bottom first) from a Roto/RotoPaint curves knob: shapes and strokes, and the
+    """Welder items (bottom first) from a Roto/RotoPaint curves knob: shapes and strokes, and the
     layers they're in (as layer items, with each item's "parent"; the root layer too when it
     moves anything)."""
     try:
@@ -920,7 +923,7 @@ def roto_shapes(text, warn):
                 walk(e, parent)
 
     walk(tree, None)
-    # Nuke lists the top of the stack first; Strata draws first to last.
+    # Nuke lists the top of the stack first; Welder draws first to last.
     out.reverse()
     return out
 
@@ -930,7 +933,7 @@ def roto_shapes(text, warn):
 # ----------------------------------------------------------------------------
 
 def tracker_tracks(text, warn):
-    """Strata tracks from a Tracker4 tracks knob."""
+    """Welder tracks from a Tracker4 tracks knob."""
     try:
         tree = roto_tokenize(text)
     except ValueError as e:
@@ -1110,11 +1113,11 @@ def homography4(src, dst):
 class Translator:
     def __init__(self, path, gizmo_paths=None):
         self.path = path
-        self.scope = ""          # the Strata group being filled ("" = top level)
+        self.scope = ""          # the Welder group being filled ("" = top level)
         self.scope_parent = {}   # group -> its enclosing group
-        self.scope_names = {}    # (group, Nuke name) -> Strata name
-        self.node_class = {}     # Strata name -> Nuke class
-        self.class_knobs = {}    # Nuke class -> {Nuke knob: Strata param}
+        self.scope_names = {}    # (group, Nuke name) -> Welder name
+        self.node_class = {}     # Welder name -> Nuke class
+        self.class_knobs = {}    # Nuke class -> {Nuke knob: Welder param}
         self.pending_exprs = []  # (params, key, group, components) to resolve names in
         self.pending_links = []  # (ReferenceLink node, group, Nuke name of what it links to)
         self.links = []          # (group node, user knob, target "Node.knob") to wire up
@@ -1124,7 +1127,7 @@ class Translator:
         self.base = os.path.dirname(os.path.abspath(path))
         self.root = {"format": None, "first": 1.0, "last": 1.0, "fps": 24.0}
         self.formats = {}
-        self.nodes = []         # emitted Strata nodes (dicts)
+        self.nodes = []         # emitted Welder nodes (dicts)
         self.names = set()
         self.warnings = []      # (node, message)
         self.unsupported = {}   # class -> count
@@ -1166,7 +1169,7 @@ class Translator:
             head = str(cmd[0])
             if head in ("version", "define_window_layout_xml", "add_layer", "#"):
                 if head == "add_layer" and len(cmd) > 1:
-                    pass  # layers are implicit in Strata
+                    pass  # layers are implicit in Welder
                 continue
             if head == "set" and len(cmd) >= 3:
                 # set N1 [stack 0]  /  set cut_paste_input [stack 0]
@@ -1194,7 +1197,7 @@ class Translator:
                 if klass == "Root":
                     self.read_root(knobs)
                     continue
-                # the studio's slate generator (a gizmo, or a Group of that name; studio.json) -> Strata's Slate node
+                # the studio's slate generator (a gizmo, or a Group of that name; studio.json) -> Welder's Slate node
                 slates = slate_gizmos()
                 if klass in slates or (
                         klass in ("Group", "LiveGroup") and any(str(knobs.get("name", "")).startswith(g) for g in slates)):
@@ -1212,7 +1215,7 @@ class Translator:
                     stack.append(self.emit(str(knobs.get("name", "Slate1")), klass, "Slate", popped, self.slate_params(knobs), knobs))
                     self.translated += 1
                     continue
-                # the welder light-wrap group -> Strata's Welder node
+                # the welder light-wrap group -> Welder's Welder node
                 if klass in ("Group", "LiveGroup") and str(knobs.get("name", "")).lower().startswith("welder") and \
                         all(x in str(cmd[-1]) for x in ("influence", "bboxc")):
                     n_in = self.input_count(klass, knobs)[0] if "inputs" in knobs else 3
@@ -1289,7 +1292,7 @@ class Translator:
         return output, i
 
     def group(self, klass, knobs, block_texts, popped, sub, gizmo=None, with_consumed=False):
-        """A Nuke Group / gizmo -> a Strata Group node (its contents inside it)."""
+        """A Nuke Group / gizmo -> a Welder Group node (its contents inside it)."""
         name = str(knobs.get("name", klass + "1"))
         n_main = len(popped)
         params = {}
@@ -1341,7 +1344,7 @@ class Translator:
                             params[d["name"]] = ev
                             self.pending_exprs.append((params, d["name"], self.scope, len(ev) if isinstance(ev, list) else 1))
                         else:
-                            self.warn(name, "user knob '%s' uses TCL Strata doesn't run" % d["name"])
+                            self.warn(name, "user knob '%s' uses TCL Welder doesn't run" % d["name"])
                 if d["name"] in params and "default" not in kd and not isinstance(params[d["name"]], (dict, list)):
                     kd["default"] = params[d["name"]]
             knob_defs.append(kd)
@@ -1440,7 +1443,7 @@ class Translator:
         for var in ("STRATA_GIZMO_PATH", "NUKE_PATH"):
             dirs += [d for d in os.environ.get(var, "").split(os.pathsep) if d]
         home = os.path.expanduser("~")
-        dirs += [os.path.join(home, ".nuke"), os.path.join(home, ".strata", "gizmos")]
+        dirs += [os.path.join(home, ".nuke"), os.path.join(home, ".welder", "gizmos"), os.path.join(home, ".strata", "gizmos")]
         found = None
         want = klass.lower() + ".gizmo"
         for d in dirs:
@@ -1471,7 +1474,7 @@ class Translator:
     # ------------------------------------------------------------- expressions: names
 
     def resolve(self, scope, nuke_name):
-        """The Strata name of a node, seen from inside `scope` (then its parents)."""
+        """The Welder name of a node, seen from inside `scope` (then its parents)."""
         while True:
             if (scope, nuke_name) in self.scope_names:
                 return self.scope_names[(scope, nuke_name)]
@@ -1500,7 +1503,7 @@ class Translator:
         return not isinstance(v, (int, float)) and param in self.VECTOR_KNOBS
 
     def rewrite_expr(self, text, scope, comp):
-        """Node and knob names in an expression -> Strata's."""
+        """Node and knob names in an expression -> Welder's."""
         def sub(m):
             parts = m.group(0).split(".")
             head = parts[0]
@@ -1718,7 +1721,7 @@ class Translator:
                     params[dest] = ev
                     self.pending_exprs.append((params, dest, self.scope, len(ev) if isinstance(ev, list) else 1))
                     return default
-                warn("knob '%s' uses an expression Strata can't translate (%s); using the default" % (knob, e))
+                warn("knob '%s' uses an expression Welder can't translate (%s); using the default" % (knob, e))
                 return default
             if dest:
                 params[dest] = v
@@ -2195,7 +2198,7 @@ class Translator:
                     try:
                         params["reference_frame"] = float(scalar(k["ref"]))
                     except Exception:  # noqa: BLE001 - an expression / empty curve
-                        warn("reference frame '%s' isn't a number; set it in Strata" % k["ref"])
+                        warn("reference frame '%s' isn't a number; set it in Welder" % k["ref"])
                 if klass == "CornerPin2D" and flag("invert"):
                     params["transform"] = "stabilize"
                 if "filter" in k:
@@ -2427,7 +2430,7 @@ class Translator:
             return self.emit(nk_name, klass, "TimeOffset", main[:1], params, k)
 
         if klass in ("OFlow2", "OFlow", "Kronos"):
-            # Nuke's optical-flow retimers -> OFlow (same knobs, Strata names)
+            # Nuke's optical-flow retimers -> OFlow (same knobs, Welder names)
             m = str(k.get("method", k.get("interpolation", "Motion"))).strip('"').lower()
             if m in ("motion", "blend", "frame"):
                 params["method"] = m
@@ -2626,7 +2629,7 @@ class Translator:
             if "filter" in k:
                 f = str(k["filter"]).lower()
                 params["filter"] = "impulse" if f == "impulse" else "bilinear" if f in ("bilinear", "triangle") else "cubic"
-            warn("tracker: %d track(s) imported; retrack in Strata if the keys look off" % len(params["tracks"]))
+            warn("tracker: %d track(s) imported; retrack in Welder if the keys look off" % len(params["tracks"]))
             self.translated += 1
             return self.emit(nk_name, klass, "Tracker", main[:1], params, k)
 
@@ -2642,7 +2645,7 @@ class Translator:
                     params["keys"] = keys
                 warn("planar tracker: region%s imported; compare with Nuke or retrack" % (" and corner-pin track" if keys else ""))
             else:
-                warn("planar tracker data not found; draw the region and track in Strata")
+                warn("planar tracker data not found; draw the region and track in Welder")
             self.translated += 1
             return self.emit(nk_name, klass, "PlanarTracker", main[:1], params, k)
 
@@ -2712,7 +2715,7 @@ class Translator:
             num("erode", dest="erode")
             for knob in ("Size", "off", "mult", "multi", "patch_black", "darks", "lights"):
                 if knob in k:
-                    warn("IBKColour '%s' is not used: Strata's IBKColour fills the screen by itself (threshold, erode)" % knob)
+                    warn("IBKColour '%s' is not used: Welder's IBKColour fills the screen by itself (threshold, erode)" % knob)
                     break
             self.translated += 1
             return self.emit(nk_name, klass, "IBKColour", main[:1], params, k)
@@ -2760,7 +2763,7 @@ class Translator:
             return self.emit(nk_name, klass, "ChromaKeyer", main[:1], params, k)
 
         if klass == "HueKeyer":
-            warn("HueKeyer curves are not translated; set hue / width in Strata's HueKeyer")
+            warn("HueKeyer curves are not translated; set hue / width in Welder's HueKeyer")
             self.translated += 1
             return self.emit(nk_name, klass, "HueKeyer", main[:1], params, k)
 
@@ -2784,7 +2787,7 @@ class Translator:
                 except Expression:
                     warn("OFX knob '%s' uses an expression; left at the plugin default" % knob)
             params["values"] = values
-            # Plugins installed in Nuke may not be installed for Strata: render on, loudly.
+            # Plugins installed in Nuke may not be installed for Welder: render on, loudly.
             params["if_missing"] = "bypass"
             common_mix_mask()
             if "mix" in params:
@@ -2866,9 +2869,9 @@ def convert(path, gizmo_paths=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Translate a Nuke .nk script into a Strata comp.")
+    ap = argparse.ArgumentParser(description="Translate a Nuke .nk script into a Welder comp.")
     ap.add_argument("nk", help="input .nk file")
-    ap.add_argument("-o", "--output", help="output .strata file (default: next to the .nk)")
+    ap.add_argument("-o", "--output", help="output .weld file (default: next to the .nk)")
     ap.add_argument("--report", help="also write the translation report as JSON")
     ap.add_argument("-q", "--quiet", action="store_true", help="only print the summary line")
     ap.add_argument("--fragment", action="store_true",
@@ -2881,7 +2884,7 @@ def main(argv=None):
     except (OSError, ValueError) as e:
         print("error: %s" % e, file=sys.stderr)
         return 1
-    out = a.output or os.path.splitext(a.nk)[0] + (".json" if a.fragment else ".strata")
+    out = a.output or os.path.splitext(a.nk)[0] + (".json" if a.fragment else ".weld")
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"strata_nodes": comp["nodes"]} if a.fragment else comp, f, indent=2)
         f.write("\n")

@@ -1,6 +1,6 @@
 """Gaussian splat training from a plate and its camera, with joint camera refinement.
 
-Inputs (written by Strata's GaussianSplat node):
+Inputs (written by Welder's GaussianSplat node):
   src      the plate frames (linear, converted to sRGB for training)
   mask     optional: alpha marks pixels to ignore (moving objects) or to keep
   job["cameras"]  per frame: c2w (4x4, OpenCV axes), fx, fy, cx, cy at the plate size
@@ -13,7 +13,7 @@ Training follows gsplat's simple_trainer defaults (L1 + 0.2 SSIM, Adam,
 INRIA-style densification) and optimises a per-frame pose correction
 (and optionally one focal scale) at the same time - the camera solve gets
 refined by the reconstruction. Outputs: out/splat.ply (INRIA layout, in
-Strata's world space), out/cameras.json (refined cameras) and the
+Welder's world space), out/cameras.json (refined cameras) and the
 reconstruction of each training frame (output "rgba").
 """
 
@@ -410,7 +410,7 @@ def _train_core(ctx, p, dev, t0, on_gsplat):
     imgs, weights, (W, H), (w, h) = load_plate(ctx, p, frames)
     sx, sy = w / W, h / H
 
-    # cameras are in the job (from Strata, or from MapAnything in train())
+    # cameras are in the job (from Welder, or from MapAnything in train())
     cams = cameras_from_job(ctx, frames, W, H)
     pp = ctx.in_path("points.npy")
     pts = np.load(pp).astype(np.float64) if os.path.exists(pp) else np.zeros((0, 6))
@@ -618,7 +618,7 @@ def _train_core(ctx, p, dev, t0, on_gsplat):
             lin = srgb_decode(img.cpu().numpy())
             ctx.write_frame("rgba", f, np.concatenate([lin, alpha[0].cpu().numpy()], axis=2))
             ctx.progress(0.93 + 0.06 * i / len(frames), "rendering the reconstruction")
-        # cameras for frames that weren't trained on (frame_step > 1): interpolate later in Strata
+        # cameras for frames that weren't trained on (frame_step > 1): interpolate later in Welder
         atomic_write_json(os.path.join(ctx.out_dir, "cameras.json"),
                           {"convention": "opencv c2w", "focal_scale": fscale, "cameras": refined,
                            "width": W, "height": H})

@@ -107,7 +107,7 @@ ExrFile fromRaster(const raster::Raster& r, const ReadOptions& o) {
             if (hasAlpha) p[3] = a;
         }
         if (convert && o.decode) o.decode(row, w, oc);
-        if (hasAlpha)  // Strata works premultiplied
+        if (hasAlpha)  // Welder works premultiplied
             for (int x = 0; x < w; ++x) {
                 float* p = row + x * oc;
                 p[0] *= p[3]; p[1] *= p[3]; p[2] *= p[3];

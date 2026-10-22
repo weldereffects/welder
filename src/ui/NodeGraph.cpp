@@ -12,6 +12,7 @@
 #include <functional>
 #include <set>
 
+#include "core/Brand.h"
 #include "core/Crash.h"
 #include "App.h"
 #include "GL.h"
@@ -567,7 +568,7 @@ void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths
         } else if (depth > 0) {
             return;  // a folder's other files: ignored
         } else if (e == ".nk") nkFiles.push_back(p);
-        else if (e == ".strata") comps.push_back(p);
+        else if (brand::isCompFile(p)) comps.push_back(p);
         else if (e == ".obj") make.push_back({"ReadGeo", {{"file", p}}});
         else if (e == ".ply") make.push_back({"ReadSplat", {{"file", p}}});
         else if (luts.count(e)) make.push_back({"OCIOFileTransform", {{"file", p}}});
@@ -722,7 +723,7 @@ static void frameNodes(App& app, UiState& ui, ImVec2 winSize);
 
 void graphFrame(App& app, UiState& ui) { frameNodes(app, ui, ui.graph.lastSize); }
 
-// ---- clipboard: selected nodes as a .strata fragment ({"strata_nodes": [...]}).
+// ---- clipboard: selected nodes as a .weld fragment ({"strata_nodes": [...]}).
 void graphCopy(App& app, bool cut) {
     if (app.selection.empty()) return;
     json arr = json::array();
@@ -739,10 +740,10 @@ void graphCopy(App& app, bool cut) {
         }
         arr.push_back(jn);
     }
-    // Nuke's clipboard format (pastes into Nuke), carrying the exact nodes for Strata
+    // Nuke's clipboard format (pastes into Nuke), carrying the exact nodes for Welder
     nk::ExportResult info;
     ImGui::SetClipboardText(nk::clipboardText(arr, &info).c_str());
-    std::string msg = std::string(cut ? "cut " : "copied ") + std::to_string(arr.size()) + " node(s) - paste in Strata or Nuke";
+    std::string msg = std::string(cut ? "cut " : "copied ") + std::to_string(arr.size()) + " node(s) - paste in Welder or Nuke";
     if (info.placeholders) msg += " (" + std::to_string(info.placeholders) + " have no Nuke equivalent: NoOps there)";
     app.message(msg);
     for (auto& w : info.warnings) app.message("  " + w);
@@ -761,9 +762,9 @@ static bool looksLikeNuke(const std::string& t) {
 void graphPaste(App& app, UiState& ui) {
     const char* clipC = ImGui::GetClipboardText();
     std::string clip = clipC ? clipC : "";
-    json arr = nk::strataNodesIn(clip);  // copied in Strata (also valid Nuke text)
+    json arr = nk::strataNodesIn(clip);  // copied in Welder (also valid Nuke text)
     if (arr.is_null()) try {
-        json j = json::parse(clip);  // older Strata copies: plain JSON
+        json j = json::parse(clip);  // older Welder copies: plain JSON
         if (j.contains("strata_nodes")) arr = j["strata_nodes"];
     } catch (...) {
     }
@@ -1209,7 +1210,7 @@ void graphConvertBox(App& app, Node* box) {
     });
 }
 
-// ---- gizmos: .gizmo (Nuke) and .sgizmo (Strata groups saved as files)
+// ---- gizmos: .gizmo (Nuke) and .sgizmo (Welder groups saved as files)
 
 std::vector<GizmoEntry> listGizmos(const App& app) {
     std::vector<GizmoEntry> out;
@@ -2581,7 +2582,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         if (ImGui::BeginMenu("Gizmos")) {
             if (g.gizmos.empty()) ImGui::TextDisabled("no gizmos found");
             for (auto& gz : g.gizmos)
-                if (ImGui::MenuItem(gz.name.c_str(), gz.strata ? "strata" : "nuke")) createGizmo(app, ui, gz);
+                if (ImGui::MenuItem(gz.name.c_str(), gz.strata ? "welder" : "nuke")) createGizmo(app, ui, gz);
             ImGui::Separator();
             ImGui::TextDisabled("searched: %s", app.userGizmoDir().c_str());
             ImGui::TextDisabled("  + STRATA_GIZMO_PATH, NUKE_PATH, ~/.nuke");

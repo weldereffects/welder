@@ -190,7 +190,7 @@ public:
     bool importNuke(const std::string& nkPath, std::string* err);
     // Nodes copied in Nuke (its clipboard text) -> {"strata_nodes"} entries; null on failure.
     json nukeToNodes(const std::string& nkText, std::string* err);
-    // Folders searched for gizmos (.gizmo, and Strata's .sgizmo): Strata's own,
+    // Folders searched for gizmos (.gizmo, and Welder's .sgizmo): Welder's own,
     // STRATA_GIZMO_PATH, NUKE_PATH and ~/.nuke.
     std::vector<std::string> gizmoDirs() const;
     std::string userGizmoDir() const;  // where "Save as gizmo" writes

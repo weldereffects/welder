@@ -172,7 +172,7 @@ def run(ctx, p):
             ctx.write_frame("matte", f, m, channels=["A"], dtype=np.float16)
     which = "preview" if preview else f"{len(frames)} frames"
     return ctx.result(message=f"{which}: tracked from {len(by_idx)} clicked frame(s)", model=model_id(size),
-                      tag=p.get("tag", ""))  # Strata's hash of the clicks: tells a current result from an old one
+                      tag=p.get("tag", ""))  # Welder's hash of the clicks: tells a current result from an old one
 
 
 class _Null:

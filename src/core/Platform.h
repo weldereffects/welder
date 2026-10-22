@@ -1,4 +1,4 @@
-// The small set of OS-specific calls Strata needs, so everything else stays portable.
+// The small set of OS-specific calls Welder needs, so everything else stays portable.
 #pragma once
 
 #include <cstddef>

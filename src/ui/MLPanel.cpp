@@ -243,7 +243,7 @@ void drawMLPanel(App& app, UiState& ui, Node* n) {
     ImGui::PushID("mlpanel");
     ImGui::SeparatorText("ML");
     if (ml::packageDir().empty()) {
-        ImGui::TextColored(kBad, "The ml folder is missing next to Strata: these nodes need it.");
+        ImGui::TextColored(kBad, "The ml folder is missing next to Welder: these nodes need it.");
         ImGui::PopID();
         return;
     }

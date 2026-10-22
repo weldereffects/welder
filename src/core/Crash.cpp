@@ -55,7 +55,7 @@ std::string stamp() {
 }
 
 void writeCrumbs(FILE* f) {
-    std::fprintf(f, "\nLast things Strata was doing (oldest first):\n");
+    std::fprintf(f, "\nLast things Welder was doing (oldest first):\n");
     unsigned end = gCrumbNext.load();
     unsigned begin = end > (unsigned)kCrumbs ? end - kCrumbs : 0;
     for (unsigned i = begin; i < end; ++i) std::fprintf(f, "  %s\n", gCrumbs[i % kCrumbs]);

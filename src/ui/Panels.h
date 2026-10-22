@@ -302,7 +302,7 @@ struct UiState {
     bool showAbout = false;
     bool showPrefs = false;  // Edit > Preferences (Shift+S)
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)
-    std::string dropOpenComp;  // a .strata dropped on the window: opened (asking first when there are unsaved changes)
+    std::string dropOpenComp;  // a .weld dropped on the window: opened (asking first when there are unsaved changes)
     bool requestQuit = false;
     double lastPlayTime = 0;
     // Timeline (Nuke's): playback mode (0 repeat, 1 bounce, 2 stop at the end),

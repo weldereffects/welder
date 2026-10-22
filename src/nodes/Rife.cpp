@@ -122,7 +122,7 @@ std::string modelSearchPath() {
 bool available() { return false; }
 std::string deviceName(bool) { return "not available (built without ncnn)"; }
 retime::Fields interpolate(const std::vector<float>&, const std::vector<float>&, int, int, double, const Options&) {
-    throw RenderError("RIFE: this build of Strata has no neural network support (built without ncnn)");
+    throw RenderError("RIFE: this build of Welder has no neural network support (built without ncnn)");
 }
 
 #else

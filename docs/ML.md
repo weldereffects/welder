@@ -1,7 +1,7 @@
 # AI nodes and the ML worker
 
 The nodes in the **AI** toolbar run on your NVIDIA GPU through the **ML worker**,
-a Python process that Strata starts in the background, in the same way ComfyUI
+a Python process that Welder starts in the background, in the same way ComfyUI
 runs models. The worker never holds up the editor. You press **Run**, keep
 working, and the node shows the result when it's ready.
 
@@ -17,14 +17,14 @@ working, and the node shows the result when it's ready.
 
 Two 3D nodes work without the worker:
 
-* **ReadSplat** reads splat `.ply` files from Strata, Postshot, nerfstudio, Polycam, Luma and other tools.
+* **ReadSplat** reads splat `.ply` files from Welder, Postshot, nerfstudio, Polycam, Luma and other tools.
 * **SplatRender** renders splats through a camera over a background, with depth.Z.
 
 ## Setting up (once)
 
 1. Open any AI node's properties. The **ML** section shows the worker.
 2. Click **Set up ML**. A console window builds two Python environments in
-   `%LOCALAPPDATA%\Strata\ml`. This needs about 15 GB of disk, a current
+   `%LOCALAPPDATA%\Welder\ml`. This needs about 15 GB of disk, a current
    NVIDIA driver and an internet connection. It installs:
    * `venv`: Python 3.12 and PyTorch 2.8 (CUDA 12.8), with Lightricks' LTX-2
      pipelines and MapAnything.
@@ -43,10 +43,10 @@ Two 3D nodes work without the worker:
 
 ### Installing models by hand
 
-Instead of **Download**, you can put the models in the Strata folder yourself:
+Instead of **Download**, you can put the models in the Welder folder yourself:
 
 ```
-strata-0.1.0-win64\
+welder-0.1.0-win64\
   models\                     AI models installed by hand
     README.txt                what goes where, with sizes
     ltx-2.5\                  LTX-2.5: the transformer, Gemma text encoder, VAEs, upscaler
@@ -57,23 +57,23 @@ strata-0.1.0-win64\
 
 Each folder has a `PUT_FILES_HERE.txt` with the Hugging Face page and the exact
 file names. Download them in the browser (the page's *Files and versions* tab)
-or with `hf download`. Subfolders don't matter: Strata finds each file by name,
+or with `hf download`. Subfolders don't matter: Welder finds each file by name,
 up to three folders down. For MapAnything and Depth Anything, put the whole
 repository in the folder (the one with `config.json`; one level down is fine).
 The panel shows **ready** as soon as every file is there; hover it to see
 which folder it found. **install by hand** next to **Download** makes the
 folder and opens it.
 
-Models are looked for in this order: `ml\models` (downloads), the Strata
-folder's `models\`, then any folders in `STRATA_ML_MODELS` (separated by `;`),
-for example a big drive shared between installs. When you update Strata, unzip
+Models are looked for in this order: `ml\models` (downloads), the Welder
+folder's `models\`, then any folders in `WELDER_ML_MODELS` (separated by `;`),
+for example a big drive shared between installs. When you update Welder, unzip
 the new version over the old folder so `models\` stays put, or keep the models
-elsewhere with `STRATA_ML_MODELS`.
+elsewhere with `WELDER_ML_MODELS`.
 
 ### The Gaussian splat environment
 
 GaussianSplat needs nothing installed by hand. **Set up ML** also builds
-`venv-splat` in the ML home (`%LOCALAPPDATA%\Strata\ml\venv-splat`): Python
+`venv-splat` in the ML home (`%LOCALAPPDATA%\Welder\ml\venv-splat`): Python
 3.10, PyTorch 2.4 for CUDA 12.4 and gsplat 1.5.3's prebuilt CUDA kernels. It's
 separate because gsplat's prebuilt kernels only exist for that PyTorch. The
 GaussianSplat panel shows whether it's there. If it isn't, training still runs
@@ -85,9 +85,9 @@ loads (the worker tries it when it starts).
 
 If training stops with `[WinError 126] ... Error loading ...\torch\lib\fbgemm.dll
 or one of its dependencies`: PyTorch 2.4.0's `fbgemm.dll` needs
-`libomp140.x86_64.dll`, which Windows doesn't have. Strata now adds a copy of
+`libomp140.x86_64.dll`, which Windows doesn't have. Welder now adds a copy of
 PyTorch's own OpenMP runtime under that name in `venv-splat\...\torch\lib`
-before loading PyTorch, and setup installs 2.4.1. Update Strata, click **stop**
+before loading PyTorch, and setup installs 2.4.1. Update Welder, click **stop**
 in the ML section so the worker restarts with the new code, and train again;
 or run **Set up ML** once more.
 
@@ -145,17 +145,17 @@ every input frame and the cameras. Running a node again with nothing changed
 reuses the finished result instantly. Change anything and it runs again. Old
 results stay in `ml\jobs` until you delete them.
 
-Strata and the worker talk only through files in the ML home, so you can also
+Welder and the worker talk only through files in the ML home, so you can also
 start the worker yourself, for example on another machine sharing the folder:
 
 ```
 <ml home>\venv\Scripts\python.exe <strata>\bin\ml\strata_ml_worker.py --home <ml home>
 ```
 
-Set `STRATA_ML_HOME` to use another folder. `STRATA_ML_PYTHON` and
-`STRATA_ML_SPLAT_PYTHON` point Strata at other Python environments.
-`STRATA_ML_MODELS` adds folders with models. A worker started by hand reads
-the model folders Strata uses from `<ml home>\model_dirs.json`.
+Set `WELDER_ML_HOME` to use another folder. `WELDER_ML_PYTHON` and
+`WELDER_ML_SPLAT_PYTHON` point Welder at other Python environments.
+`WELDER_ML_MODELS` adds folders with models. A worker started by hand reads
+the model folders Welder uses from `<ml home>\model_dirs.json`.
 
 ## The nodes
 
@@ -288,5 +288,5 @@ the model folders Strata uses from `<ml home>\model_dirs.json`.
 | SAM 2.1 checkpoints (`facebook/sam2.1-hiera-*`) and code (bundled in `ml/strata_ml/vendor/sam2pkg`) | Apache 2.0 |
 | gsplat | Apache 2.0 |
 
-Strata ships none of these weights. They download from Hugging Face on your
+Welder ships none of these weights. They download from Hugging Face on your
 machine, under your acceptance of their terms.

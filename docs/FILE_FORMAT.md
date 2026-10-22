@@ -1,6 +1,6 @@
-# Comp file format (`.strata`)
+# Comp file format (`.weld`)
 
-A comp is a JSON file. Relative file paths in it resolve against the comp's folder.
+A comp is a JSON file (`.strata`, the older extension, is the same format and still opens). Relative file paths in it resolve against the comp's folder.
 
 ```json
 {
@@ -237,7 +237,7 @@ applies the homography to the input; stabilize applies its inverse.
 |---|---|
 | Blur | `size` [x, y], `filter` (`box`, `triangle`, `quadratic`, `gaussian`), `quality` (15: blurs larger than this many pixels are computed at reduced resolution, like Nuke's; 0 = always full), `channels` (default `all`), `crop` |
 | Sharpen | `amount`, `size`, `channels` (default `rgb`) |
-| ZDefocus | input, filter (an image for `filter_type` image), mask. `depth` (channel, `depth.Z`), `math` (`1/z`: Strata / Nuke depth.Z; `z`: distance; `direct`: blur size per pixel), `focus_plane` (distance), `use_focus_point` + `focus_point` [x, y] (focus on what's there), `depth_of_field`, `size` (blur at infinity, px), `maximum` (px), `layers` (16), `output` (`result`, `focal plane setup`, `coc`), `filter_type` (`disc`, `bladed`, `gaussian`, `image`), `blades`, `rotation`, `aspect`, `highlight_threshold` / `highlight_gain` (bright pixels bloom into bokeh), `quality` (12: larger kernels run at reduced resolution), `mix`. Blur = size x \|1 - focus / distance\| |
+| ZDefocus | input, filter (an image for `filter_type` image), mask. `depth` (channel, `depth.Z`), `math` (`1/z`: Welder / Nuke depth.Z; `z`: distance; `direct`: blur size per pixel), `focus_plane` (distance), `use_focus_point` + `focus_point` [x, y] (focus on what's there), `depth_of_field`, `size` (blur at infinity, px), `maximum` (px), `layers` (16), `output` (`result`, `focal plane setup`, `coc`), `filter_type` (`disc`, `bladed`, `gaussian`, `image`), `blades`, `rotation`, `aspect`, `highlight_threshold` / `highlight_gain` (bright pixels bloom into bokeh), `quality` (12: larger kernels run at reduced resolution), `mix`. Blur = size x \|1 - focus / distance\| |
 | Defocus | input, filter, mask. `defocus` (px) and the bokeh knobs above |
 | VectorBlur | input, vectors (optional; else the input's channels), mask. `uv` (`forward.u,forward.v`: pixels to the next frame), `shutter` (frames, 0.5), `offset` (`centred`, `start`, `end`), `samples` (16), `max_length` (px), `depth` / `depth_math` (optional, for occlusion), `invert`, `channels` (rgba), `mix` |
 | Glow | input, mask. `tolerance` (0.8: luminance above it glows), `brightness` [r, g, b], `saturation`, `size` (20 px), `effect_only`, `crop` (to the format), `mix`. Large glows blur at reduced resolution. |
@@ -303,7 +303,7 @@ group and its contents, as in a comp.
 | Scene | any number of inputs: gathers geometry |
 | Project3D | inputs: img, cam. A material: plug it into a geometry's img input to project img through cam onto it. `crop` (true) |
 | ScanlineRender | inputs: bg, obj/scn, cam. `antialiasing` (`none`, `low`, `medium`, `high`), `filter` (`impulse`, `bilinear`, `trilinear`), `z_channel` (true: depth.Z = 1 / distance), `motion_vectors` (forward.u/v, backward.u/v: pixels to where each surface is a frame later / earlier), `motionblur` (samples across the shutter, 0 = off), `shutter` (frames, 0.5), `shutter_offset` (`centred`, `start`, `end`) |
-| BlenderRender | inputs: cam, scn. Renders with Blender 4.2+ (below). `blender` (the executable; empty = `STRATA_BLENDER`, then the newest install found), `file` (a .blend; optional), `engine` (`cycles`, `eevee`, `workbench`, `file`), `device` (`auto`, `gpu`, `cpu`), `samples` (64), `denoise`, `transparent`, `camera` (`input`, `file`: the .blend's camera), `geometry` (`visible`, `shadow catcher`, `holdout`), `shader` (`principled`, `emission`), `pass_depth` (true), `pass_normal`, `pass_vector`, `pass_position`, `pass_mist`, `pass_diffuse`, `pass_glossy`, `pass_transmission`, `pass_emission`, `pass_environment`, `pass_ao`, `pass_shadow`, `pass_cryptomatte`, `frame_offset` (Blender frame = Strata frame + offset), `frames_ahead` (8: frames per Blender launch), `python` (run in Blender after the scene is set up; `bpy`, `scene`, `job`) |
+| BlenderRender | inputs: cam, scn. Renders with Blender 4.2+ (below). `blender` (the executable; empty = `WELDER_BLENDER`, then the newest install found), `file` (a .blend; optional), `engine` (`cycles`, `eevee`, `workbench`, `file`), `device` (`auto`, `gpu`, `cpu`), `samples` (64), `denoise`, `transparent`, `camera` (`input`, `file`: the .blend's camera), `geometry` (`visible`, `shadow catcher`, `holdout`), `shader` (`principled`, `emission`), `pass_depth` (true), `pass_normal`, `pass_vector`, `pass_position`, `pass_mist`, `pass_diffuse`, `pass_glossy`, `pass_transmission`, `pass_emission`, `pass_environment`, `pass_ao`, `pass_shadow`, `pass_cryptomatte`, `frame_offset` (Blender frame = Welder frame + offset), `frames_ahead` (8: frames per Blender launch), `python` (run in Blender after the scene is set up; `bpy`, `scene`, `job`) |
 
 | ReadSplat | inputs: axis. `file` (Gaussian splat `.ply`, INRIA layout; point-cloud `.ply` files load as small splats), plus the transform params |
 | SplatRender | inputs: bg, splat (ReadSplat / GaussianSplat, or a Scene of them), cam. `colorspace` (`sRGB`: splat colours are display values, converted to linear; `linear`), `antialiased` (true), `z_channel` (true: depth.Z = 1 / expected depth) |
@@ -311,13 +311,13 @@ group and its contents, as in a comp.
 Camera also takes an axis input (its parent).
 
 BlenderRender sends Blender the camera of its cam input, keyed on every frame
-(Strata's Y-up world becomes Blender's Z-up), and the geometry of its scn input
+(Welder's Y-up world becomes Blender's Z-up), and the geometry of its scn input
 as meshes with their textures (Project3D projections are rebuilt as a camera
 projection in the shader). Frames render in the background, a few per launch,
-into multilayer EXRs cached in `STRATA_BLENDER_CACHE` (default: the temp
+into multilayer EXRs cached in `WELDER_BLENDER_CACHE` (default: the temp
 folder's `strata_blender`), keyed by everything that affects them. Passes become
 channels: Combined -> `R G B A`; Depth -> `depth.Z` (1 / distance); Normal ->
-`N.X N.Y N.Z` and Position -> `P.X P.Y P.Z` (Strata's world); Vector ->
+`N.X N.Y N.Z` and Position -> `P.X P.Y P.Z` (Welder's world); Vector ->
 `forward.u forward.v` (pixels to where the point is on the next frame),
 `backward.u backward.v`; Mist -> `mist.Z`; Shadow Catcher -> `shadow.R G B`
 (multiply the plate by it); others by their lower-case Blender names
@@ -362,7 +362,7 @@ Every AI node has `range` (`input`, `custom`) with `first` / `last`, and `ml`: t
             "context": "OfxImageEffectContextFilter",
             "clips": ["Source"], "if_missing": "error"}}
 ```
-* `plugin` — the plugin identifier (`strata ofx-list` shows what's installed).
+* `plugin` — the plugin identifier (`welder ofx-list` shows what's installed).
 * `values` — parameter values by OFX parameter name; numbers can be animated, choices can be an index or the option label.
 * `context` — optional; defaults to filter, then general, then generator.
 * `clips` — optional input order; defaults to `Source` first, then the plugin's other clips in definition order.

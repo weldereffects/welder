@@ -6,7 +6,7 @@
 // distort():   undistorted (ideal pinhole) pixel -> where it lands in the plate
 // undistort(): plate pixel -> ideal pinhole pixel (the inverse, by Newton)
 //
-// Pixel coordinates are Strata's (origin bottom-left, y up), in a W x H image.
+// Pixel coordinates are Welder's (origin bottom-left, y up), in a W x H image.
 #pragma once
 
 #include <algorithm>

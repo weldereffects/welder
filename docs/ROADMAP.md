@@ -23,8 +23,8 @@
 - [x] Roto / RotoPaint: Bezier, B-spline, ellipse, rectangle; shape and per-point feather; shape keys; transforms; lifetimes; motion blur; paint, eraser, clone, reveal and blur strokes; Nuke import
 - [ ] RotoPaint next: dodge / burn / smear / sharpen brushes, pen pressure, layers with their own transforms, tracking data on shapes
 - [x] Expressions: a safe subset of Nuke's language on any knob (= in the properties), cache-aware, renamed with their nodes
-- [x] Copy nodes from Strata in Nuke's clipboard format, and export whole comps as .nk (`strata nk`)
-- [ ] Python API (pybind11) and `.strata` <-> Python round trip
+- [x] Copy nodes from Welder in Nuke's clipboard format, and export whole comps as .nk (`welder nk`)
+- [ ] Python API (pybind11) and `.weld` <-> Python round trip
 - [x] Proxy / render scale, disk cache (content-keyed viewer frames), cost-aware tile cache
 
 ## Phase 3 — production
@@ -47,8 +47,8 @@
 - [x] Viewer handles: Transform jack, Position, CornerPin2D corners; 3D manipulators over a ScanlineRender in 2D
 - [ ] 3D next: lights and shading, ReadGeo for FBX / Alembic, motion blur in ScanlineRender, point-cloud geometry, snapping, a camera's view with the plate behind it
 - [x] AI nodes on an ML worker (Python, the user's GPU): AlphaGen and LTX-2.5 IC-LoRAs, GaussianSplat training with joint camera refinement, Reconstruct (MapAnything feed-forward cameras / depth / points), NeRF with BARF-style camera optimisation; ReadSplat / SplatRender; in-panel model downloads
-- [x] BlenderRender: Cycles / EEVEE renders through the Strata camera with Strata geometry (visible, shadow catcher, holdout; textures and Project3D projections), cached frames, passes as channels
-- [ ] Blender next: lights and cameras from Strata 3D lights, Alembic / USD exchange, render on another machine
+- [x] BlenderRender: Cycles / EEVEE renders through the Welder camera with Welder geometry (visible, shadow catcher, holdout; textures and Project3D projections), cached frames, passes as channels
+- [ ] Blender next: lights and cameras from Welder 3D lights, Alembic / USD exchange, render on another machine
 - [ ] AI next: LTX text / image to video, splats in ScanlineRender (with geometry), splat editing (crop boxes), remote workers
 - [ ] Deep compositing
 - [ ] OFX: overlays/interacts, parametric params, 8/16-bit plugins

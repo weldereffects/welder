@@ -24,7 +24,7 @@ from .dinov2 import DINOv2
 from .dpt_temporal import DPTHeadTemporal
 from .util.transform import Resize, NormalizeImage, PrepareForNet
 
-from ._vda_util import compute_scale_and_shift, get_interpolate_frames  # (Strata: was utils.util)
+from ._vda_util import compute_scale_and_shift, get_interpolate_frames  # (Welder: was utils.util)
 
 # infer settings, do not change
 INFER_LEN = 32

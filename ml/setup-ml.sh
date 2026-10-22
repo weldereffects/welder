@@ -1,13 +1,16 @@
 #!/bin/sh
-# Strata ML setup (Linux): the Python environments the ML worker runs in.
+# Welder ML setup (Linux): the Python environments the ML worker runs in.
 #   venv        Python 3.12, PyTorch 2.8 (CUDA 12.8): LTX-2.5, Alpha Gen, MapAnything, NeRF
 #   venv-splat  Python 3.10, PyTorch 2.4 (CUDA 12.4) with gsplat's prebuilt kernels: Gaussian splats
-# Usage: setup-ml.sh [ml home]   (default ~/.local/share/strata/ml)
+# Usage: setup-ml.sh [ml home]   (default ~/.local/share/welder/ml)
 set -e
-MLHOME="${1:-${XDG_DATA_HOME:-$HOME/.local/share}/strata/ml}"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
+DEFAULT="$DATA/welder/ml"
+[ ! -d "$DEFAULT" ] && [ -d "$DATA/strata/ml" ] && DEFAULT="$DATA/strata/ml"   # models from before the rename
+MLHOME="${1:-$DEFAULT}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$MLHOME"
-echo "Strata ML setup -> $MLHOME"
+echo "Welder ML setup -> $MLHOME"
 if ! command -v uv >/dev/null 2>&1; then
     if [ -x "$HOME/.local/bin/uv" ]; then
         PATH="$HOME/.local/bin:$PATH"
@@ -35,4 +38,4 @@ else
     echo "The Gaussian splat environment could not be set up: GaussianSplat will use the slower PyTorch rasteriser."
 fi
 echo ok > "$MLHOME/setup-ok.txt"
-echo "Done. Strata starts the ML worker when a node needs it."
+echo "Done. Welder starts the ML worker when a node needs it."

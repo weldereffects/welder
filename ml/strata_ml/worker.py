@@ -1,20 +1,20 @@
-"""The Strata ML worker.
+"""The Welder ML worker.
 
-A long-running process on the machine with the GPU. Strata and the worker talk
+A long-running process on the machine with the GPU. Welder and the worker talk
 through files in the ML home directory, so nothing needs a network port and a
-worker can be started by Strata or by hand:
+worker can be started by Welder or by hand:
 
   <home>/worker.json         heartbeat (every 2 s): pid, time, device, packages, current job
   <home>/queue/<key>         a job waiting to run (empty file; oldest first)
-  <home>/jobs/<key>/job.json {"task": ..., "params": {...}}  written by Strata
-                   in/       inputs written by Strata (frames as .npy, cameras.json, ...)
+  <home>/jobs/<key>/job.json {"task": ..., "params": {...}}  written by Welder
+                   in/       inputs written by Welder (frames as .npy, cameras.json, ...)
                    out/      outputs written by the task
                    status.json  {"state": queued|running|done|error|cancelled, "progress": 0-1, "message"}
                    result.json  what the task produced (read by the node)
-                   cancel    created by Strata to stop the job
+                   cancel    created by Welder to stop the job
                    log.txt   the job's log
   <home>/models/<id>/        downloaded models (<id>/.complete when finished)
-  <home>/stop                created by Strata to stop the worker
+  <home>/stop                created by Welder to stop the worker
 
 Run:  python strata_ml_worker.py --home <ml home>
 """
@@ -50,12 +50,15 @@ def load_tasks():
 def default_home():
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~\\AppData\\Local")
-        return os.path.join(base, "Strata", "ml")
-    return os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "strata", "ml")
+        base = os.path.join(base, "{}")
+    else:
+        base = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "{}")
+    new, old = (os.path.join(base.format(n), "ml") for n in (("Welder", "Strata") if os.name == "nt" else ("welder", "strata")))
+    return old if not os.path.isdir(new) and os.path.isdir(old) else new  # models from before the rename stay put
 
 
 def jobs_dir(home):
-    """Where Strata puts the jobs: its cache folder's ml-jobs (from <home>/model_dirs.json), else <home>/jobs."""
+    """Where Welder puts the jobs: its cache folder's ml-jobs (from <home>/model_dirs.json), else <home>/jobs."""
     try:
         with open(os.path.join(home, "model_dirs.json"), encoding="utf-8") as f:
             d = json.load(f).get("jobs")
@@ -74,7 +77,7 @@ def job_dir(home, key):
 
 
 def probe_packages():
-    """What's installed (for the heartbeat and Strata's ML panel)."""
+    """What's installed (for the heartbeat and Welder's ML panel)."""
     info = {"python": platform.python_version()}
     from .winfix import fix_torch_openmp
     fixed = fix_torch_openmp()
@@ -201,7 +204,7 @@ class Worker:
             os.remove(stop)
         except OSError:
             pass
-        print(f"Strata ML worker {__version__} in {self.home}; tasks: {', '.join(sorted(TASKS))}", flush=True)
+        print(f"Welder ML worker {__version__} in {self.home}; tasks: {', '.join(sorted(TASKS))}", flush=True)
         print(f"packages: {json.dumps(self.packages)}", flush=True)
         try:
             while True:
@@ -227,7 +230,7 @@ class Worker:
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Strata ML worker")
+    ap = argparse.ArgumentParser(description="Welder ML worker")
     ap.add_argument("--home", default=os.environ.get("STRATA_ML_HOME") or default_home())
     ap.add_argument("--once", action="store_true", help="run queued jobs until the queue is empty, then exit")
     ap.add_argument("--log", help="append stdout/stderr to this file")

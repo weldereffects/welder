@@ -1,4 +1,4 @@
-"""A task for checking the Strata <-> worker round trip without a GPU or models:
+"""A task for checking the Welder <-> worker round trip without a GPU or models:
 inverts the src frames (and writes their luminance as a matte), slowly."""
 
 import time

@@ -1,4 +1,4 @@
-"""Entry point: python strata_ml_worker.py --home <ml home>  (Strata starts this for you)."""
+"""Entry point: python strata_ml_worker.py --home <ml home>  (Welder starts this for you)."""
 
 import os
 import sys

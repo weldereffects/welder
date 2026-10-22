@@ -2,7 +2,7 @@ SAM 2 (Segment Anything in Images and Videos) - code from https://github.com/fac
 at commit 2b90b9f5ceec907a1c18123530e92e794ad901a4 (2024-12-15), Copyright (c) Meta Platforms, Inc. and
 affiliates, Apache License 2.0 (LICENSE in this folder).
 
-Changes for Strata: only the sam2 package (no training code, no training configs, no CUDA
+Changes for Welder: only the sam2 package (no training code, no training configs, no CUDA
 extension sources - the optional hole-filling post-process falls back as upstream does); the
 legacy top-level sam2_hiera_*.yaml config links are left out (the sam2.1 configs are used).
 This folder goes on sys.path so the package keeps its own name (its Hydra configs are found as "sam2").

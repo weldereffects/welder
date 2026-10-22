@@ -22,7 +22,7 @@ def model_info(model_id):
 
 
 def hf_token(home):
-    """The token from <home>/hf_token (set in Strata), else the environment / huggingface-cli login."""
+    """The token from <home>/hf_token (set in Welder), else the environment / huggingface-cli login."""
     p = os.path.join(home, "hf_token")
     try:
         with open(p, encoding="utf-8") as f:
@@ -65,7 +65,7 @@ def _explain(err, m):
         return "Couldn't reach huggingface.co (network, firewall or proxy). Check the connection and try again."
     if "gated" in low or "401" in low or "403" in low or "restricted" in low or "access to model" in low:
         return (f"Hugging Face refused the download: {m['repo']} is gated. Open {url} while logged in, accept the "
-                f"licence, then paste a Read token (huggingface.co/settings/tokens) into Strata's ML panel.")
+                f"licence, then paste a Read token (huggingface.co/settings/tokens) into Welder's ML panel.")
     if "no space" in low:
         return "Not enough disk space for the model."
     tail = err.strip().splitlines()[-1] if err.strip() else "download failed"

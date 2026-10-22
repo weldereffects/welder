@@ -180,7 +180,7 @@ void mapChannels(const Image& exr, Image& out) {
         if (pass.empty() || pass == "Combined") target = chan;
         else if (pass == "Depth") { target = "depth.Z"; kind = 1; }
         else if (pass == "Normal" || pass == "Position") {
-            // Blender (x, y, z) Z-up -> Strata (x, z, -y)
+            // Blender (x, y, z) Z-up -> Welder (x, z, -y)
             std::string l = pass == "Normal" ? "N." : "P.";
             if (chan == "X") target = l + "X";
             else if (chan == "Y") { target = l + "Z"; sign = -1; }
