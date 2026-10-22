@@ -1,0 +1,202 @@
+{
+ "strata": 1,
+ "format": {
+  "width": 960,
+  "height": 540
+ },
+ "frame_range": [
+  1,
+  24
+ ],
+ "nodes": [
+  {
+   "name": "BD",
+   "type": "Backdrop",
+   "params": {
+    "label": "plate prep",
+    "color": [
+     0.35,
+     0.3,
+     0.55,
+     1
+    ]
+   },
+   "ui": {
+    "x": -60,
+    "y": -60,
+    "w": 300,
+    "h": 230
+   }
+  },
+  {
+   "name": "Note",
+   "type": "StickyNote",
+   "params": {
+    "label": "glow strength is\nGlowKit.amount"
+   },
+   "ui": {
+    "x": 320,
+    "y": -40
+   }
+  },
+  {
+   "name": "Plate",
+   "type": "CheckerBoard",
+   "ui": {
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "name": "Soft",
+   "type": "Blur",
+   "inputs": [
+    "Plate"
+   ],
+   "params": {
+    "size": {
+     "expr": "GlowKit.amount * 2 + sin(frame/4)*3"
+    }
+   },
+   "ui": {
+    "x": 0,
+    "y": 80
+   }
+  },
+  {
+   "name": "GlowKit",
+   "type": "Group",
+   "inputs": [
+    "Soft"
+   ],
+   "params": {
+    "amount": 6,
+    "tint": [
+     1,
+     0.6,
+     0.3,
+     1
+    ],
+    "knobs": [
+     {
+      "name": "amount",
+      "label": "glow size",
+      "type": "float",
+      "default": 4,
+      "lo": 0,
+      "hi": 40
+     },
+     {
+      "name": "tint",
+      "label": "tint",
+      "type": "color",
+      "default": [
+       1,
+       1,
+       1,
+       1
+      ]
+     }
+    ]
+   },
+   "ui": {
+    "x": 0,
+    "y": 200
+   }
+  },
+  {
+   "name": "In",
+   "type": "Input",
+   "group": "GlowKit",
+   "ui": {
+    "x": 0,
+    "y": 0
+   }
+  },
+  {
+   "name": "Big",
+   "type": "Blur",
+   "group": "GlowKit",
+   "inputs": [
+    "In"
+   ],
+   "params": {
+    "size": {
+     "expr": "parent.amount * 4"
+    }
+   },
+   "ui": {
+    "x": 120,
+    "y": 70
+   }
+  },
+  {
+   "name": "Tinted",
+   "type": "Grade",
+   "group": "GlowKit",
+   "inputs": [
+    "Big"
+   ],
+   "params": {
+    "multiply": [
+     {
+      "expr": "parent.tint.r"
+     },
+     {
+      "expr": "parent.tint.g"
+     },
+     {
+      "expr": "parent.tint.b"
+     },
+     1
+    ]
+   },
+   "ui": {
+    "x": 120,
+    "y": 140
+   }
+  },
+  {
+   "name": "Add",
+   "type": "Merge",
+   "group": "GlowKit",
+   "inputs": [
+    "In",
+    "Tinted"
+   ],
+   "params": {
+    "operation": "plus"
+   },
+   "ui": {
+    "x": 0,
+    "y": 210
+   }
+  },
+  {
+   "name": "Out",
+   "type": "Output",
+   "group": "GlowKit",
+   "inputs": [
+    "Add"
+   ],
+   "ui": {
+    "x": 0,
+    "y": 290
+   }
+  },
+  {
+   "name": "Write1",
+   "type": "Write",
+   "inputs": [
+    "GlowKit"
+   ],
+   "params": {
+    "file": "out/groups.####.exr"
+   },
+   "ui": {
+    "x": 0,
+    "y": 290
+   }
+  }
+ ]
+}

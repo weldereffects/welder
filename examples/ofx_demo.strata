@@ -1,0 +1,136 @@
+{
+  "strata": 1,
+  "format": {
+    "width": 640,
+    "height": 360
+  },
+  "frame_range": [
+    1,
+    3
+  ],
+  "nodes": [
+    {
+      "name": "Checker",
+      "type": "CheckerBoard",
+      "params": {
+        "size": 40,
+        "color0": [
+          0.1,
+          0.1,
+          0.1,
+          1
+        ],
+        "color1": [
+          0.8,
+          0.8,
+          0.8,
+          1
+        ]
+      }
+    },
+    {
+      "name": "Glow",
+      "type": "Radial",
+      "params": {
+        "radius": 150,
+        "color": [
+          1.0,
+          0.4,
+          0.1,
+          1
+        ]
+      }
+    },
+    {
+      "name": "Base",
+      "type": "Merge",
+      "inputs": [
+        "Checker",
+        "Glow"
+      ],
+      "params": {
+        "operation": "plus"
+      }
+    },
+    {
+      "name": "Gain",
+      "type": "OFX",
+      "inputs": [
+        "Base"
+      ],
+      "params": {
+        "plugin": "net.sf.openfx.basicPlugin",
+        "values": {
+          "scale": 1.0,
+          "scaleComponents": true,
+          "scaleR": {
+            "keys": [
+              [
+                1,
+                1.0
+              ],
+              [
+                3,
+                0.2
+              ]
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "Invert",
+      "type": "OFX",
+      "inputs": [
+        "Gain"
+      ],
+      "params": {
+        "plugin": "net.sf.openfx.invertPlugin"
+      }
+    },
+    {
+      "name": "Opaque",
+      "type": "Shuffle",
+      "inputs": [
+        "Invert"
+      ],
+      "params": {
+        "mapping": {
+          "A": "1"
+        }
+      }
+    },
+    {
+      "name": "Noise",
+      "type": "OFX",
+      "params": {
+        "plugin": "net.sf.openfx.noisePlugin",
+        "values": {
+          "Noise": 0.25
+        }
+      }
+    },
+    {
+      "name": "Grain",
+      "type": "Merge",
+      "inputs": [
+        "Opaque",
+        "Noise"
+      ],
+      "params": {
+        "operation": "multiply",
+        "mix": 0.3
+      }
+    },
+    {
+      "name": "Write",
+      "type": "Write",
+      "inputs": [
+        "Grain"
+      ],
+      "params": {
+        "file": "out/ofx_demo.####.png"
+      }
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+# Builds Welder (Strata) for Windows, Linux and macOS (Apple silicon and Intel) on GitHub's machines.
+# Every push / pull request: build + self-tests. A tag (v0.2.0 ...): also a GitHub Release with
+# every download attached. Run by hand: Actions > build > Run workflow.
+name: build
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    # AlmaLinux 8 (glibc 2.28) with a current GCC: the result runs on Rocky / Alma 8 and 9,
+    # RHEL, Ubuntu 20.04+, Debian 11+ - what studios run.
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: |
+          dnf install -y libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel \
+                         mesa-libGL-devel git
+          dnf install -y nasm || dnf --enablerepo=powertools install -y nasm || true
+          pipx install cmake || true; pipx install ninja || true
+          echo "/root/.local/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: ../deps
+          key: deps-linux-${{ hashFiles('tools/build_ocio.sh', 'tools/build_ffmpeg.sh', 'tools/build_ncnn.sh') }}
+      - name: dependencies (OpenColorIO, FFmpeg, ncnn)
+        run: |
+          D=$(cd .. && pwd)/deps
+          [ -f $D/ocio-linux/lib/libOpenColorIO.a ] || tools/build_ocio.sh $D/src $D/ocio-linux
+          [ -f $D/ffmpeg-linux/lib/libavcodec.a ] || tools/build_ffmpeg.sh $D/src $D/ffmpeg-linux "" $D/ocio-linux
+          if [ ! -f $D/ncnn-linux/lib/cmake/ncnn/ncnnConfig.cmake ]; then
+            [ -d $D/src/ncnn ] || { git clone -q --depth 1 --branch 20250916 https://github.com/Tencent/ncnn.git $D/src/ncnn &&
+                                    git -C $D/src/ncnn submodule update --init --depth 1 glslang; }
+            tools/build_ncnn.sh $D/src/ncnn $D/ncnn-linux
+          fi
+      - run: tools/package_linux.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: "dist/*.tar.gz" }
+
+  macos:
+    # Mac minutes cost 10x on private repositories: only for version tags and when run by hand
+    # (Actions > build > Run workflow). Free and unlimited once the repository is public.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-14, arch: arm64 }    # Apple silicon
+          - { runner: macos-13, arch: x86_64 }   # Intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install ninja nasm || true
+      - uses: actions/cache@v4
+        with:
+          path: ../deps
+          key: deps-macos-${{ matrix.arch }}-${{ hashFiles('tools/build_ocio.sh', 'tools/build_ffmpeg.sh', 'tools/build_ncnn.sh') }}
+      - name: build and package
+        env:
+          STRATA_BUILD_DEPS: "1"
+          # signing / notarization, once there is an Apple Developer account (repository secrets):
+          MAC_SIGN_ID: ${{ secrets.MAC_SIGN_ID }}
+        run: tools/package_macos.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-${{ matrix.arch }}, path: "dist/*.zip" }
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: tools
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64-posix ninja-build nasm cmake
+      - uses: actions/cache@v4
+        with:
+          path: ../deps
+          key: deps-windows-${{ hashFiles('tools/build_ocio.sh', 'tools/build_ffmpeg.sh', 'tools/build_ncnn.sh', 'tools/fetch_python_win.sh') }}
+      - name: dependencies (OpenColorIO, FFmpeg, ncnn)
+        run: |
+          D=$(cd .. && pwd)/deps
+          [ -f $D/ocio-win/lib/libOpenColorIO.a ] || tools/build_ocio.sh $D/src $D/ocio-win --windows
+          [ -f $D/ffmpeg-win/lib/libavcodec.a ] || tools/build_ffmpeg.sh $D/src $D/ffmpeg-win --windows $D/ocio-win
+          if [ ! -f $D/ncnn-win/lib/cmake/ncnn/ncnnConfig.cmake ]; then
+            [ -d $D/src/ncnn ] || { git clone -q --depth 1 --branch 20250916 https://github.com/Tencent/ncnn.git $D/src/ncnn &&
+                                    git -C $D/src/ncnn submodule update --init --depth 1 glslang; }
+            tools/build_ncnn.sh $D/src/ncnn $D/ncnn-win --windows
+          fi
+      - run: tools/package_windows.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: "dist/*.zip" }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

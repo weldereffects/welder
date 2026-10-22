@@ -1,0 +1,27 @@
+{
+  "source": "/home/claude/strata/examples/nuke/shot010_comp_v003.nk",
+  "nodes_total": 19,
+  "translated": 18,
+  "with_warnings": 4,
+  "unsupported_classes": {
+    "Vectorfield": 1
+  },
+  "warnings": [
+    {
+      "node": "FG_Move",
+      "message": "motion blur is not supported yet"
+    },
+    {
+      "node": "FG_Defocus",
+      "message": "knob 'size' uses an expression (FG_Move.scale.w*20); using the default"
+    },
+    {
+      "node": "BG_Plate",
+      "message": "CheckerBoard approximated (2 colours, no centre lines)"
+    },
+    {
+      "node": "ShowLUT",
+      "message": "node class 'Vectorfield' is not supported yet; passing input 0 through"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "strata": 1,
+  "format": {"width": 1920, "height": 1080},
+  "frame_range": [1, 24],
+  "fps": 24,
+  "nodes": [
+    {"name": "BG", "type": "CheckerBoard", "params": {"size": 120, "color0": [0.05, 0.06, 0.08, 1], "color1": [0.18, 0.2, 0.24, 1]}},
+    {"name": "BG_Blur", "type": "Blur", "inputs": ["BG"], "params": {"size": 12}},
+    {"name": "Glow", "type": "Radial", "params": {"radius": 260, "softness": 0.8, "color": [1.0, 0.55, 0.2, 1]}},
+    {"name": "Glow_Move", "type": "Transform", "inputs": ["Glow"],
+     "params": {"translate": [{"keys": [[1, -500], [24, 500]], "interp": "smooth"}, 0], "rotate": {"keys": [[1, 0], [24, 45]]}, "scale": [1.4, 0.8]}},
+    {"name": "Glow_Grade", "type": "Grade", "inputs": ["Glow_Move"], "params": {"gain": [1.6, 1.3, 1.0, 1], "gamma": 0.9}},
+    {"name": "Comp", "type": "Merge", "inputs": ["BG_Blur", "Glow_Grade"], "params": {"operation": "screen"}},
+    {"name": "Look", "type": "ColorCorrect", "inputs": ["Comp"], "params": {"saturation": 1.1, "contrast": 1.05, "shadows.gain": [0.9, 0.95, 1.1, 1]}},
+    {"name": "Out_EXR", "type": "Write", "inputs": ["Look"], "params": {"file": "out/demo.####.exr", "datatype": "half"}},
+    {"name": "Out_PNG", "type": "Write", "inputs": ["Look"], "params": {"file": "out/demo.####.png"}}
+  ]
+}

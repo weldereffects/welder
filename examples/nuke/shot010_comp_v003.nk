@@ -1,0 +1,203 @@
+#! /usr/local/Nuke14.0v5/libnuke-14.0.5.so -nx
+version 14.0 v5
+define_window_layout_xml {<?xml version="1.0" encoding="UTF-8"?>
+<layout version="1.0">
+    <window x="0" y="0" w="2560" h="1377" screen="0">
+        <splitter orientation="1"/>
+    </window>
+</layout>
+}
+Root {
+ inputs 0
+ name /shows/demo/shot010/comp/shot010_comp_v003.nk
+ frame 1
+ first_frame 1
+ last_frame 24
+ lock_range true
+ format "1920 1080 0 0 1920 1080 1 HD_1080"
+ proxy_type scale
+ proxy_format "1024 778 0 0 1024 778 1 1K_Super_35(full-ap)"
+ colorManagement Nuke
+ workingSpaceLUT linear
+}
+BackdropNode {
+ inputs 0
+ name BackdropNode1
+ label "FG element"
+ xpos -300
+ ypos -400
+ bdwidth 400
+ bdheight 300
+}
+Radial {
+ area {660 240 1260 840}
+ softness 0.6
+ name FG_Matte
+ xpos -120
+ ypos -350
+}
+Constant {
+ inputs 0
+ channels rgb
+ color {0.9 0.35 0.1 1}
+ format "1920 1080 0 0 1920 1080 1 HD_1080"
+ name FG_Color
+ xpos -250
+ ypos -350
+}
+Copy {
+ inputs 2
+ from0 rgba.alpha
+ to0 rgba.alpha
+ name Copy1
+ xpos -250
+ ypos -280
+}
+Premult {
+ name Premult1
+ xpos -250
+ ypos -240
+}
+Transform {
+ translate {{curve x1 -600 x24 600} {curve x1 0 x12 120 x24 0}}
+ rotate {{curve L x1 0 x24 90}}
+ scale {0.6 0.6}
+ center {960 540}
+ filter Cubic
+ motionblur 1
+ shutteroffset centred
+ name FG_Move
+ xpos -250
+ ypos -180
+}
+set N1a2b3c00 [stack 0]
+Blur {
+ channels rgba
+ size {{FG_Move.scale.w*20}}
+ name FG_Defocus
+ xpos -250
+ ypos -130
+}
+set N1a2b3c01 [stack 0]
+CheckerBoard2 {
+ inputs 0
+ boxsize 96
+ color0 {0.05 0.06 0.08 1}
+ color1 {0.18 0.2 0.24 1}
+ name BG_Plate
+ xpos 0
+ ypos -350
+}
+Grade {
+ channels rgb
+ blackpoint 0.01
+ white {1.1 1.05 0.95 1}
+ multiply 1.2
+ gamma 0.9
+ black_clamp false
+ name BG_Grade
+ xpos 0
+ ypos -280
+}
+Group {
+ name BG_Look
+ xpos 0
+ ypos -220
+}
+ Input {
+  inputs 0
+  name Input1
+  xpos 0
+  ypos -10
+ }
+ Saturation {
+  saturation 0.8
+  name Saturation1
+  xpos 0
+  ypos 40
+ }
+ ColorCorrect {
+  contrast 1.1
+  shadows.gain {0.9 0.95 1.1 1}
+  name ColorCorrect1
+  xpos 0
+  ypos 80
+ }
+ Output {
+  name Output1
+  xpos 0
+  ypos 140
+ }
+end_group
+Merge2 {
+ inputs 2
+ operation over
+ name Merge_FG
+ xpos 0
+ ypos -130
+}
+set N1a2b3c02 [stack 0]
+push $N1a2b3c01
+Dilate {
+ channels alpha
+ size 12
+ name Glow_Matte
+ xpos -380
+ ypos -80
+}
+Blur {
+ size 60
+ name Glow_Blur
+ xpos -380
+ ypos -40
+}
+push $N1a2b3c02
+Merge2 {
+ inputs 2
+ operation plus
+ mix 0.35
+ name Merge_Glow
+ xpos 0
+ ypos -40
+}
+OFXuk.co.thefoundry.noisereduction_v2 {
+ amount 0.5
+ name Denoise1
+ xpos 0
+ ypos 0
+}
+Vectorfield {
+ vfield_file /shows/demo/luts/show.cube
+ colorspaceIn linear
+ name ShowLUT
+ xpos 0
+ ypos 40
+}
+Shuffle {
+ alpha white
+ name Opaque
+ xpos 0
+ ypos 80
+}
+Reformat {
+ format "1280 720 0 0 1280 720 1 HD_720"
+ name Reformat_Review
+ xpos 0
+ ypos 120
+}
+Write {
+ file renders/shot010_comp_v003.####.exr
+ file_type exr
+ datatype "16 bit half"
+ compression "Zip (1 scanline)"
+ name Write_EXR
+ xpos 0
+ ypos 160
+}
+Viewer {
+ frame 12
+ frame_range 1-24
+ name Viewer1
+ xpos 0
+ ypos 220
+}

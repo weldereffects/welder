@@ -1,0 +1,429 @@
+{
+ "_comment": "Models the Strata ML worker can download. Strata reads this file too (to show what a node needs). Files go to <ml home>/models/<id>/; a finished download writes <id>/.complete.",
+ "models": {
+  "ltx-2.5": {
+   "label": "LTX-2.5 22B (distilled transformer, Gemma text encoder, VAEs, upscaler)",
+   "repo": "Lightricks/LTX-2.5",
+   "files": [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-conv-bf16.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+   ],
+   "size_gb": 71.6,
+   "gated": true,
+   "license": "LTX-2 Community License (free under $10M annual revenue)",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5"
+  },
+  "ltx-ic-alpha-gen": {
+   "label": "LTX-2.5 IC-LoRA: Alpha Gen (beta)",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen",
+   "files": [
+    "ltx-2.5-22b-ic-lora-alpha-gen-0.9.safetensors"
+   ],
+   "size_gb": 1.31,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Alpha-Gen"
+  },
+  "ltx-ic-upscaler": {
+   "label": "LTX-2.5 IC-LoRA: Pixel Spatial Upscaler x2",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler",
+   "files": [
+    "ltx-2.5-22b-ic-lora-pixel-spatial-upscaler-x2-1.0.safetensors"
+   ],
+   "size_gb": 0.33,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler"
+  },
+  "ltx-ic-water": {
+   "label": "LTX-2.5 IC-LoRA: Water Simulation",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Water-Simulation",
+   "files": [
+    "ltx-2.5-22b-ic-lora-water-simulation-0.9.safetensors"
+   ],
+   "size_gb": 0.91,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Water-Simulation"
+  },
+  "ltx-ic-colorize": {
+   "label": "LTX-2.5 IC-LoRA: Colorization",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Colorization",
+   "files": [
+    "ltx-2.5-22b-ic-lora-colorization-0.9.safetensors"
+   ],
+   "size_gb": 0.91,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Colorization"
+  },
+  "ltx-ic-decompress": {
+   "label": "LTX-2.5 IC-LoRA: Decompression",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Decompression",
+   "files": [
+    "ltx-2.5-22b-ic-lora-decompression-0.9.safetensors"
+   ],
+   "size_gb": 0.91,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Decompression"
+  },
+  "ltx-ic-deblur": {
+   "label": "LTX-2.5 IC-LoRA: Deblur",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Deblur",
+   "files": [
+    "ltx-2.5-22b-ic-lora-deblur-0.9.safetensors"
+   ],
+   "size_gb": 0.91,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Deblur"
+  },
+  "ltx-ic-day-to-night": {
+   "label": "LTX-2.5 IC-LoRA: Day to Night",
+   "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Day-To-Night",
+   "files": [
+    "ltx-2.5-22b-ic-lora-day-to-night-0.9.safetensors"
+   ],
+   "size_gb": 0.33,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.5-22b-IC-LoRA-Day-To-Night"
+  },
+  "ltx-ic-union": {
+   "label": "LTX-2.3 IC-LoRA: Union Control (depth / pose / edges)",
+   "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control",
+   "files": [
+    "ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors"
+   ],
+   "size_gb": 0.9,
+   "gated": false,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control"
+  },
+  "ltx-ic-motion": {
+   "label": "LTX-2.3 IC-LoRA: Motion Track Control",
+   "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-Motion-Track-Control",
+   "files": [
+    "ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors"
+   ],
+   "size_gb": 0.9,
+   "gated": false,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Motion-Track-Control"
+  },
+  "ltx-ic-inoutpaint": {
+   "label": "LTX-2.3 IC-LoRA: In/Outpainting",
+   "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-In-Outpainting",
+   "files": [
+    "ltx-2.3-22b-ic-lora-in-outpainting-0.9.safetensors"
+   ],
+   "size_gb": 0.9,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-In-Outpainting"
+  },
+  "ltx-ic-relight": {
+   "label": "LTX-2.3 IC-LoRA: Relight",
+   "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-Relight",
+   "files": [
+    "ltx-2.3-22b-ic-lora-relight-1.0.safetensors"
+   ],
+   "size_gb": 0.9,
+   "gated": true,
+   "license": "LTX-2 Community License",
+   "license_url": "https://huggingface.co/Lightricks/LTX-2.3-22b-IC-LoRA-Relight"
+  },
+  "mapanything": {
+   "label": "MapAnything (Apache 2.0 weights): cameras + depth from frames",
+   "repo": "facebook/map-anything-apache",
+   "snapshot": true,
+   "size_gb": 5.0,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/facebook/map-anything-apache"
+  },
+  "depth-anything-v2-small": {
+   "label": "Depth Anything V2 Small (depth for Union Control)",
+   "repo": "depth-anything/Depth-Anything-V2-Small-hf",
+   "snapshot": true,
+   "size_gb": 0.1,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small-hf"
+  },
+  "video-depth-anything-small": {
+   "label": "Video Depth Anything Small (relative depth, steady over time)",
+   "repo": "depth-anything/Video-Depth-Anything-Small",
+   "files": [
+    "video_depth_anything_vits.pth"
+   ],
+   "size_gb": 0.11,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/depth-anything/Video-Depth-Anything-Small"
+  },
+  "video-depth-anything-base": {
+   "label": "Video Depth Anything Base (relative depth, steady over time)",
+   "repo": "depth-anything/Video-Depth-Anything-Base",
+   "files": [
+    "video_depth_anything_vitb.pth"
+   ],
+   "size_gb": 0.45,
+   "gated": false,
+   "license": "CC-BY-NC-4.0 (non-commercial use only)",
+   "license_url": "https://huggingface.co/depth-anything/Video-Depth-Anything-Base"
+  },
+  "video-depth-anything-large": {
+   "label": "Video Depth Anything Large (relative depth, steady over time)",
+   "repo": "depth-anything/Video-Depth-Anything-Large",
+   "files": [
+    "video_depth_anything_vitl.pth"
+   ],
+   "size_gb": 1.53,
+   "gated": false,
+   "license": "CC-BY-NC-4.0 (non-commercial use only)",
+   "license_url": "https://huggingface.co/depth-anything/Video-Depth-Anything-Large"
+  },
+  "metric-video-depth-anything-small": {
+   "label": "Metric Video Depth Anything Small (metres, steady over time)",
+   "repo": "depth-anything/Metric-Video-Depth-Anything-Small",
+   "files": [
+    "metric_video_depth_anything_vits.pth"
+   ],
+   "size_gb": 0.11,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Small"
+  },
+  "metric-video-depth-anything-base": {
+   "label": "Metric Video Depth Anything Base (metres, steady over time)",
+   "repo": "depth-anything/Metric-Video-Depth-Anything-Base",
+   "files": [
+    "metric_video_depth_anything_vitb.pth"
+   ],
+   "size_gb": 0.45,
+   "gated": false,
+   "license": "CC-BY-NC-4.0 (non-commercial use only)",
+   "license_url": "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Base"
+  },
+  "metric-video-depth-anything-large": {
+   "label": "Metric Video Depth Anything Large (metres, steady over time)",
+   "repo": "depth-anything/Metric-Video-Depth-Anything-Large",
+   "files": [
+    "metric_video_depth_anything_vitl.pth"
+   ],
+   "size_gb": 1.53,
+   "gated": false,
+   "license": "CC-BY-NC-4.0 (non-commercial use only)",
+   "license_url": "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Large"
+  },
+  "sam2.1-hiera-tiny": {
+   "label": "SAM 2.1 Hiera Tiny (TrackMask: click an object, it's masked through the shot)",
+   "repo": "facebook/sam2.1-hiera-tiny",
+   "files": [
+    "sam2.1_hiera_tiny.pt"
+   ],
+   "size_gb": 0.16,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/facebook/sam2.1-hiera-tiny"
+  },
+  "sam2.1-hiera-small": {
+   "label": "SAM 2.1 Hiera Small (TrackMask: click an object, it's masked through the shot)",
+   "repo": "facebook/sam2.1-hiera-small",
+   "files": [
+    "sam2.1_hiera_small.pt"
+   ],
+   "size_gb": 0.18,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/facebook/sam2.1-hiera-small"
+  },
+  "sam2.1-hiera-base-plus": {
+   "label": "SAM 2.1 Hiera Base Plus (TrackMask: click an object, it's masked through the shot)",
+   "repo": "facebook/sam2.1-hiera-base-plus",
+   "files": [
+    "sam2.1_hiera_base_plus.pt"
+   ],
+   "size_gb": 0.32,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/facebook/sam2.1-hiera-base-plus"
+  },
+  "sam2.1-hiera-large": {
+   "label": "SAM 2.1 Hiera Large (TrackMask: click an object, it's masked through the shot)",
+   "repo": "facebook/sam2.1-hiera-large",
+   "files": [
+    "sam2.1_hiera_large.pt"
+   ],
+   "size_gb": 0.9,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/facebook/sam2.1-hiera-large"
+  }
+ },
+ "ic_loras": {
+  "_comment": "Presets for the LTX node. model: the models entry; control: what the reference video is made of (input = the src input as is). prompt: the template the panel's 'template' button puts in the prompt; replace the <...> parts.",
+  "Alpha Gen": {
+   "model": "ltx-ic-alpha-gen",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "Returns a matte (white = foreground). Prompt stays empty."
+  },
+  "Pixel Upscaler x2": {
+   "model": "ltx-ic-upscaler",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "",
+   "scale": 2,
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "Output is twice the input size; it invents detail, it is not a pixel-accurate upscale."
+  },
+  "Water Simulation": {
+   "model": "ltx-ic-water",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "Reference shows <the scene>. Edited shows the same scene with water added. ADD WATER <describe the result>. The identity, layout and framing stay identical to the reference.",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "Describe the water. Keep the ADD WATER trigger."
+  },
+  "Colorization": {
+   "model": "ltx-ic-colorize",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "Reference shows <the scene>. Edited shows the same scene with natural colors restored. COLORIZE <describe the result>. Only color information differs between reference and edited.",
+   "trained": [
+    960,
+    544,
+    121
+   ],
+   "note": "Lower the strength to 0.8-0.9 if colours bleed."
+  },
+  "Decompression": {
+   "model": "ltx-ic-decompress",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "Reference shows <the scene>, heavily compressed with visible macroblocking. ENHANCE QUALITY <describe the result>. Only compression artifacts and image quality differ between reference and edited.",
+   "trained": [
+    960,
+    544,
+    121
+   ],
+   "note": ""
+  },
+  "Deblur": {
+   "model": "ltx-ic-deblur",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "Reference shows <the scene>, out of focus. Edited shows the same scene in sharp focus. DEBLUR <describe the result>",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "For defocus, not motion blur. Sweep strength 0.5-1."
+  },
+  "Day to Night": {
+   "model": "ltx-ic-day-to-night",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "Reference shows <the scene> in daylight. Edited shows the same scene at night: <describe the result>. Only the lighting changes from day to night.",
+   "trained": [
+    768,
+    448,
+    97
+   ],
+   "note": ""
+  },
+  "Union Control (depth)": {
+   "model": "ltx-ic-union",
+   "strength": 1.0,
+   "control": "depth",
+   "prompt": "<describe the result>",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "LTX-2.3 adapter on LTX-2.5 (as Lightricks' 2.5 workflows do). The depth video is made from src (or feed a depth pass and choose control 'input')."
+  },
+  "Union Control (edges)": {
+   "model": "ltx-ic-union",
+   "strength": 1.0,
+   "control": "canny",
+   "prompt": "<describe the result>",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "LTX-2.3 adapter on LTX-2.5. Canny edges are made from src."
+  },
+  "Union Control (as is)": {
+   "model": "ltx-ic-union",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "<describe the result>",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "Feed a depth, pose or edge video into src yourself."
+  },
+  "Motion Control": {
+   "model": "ltx-ic-motion",
+   "strength": 1.0,
+   "control": "input",
+   "prompt": "<describe the result>",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "src: the shot with coloured motion-path splines drawn over it (e.g. RotoPaint strokes)."
+  },
+  "Inpaint": {
+   "model": "ltx-ic-inoutpaint",
+   "strength": 1.0,
+   "control": "inpaint",
+   "prompt": "<describe the result>",
+   "trained": [
+    1920,
+    1088,
+    121
+   ],
+   "note": "The mask input (alpha) marks what to replace; it is painted #66FF00 into the reference. Include shadows in the mask."
+  },
+  "Relight": {
+   "model": "ltx-ic-relight",
+   "strength": 1.0,
+   "control": "relight",
+   "prompt": "relight the video to match the light-direction ball. <describe the result>",
+   "trained": [
+    1280,
+    704,
+    121
+   ],
+   "note": "A shaded ball showing the light direction is drawn top right of every frame. Describe the look and where the light comes from."
+  }
+ }
+}

@@ -1,0 +1,155 @@
+// Resample through a 3x3 matrix: the GPU version of MatrixNode::renderOne /
+// sample() in nodes/Sample.h (same filters, footprint, clamp and edge rules).
+// Coordinates are local: source pixel (i, j) is the buffer's pixel, output
+// pixel (x, y) the output buffer's; the matrix maps output to source.
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Map { int chmap[]; };  // output channel -> source channel (-1: none)
+layout(std430, set = 0, binding = 2) writeonly buffer Dst { float dst[]; };
+
+layout(push_constant) uniform P {
+    double m[9];       // the matrix, row by row (positions in double, as on the CPU)
+    int sw, sh, sn;    // source size and channels
+    int ow, oh, on;    // output size and channels
+    int kind;          // 0 impulse, 1 bilinear, 2 BC cubic, 3 lanczos
+    float B, C;
+    int lobes;
+    float footX, footY; // the filter's stretch (affine); < 0: per pixel (perspective)
+    int flags;         // 1 clamp negative lobes, 2 black outside
+} p;
+
+const float PI = 3.14159265358979;
+const int KMAX = 64;
+
+// `precise`: evaluated as written (no fused multiply-adds), like the CPU, so
+// weights that should be 0 are 0 on both.
+float bcW(float x, float B, float C) {
+    x = abs(x);
+    precise float r = 0.0;
+    if (x < 1.0) r = ((12.0 - 9.0 * B - 6.0 * C) * x * x * x + (-18.0 + 12.0 * B + 6.0 * C) * x * x + (6.0 - 2.0 * B)) / 6.0;
+    else if (x < 2.0) r = ((-B - 6.0 * C) * x * x * x + (6.0 * B + 30.0 * C) * x * x + (-12.0 * B - 48.0 * C) * x + (8.0 * B + 24.0 * C)) / 6.0;
+    return r;
+}
+
+float filterW(float x) {
+    if (p.kind == 0) return abs(x) <= 0.5 ? 1.0 : 0.0;
+    if (p.kind == 1) return max(0.0, 1.0 - abs(x));
+    if (p.kind == 2) return bcW(x, p.B, p.C);
+    x = abs(x);
+    if (x >= float(p.lobes)) return 0.0;
+    if (x < 1e-6) return 1.0;
+    float px = PI * x;
+    return float(p.lobes) * sin(px) * sin(px / float(p.lobes)) / (px * px);
+}
+
+float radiusOf() { return p.kind == 0 ? 0.5 : p.kind == 1 ? 1.0 : p.kind == 2 ? 2.0 : float(p.lobes); }
+bool negativeLobes() { return p.kind == 3 || (p.kind == 2 && p.C > 0.0); }
+
+dvec2 apply(dvec2 q) {
+    double w = p.m[6] * q.x + p.m[7] * q.y + p.m[8];
+    return dvec2(p.m[0] * q.x + p.m[1] * q.y + p.m[2], p.m[3] * q.x + p.m[4] * q.y + p.m[5]) / w;
+}
+
+void main() {
+    int ox = int(gl_GlobalInvocationID.x), oy = int(gl_GlobalInvocationID.y);
+    if (ox >= p.ow || oy >= p.oh) return;
+    const int n = p.on;
+    int obase = (oy * p.ow + ox) * n;
+    for (int c = 0; c < n; ++c) dst[obase + c] = 0.0;
+    if (p.sw <= 0 || p.sh <= 0) return;
+
+    dvec2 s = apply(dvec2(ox + 0.5, oy + 0.5));
+    float footX = p.footX, footY = p.footY;
+    if (footX < 0.0) {  // perspective: the footprint here
+        dvec2 a = s, b = apply(dvec2(ox + 1.5, oy + 0.5)), cc = apply(dvec2(ox + 0.5, oy + 1.5));
+        footX = float(max(1.0lf, length(dvec2(b.x - a.x, cc.x - a.x))));
+        footY = float(max(1.0lf, length(dvec2(b.y - a.y, cc.y - a.y))));
+    }
+    const bool black = (p.flags & 2) != 0;
+    double x = s.x, y = s.y;
+    if (!black) {
+        x = clamp(x, 0.5lf, double(p.sw) - 0.5lf);
+        y = clamp(y, 0.5lf, double(p.sh) - 0.5lf);
+    }
+    double px = x - 0.5lf, py = y - 0.5lf;
+    if (p.kind == 0 && footX <= 1.0 && footY <= 1.0) {  // nearest
+        int ix = int(floor(px + 0.5lf)), iy = int(floor(py + 0.5lf));
+        if (ix < 0 || iy < 0 || ix >= p.sw || iy >= p.sh) return;
+        int sbase = (iy * p.sw + ix) * p.sn;
+        for (int c = 0; c < n; ++c) {
+            int m = chmap[c];
+            dst[obase + c] = m >= 0 ? src[sbase + m] : 0.0;
+        }
+        return;
+    }
+    float fx = max(1.0, footX), fy = max(1.0, footY);
+    float rx = max(0.5, radiusOf()) * fx, ry = max(0.5, radiusOf()) * fy;  // float, as on the CPU
+    int x0 = int(floor(px - double(rx))) + 1, x1 = int(floor(px + double(rx)));
+    int y0 = int(floor(py - double(ry))) + 1, y1 = int(floor(py + double(ry)));
+    if (p.kind == 0) {  // a shrinking impulse: a box over the footprint
+        x0 = int(floor(px - double(fx) / 2.0lf + 0.5lf));
+        x1 = int(floor(px + double(fx) / 2.0lf - 0.5lf + 1e-6lf));
+        y0 = int(floor(py - double(fy) / 2.0lf + 0.5lf));
+        y1 = int(floor(py + double(fy) / 2.0lf - 0.5lf + 1e-6lf));
+        x1 = max(x1, x0);
+        y1 = max(y1, y0);
+    }
+    x1 = min(x1, x0 + KMAX - 1);
+    y1 = min(y1, y0 + KMAX - 1);
+    float wx[KMAX], wy[KMAX];
+    precise float sx = 0.0, sy = 0.0;
+    for (int i = x0; i <= x1; ++i) {
+        float w = p.kind == 0 ? 1.0 : filterW(float(double(i) - px) / fx);
+        wx[i - x0] = w;
+        sx += w;
+    }
+    for (int j = y0; j <= y1; ++j) {
+        float w = p.kind == 0 ? 1.0 : filterW(float(double(j) - py) / fy);
+        wy[j - y0] = w;
+        sy += w;
+    }
+    if (abs(sx) > 1e-8) for (int i = 0; i <= x1 - x0; ++i) wx[i] /= sx;
+    if (abs(sy) > 1e-8) for (int j = 0; j <= y1 - y0; ++j) wy[j] /= sy;
+
+    const bool doClamp = (p.flags & 1) != 0 && negativeLobes();
+    float acc[16], lo[16], hi[16];
+    const int nc = min(n, 16);
+    for (int c = 0; c < nc; ++c) {
+        acc[c] = 0.0;
+        lo[c] = 1e30;
+        hi[c] = -1e30;
+    }
+    for (int j = y0; j <= y1; ++j) {
+        int sy2 = j;
+        if (sy2 < 0 || sy2 >= p.sh) {
+            if (black) continue;
+            sy2 = clamp(sy2, 0, p.sh - 1);
+        }
+        for (int i = x0; i <= x1; ++i) {
+            int sx2 = i;
+            if (sx2 < 0 || sx2 >= p.sw) {
+                if (black) continue;
+                sx2 = clamp(sx2, 0, p.sw - 1);
+            }
+            precise float w = wx[i - x0] * wy[j - y0];
+            int sbase = (sy2 * p.sw + sx2) * p.sn;
+            for (int c = 0; c < nc; ++c) {
+                int m = chmap[c];
+                if (m < 0) continue;
+                float v = src[sbase + m];
+                acc[c] += w * v;
+                if (doClamp && abs(w) > 1e-6) {  // as on the CPU: a tap with no weight doesn't count
+                    lo[c] = min(lo[c], v);
+                    hi[c] = max(hi[c], v);
+                }
+            }
+        }
+    }
+    for (int c = 0; c < nc; ++c) {
+        float v = acc[c];
+        if (doClamp && lo[c] <= hi[c]) v = clamp(v, lo[c], hi[c]);
+        dst[obase + c] = v;
+    }
+}

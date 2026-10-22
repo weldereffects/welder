@@ -1,0 +1,34 @@
+// A 2D convolution as a list of taps: out(x, y) = sum of w * src(x + dx, y + dy)
+// over the taps, taps outside the source contributing nothing (as the CPU's
+// lens blur: disc / blades spans, gaussian, picture kernels all become taps).
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Taps { vec4 taps[]; };  // dx, dy, w, -
+layout(std430, set = 0, binding = 2) writeonly buffer Dst { float dst[]; };
+
+layout(push_constant) uniform P {
+    int sw, sh, n;   // source size and channels (output has the same channels)
+    int ow, oh;      // output size
+    int offx, offy;  // output (0, 0) in source coordinates
+    int ntaps;
+} p;
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
+    if (x >= p.ow || y >= p.oh) return;
+    const int n = min(p.n, 16);
+    float acc[16];
+    for (int c = 0; c < n; ++c) acc[c] = 0.0;
+    const int sx0 = x + p.offx, sy0 = y + p.offy;
+    for (int t = 0; t < p.ntaps; ++t) {
+        vec4 tp = taps[t];
+        int sx = sx0 + int(tp.x), sy = sy0 + int(tp.y);
+        if (sx < 0 || sy < 0 || sx >= p.sw || sy >= p.sh) continue;
+        int b = (sy * p.sw + sx) * p.n;
+        for (int c = 0; c < n; ++c) acc[c] += tp.z * src[b + c];
+    }
+    int o = (y * p.ow + x) * p.n;
+    for (int c = 0; c < n; ++c) dst[o + c] = acc[c];
+}

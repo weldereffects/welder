@@ -1,0 +1,425 @@
+{
+  "strata": 1,
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "pixel_aspect": 1.0,
+    "name": "HD_1080"
+  },
+  "frame_range": [
+    1.0,
+    24.0
+  ],
+  "fps": 24.0,
+  "project": {
+    "lock_range": true,
+    "name": "shot010_comp_v003"
+  },
+  "nodes": [
+    {
+      "name": "FG_Matte",
+      "type": "Radial",
+      "inputs": [],
+      "params": {
+        "center": [
+          960.0,
+          540.0
+        ],
+        "radius": 300.0,
+        "softness": 0.6
+      },
+      "ui": {
+        "x": -120,
+        "y": -350,
+        "nuke_class": "Radial"
+      }
+    },
+    {
+      "name": "FG_Color",
+      "type": "Constant",
+      "inputs": [],
+      "params": {
+        "format": [
+          1920,
+          1080
+        ],
+        "color": [
+          0.9,
+          0.35,
+          0.1,
+          1.0
+        ]
+      },
+      "ui": {
+        "x": -250,
+        "y": -350,
+        "nuke_class": "Constant"
+      }
+    },
+    {
+      "name": "Copy1",
+      "type": "Copy",
+      "inputs": [
+        "FG_Color",
+        "FG_Matte"
+      ],
+      "params": {
+        "from": [
+          "A"
+        ],
+        "to": [
+          "A"
+        ]
+      },
+      "ui": {
+        "x": -250,
+        "y": -280,
+        "nuke_class": "Copy"
+      }
+    },
+    {
+      "name": "Premult1",
+      "type": "Premult",
+      "inputs": [
+        "Copy1"
+      ],
+      "params": {},
+      "ui": {
+        "x": -250,
+        "y": -240,
+        "nuke_class": "Premult"
+      }
+    },
+    {
+      "name": "FG_Move",
+      "type": "Transform",
+      "inputs": [
+        "Premult1"
+      ],
+      "params": {
+        "translate": [
+          {
+            "keys": [
+              [
+                1.0,
+                -600.0
+              ],
+              [
+                24.0,
+                600.0
+              ]
+            ],
+            "interp": "smooth"
+          },
+          {
+            "keys": [
+              [
+                1.0,
+                0.0
+              ],
+              [
+                12.0,
+                120.0
+              ],
+              [
+                24.0,
+                0.0
+              ]
+            ],
+            "interp": "smooth"
+          }
+        ],
+        "rotate": {
+          "keys": [
+            [
+              1.0,
+              0.0
+            ],
+            [
+              24.0,
+              90.0
+            ]
+          ],
+          "interp": "linear"
+        },
+        "scale": [
+          0.6,
+          0.6
+        ],
+        "center": [
+          960.0,
+          540.0
+        ],
+        "filter": "cubic"
+      },
+      "ui": {
+        "x": -250,
+        "y": -180,
+        "nuke_class": "Transform"
+      }
+    },
+    {
+      "name": "FG_Defocus",
+      "type": "Blur",
+      "inputs": [
+        "FG_Move"
+      ],
+      "params": {
+        "channels": "rgba"
+      },
+      "ui": {
+        "x": -250,
+        "y": -130,
+        "nuke_class": "Blur"
+      }
+    },
+    {
+      "name": "BG_Plate",
+      "type": "CheckerBoard",
+      "inputs": [],
+      "params": {
+        "size": 96.0,
+        "color0": [
+          0.05,
+          0.06,
+          0.08,
+          1.0
+        ],
+        "color1": [
+          0.18,
+          0.2,
+          0.24,
+          1.0
+        ]
+      },
+      "ui": {
+        "x": 0,
+        "y": -350,
+        "nuke_class": "CheckerBoard2"
+      }
+    },
+    {
+      "name": "BG_Grade",
+      "type": "Grade",
+      "inputs": [
+        "BG_Plate"
+      ],
+      "params": {
+        "channels": "rgb",
+        "blackpoint": 0.01,
+        "gain": [
+          1.1,
+          1.05,
+          0.95,
+          1.0
+        ],
+        "multiply": 1.2,
+        "gamma": 0.9,
+        "black_clamp": false
+      },
+      "ui": {
+        "x": 0,
+        "y": -280,
+        "nuke_class": "Grade"
+      }
+    },
+    {
+      "name": "BG_Look_Saturation1",
+      "type": "Saturation",
+      "inputs": [
+        "BG_Grade"
+      ],
+      "params": {
+        "saturation": 0.8
+      },
+      "ui": {
+        "x": 0.0,
+        "y": -220.0,
+        "nuke_class": "Saturation"
+      }
+    },
+    {
+      "name": "BG_Look_ColorCorrect1",
+      "type": "ColorCorrect",
+      "inputs": [
+        "BG_Look_Saturation1"
+      ],
+      "params": {
+        "contrast": 1.1,
+        "shadows.gain": [
+          0.9,
+          0.95,
+          1.1,
+          1.0
+        ]
+      },
+      "ui": {
+        "x": 0.0,
+        "y": -180.0,
+        "nuke_class": "ColorCorrect"
+      }
+    },
+    {
+      "name": "Merge_FG",
+      "type": "Merge",
+      "inputs": [
+        "BG_Look_ColorCorrect1",
+        "FG_Defocus"
+      ],
+      "params": {
+        "operation": "over"
+      },
+      "ui": {
+        "x": 0,
+        "y": -90,
+        "nuke_class": "Merge2"
+      }
+    },
+    {
+      "name": "Glow_Matte",
+      "type": "Dilate",
+      "inputs": [
+        "FG_Defocus"
+      ],
+      "params": {
+        "size": 12.0,
+        "channels": "alpha"
+      },
+      "ui": {
+        "x": -380,
+        "y": -80,
+        "nuke_class": "Dilate"
+      }
+    },
+    {
+      "name": "Glow_Blur",
+      "type": "Blur",
+      "inputs": [
+        "Glow_Matte"
+      ],
+      "params": {
+        "size": 60.0
+      },
+      "ui": {
+        "x": -380,
+        "y": -40,
+        "nuke_class": "Blur"
+      }
+    },
+    {
+      "name": "Merge_Glow",
+      "type": "Merge",
+      "inputs": [
+        "Merge_FG",
+        "Glow_Blur"
+      ],
+      "params": {
+        "operation": "plus",
+        "mix": 0.35
+      },
+      "ui": {
+        "x": 0,
+        "y": 0,
+        "nuke_class": "Merge2"
+      }
+    },
+    {
+      "name": "Denoise1",
+      "type": "OFX",
+      "inputs": [
+        "Merge_Glow"
+      ],
+      "params": {
+        "plugin": "uk.co.thefoundry.noisereduction",
+        "version": 2,
+        "values": {
+          "amount": 0.5
+        },
+        "if_missing": "bypass"
+      },
+      "ui": {
+        "x": 0,
+        "y": 40,
+        "nuke_class": "OFXuk.co.thefoundry.noisereduction_v2"
+      }
+    },
+    {
+      "name": "ShowLUT",
+      "type": "Nuke:Vectorfield",
+      "inputs": [
+        "Denoise1"
+      ],
+      "params": {
+        "nuke_knobs": {
+          "vfield_file": "/shows/demo/luts/show.cube",
+          "colorspaceIn": "linear"
+        }
+      },
+      "ui": {
+        "x": 0,
+        "y": 80,
+        "nuke_class": "Vectorfield"
+      }
+    },
+    {
+      "name": "Opaque",
+      "type": "Shuffle",
+      "inputs": [
+        "ShowLUT"
+      ],
+      "params": {
+        "mapping": [
+          [
+            "A",
+            "1"
+          ]
+        ]
+      },
+      "ui": {
+        "x": 0,
+        "y": 120,
+        "nuke_class": "Shuffle"
+      }
+    },
+    {
+      "name": "Reformat_Review",
+      "type": "Reformat",
+      "inputs": [
+        "Opaque"
+      ],
+      "params": {
+        "format": [
+          1280,
+          720
+        ],
+        "resize": "width"
+      },
+      "ui": {
+        "x": 0,
+        "y": 160,
+        "nuke_class": "Reformat"
+      }
+    },
+    {
+      "name": "Write_EXR",
+      "type": "Write",
+      "inputs": [
+        "Reformat_Review"
+      ],
+      "params": {
+        "file": "renders/shot010_comp_v003.####.exr",
+        "datatype": "half",
+        "compression": "zips"
+      },
+      "ui": {
+        "x": 0,
+        "y": 200,
+        "nuke_class": "Write"
+      }
+    }
+  ],
+  "meta": {
+    "imported_from": "/home/claude/strata/examples/nuke/shot010_comp_v003.nk",
+    "importer": "nk2strata 0.1"
+  }
+}

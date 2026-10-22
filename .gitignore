@@ -1,0 +1,11 @@
+build/
+examples/out/
+*.ofx.bundle/
+examples/nuke/renders/
+examples/*.png
+build-win/
+dist/
+__pycache__/
+models/rife/
+build-linux/
+build-macos-*/

@@ -1,0 +1,38 @@
+// One pass of a separable blur (FilterNodes' convolve): out(x, y)[c] =
+// sum over k of w[k] * in(x + offx + k*dx, y + offy + k*dy)[map[c]], zero
+// outside the input. Summed in the CPU's order, without fused multiply-adds.
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) readonly buffer W { float w[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Map { int chmap[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer Dst { float dst[]; };
+
+layout(push_constant) uniform P {
+    int sw, sh, sn;  // input size and channels
+    int ow, oh, on;  // output size and channels
+    int offx, offy;  // output (0, 0) + offset = the first tap's input position
+    int dx, dy;      // tap step (1, 0) or (0, 1)
+    int ntaps;
+} p;
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
+    if (x >= p.ow || y >= p.oh) return;
+    const int n = min(p.on, 16);
+    precise float acc[16];
+    for (int c = 0; c < n; ++c) acc[c] = 0.0;
+    for (int k = 0; k < p.ntaps; ++k) {
+        int sx = x + p.offx + k * p.dx, sy = y + p.offy + k * p.dy;
+        if (sx < 0 || sy < 0 || sx >= p.sw || sy >= p.sh) continue;
+        int b = (sy * p.sw + sx) * p.sn;
+        precise float wk = w[k];
+        for (int c = 0; c < n; ++c) {
+            int m = chmap[c];
+            if (m >= 0) acc[c] += wk * src[b + m];
+        }
+    }
+    int o = (y * p.ow + x) * p.on;
+    for (int c = 0; c < n; ++c) dst[o + c] = acc[c];
+}
