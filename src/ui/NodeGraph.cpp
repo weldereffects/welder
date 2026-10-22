@@ -174,6 +174,37 @@ std::vector<std::string> noteLines(const Node* n) {
     return lines;
 }
 
+// Keyframes anywhere in a node's params: animated knobs, shape keys (Roto / SplineWarp,
+// GridWarp...), baked tracks and baked transforms - anything stored as a list of keys.
+bool holdsKeys(const json& v) {
+    if (v.is_object()) {
+        for (const char* k : {"keys", "anim", "anim_b"})
+            if (auto it = v.find(k); it != v.end() && it->is_array() && !it->empty()) return true;
+        for (auto& [k, x] : v.items())
+            if ((x.is_object() || x.is_array()) && holdsKeys(x)) return true;
+    } else if (v.is_array()) {
+        for (auto& x : v)
+            if ((x.is_object() || x.is_array()) && holdsKeys(x)) return true;
+    }
+    return false;
+}
+
+// Whether a node is animated, re-checked only after an edit.
+bool nodeAnimated(App& app, const Node* n) {
+    static std::map<const Node*, std::pair<uint64_t, bool>> cache;
+    static uint64_t seen = 0;
+    const uint64_t gen = app.editGeneration();
+    if (gen != seen) {
+        cache.clear();
+        seen = gen;
+    }
+    auto it = cache.find(n);
+    if (it != cache.end()) return it->second.second;
+    const bool a = holdsKeys(n->params.data);
+    cache[n] = {gen, a};
+    return a;
+}
+
 // Nodes are whole, even sizes so their centres (and the pipes snapped to them) land on whole pixels.
 ImVec2 evenSize(float w, float h) { return ImVec2(2.0f * std::ceil(w / 2.0f), 2.0f * std::ceil(h / 2.0f)); }
 
@@ -2230,6 +2261,22 @@ void drawNodeGraph(App& app, UiState& ui) {
             }
         if (app.viewed == n->name && tx == p1.x + 4 * g.zoom)
             dl->AddRectFilled(ImVec2(tx, p0.y), ImVec2(tx + 5 * g.zoom, p1.y), IM_COL32(255, 196, 70, 255), 1);
+        // Animated (keyframes, shape keys, baked tracks or transforms): a little curve-and-key badge
+        // on the node's top-left corner.
+        if (!isAnnotation(n) && n->type != "Dot" && nodeAnimated(app, n)) {
+            const float b = std::max(11.0f, 14.0f * g.zoom);
+            const ImVec2 c0(p0.x - b * 0.45f, p0.y - b * 0.45f), c1(c0.x + b, c0.y + b);
+            dl->AddRectFilled(c0, c1, IM_COL32(28, 28, 30, 235), 3.0f);
+            dl->AddRect(c0, c1, IM_COL32(255, 196, 70, 230), 3.0f, 0, 1.0f);
+            // an S-curve through two keys
+            const float x0 = c0.x + b * 0.18f, x1 = c1.x - b * 0.18f, y0 = c1.y - b * 0.22f, y1 = c0.y + b * 0.22f;
+            dl->AddBezierCubic(ImVec2(x0, y0), ImVec2(x0 + (x1 - x0) * 0.55f, y0), ImVec2(x1 - (x1 - x0) * 0.55f, y1), ImVec2(x1, y1),
+                               IM_COL32(255, 196, 70, 255), std::max(1.0f, b * 0.1f));
+            const float k = b * 0.13f;
+            for (ImVec2 q : {ImVec2(x0, y0), ImVec2(x1, y1)})
+                dl->AddQuadFilled(ImVec2(q.x, q.y - k), ImVec2(q.x + k, q.y), ImVec2(q.x, q.y + k), ImVec2(q.x - k, q.y), IM_COL32(255, 220, 140, 255));
+            if (ImGui::IsMouseHoveringRect(c0, c1) && hovered) ImGui::SetTooltip("animated: this node has keyframes");
+        }
     }
 
     // ---- interaction

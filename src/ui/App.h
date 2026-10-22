@@ -190,6 +190,8 @@ public:
     bool importNk(const std::string& nkPath, std::string* err);
     // Nodes copied in another .nk app (its clipboard text) -> {"strata_nodes"} entries; null on failure.
     json nkToNodes(const std::string& nkText, std::string* err);
+    // Bumped by every applied edit (for UI caches of what the comp holds).
+    uint64_t editGeneration() const { return editGen_.load(); }
     // Folders searched for gizmos (.gizmo, and Welder's .sgizmo): Welder's own,
     // WELDER_GIZMO_PATH (or STRATA_GIZMO_PATH).
     std::vector<std::string> gizmoDirs() const;

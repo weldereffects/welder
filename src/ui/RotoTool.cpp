@@ -788,6 +788,9 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 }
                 if (r.drag != Drag::None) {
                     r.orig[r.tanShape] = roto::pointsAt(items[r.tanShape], frame);
+                    if (r.drag == Drag::Feather)  // the other selected points' feathers follow
+                        for (auto& [si, pi] : r.sel)
+                            if (!r.orig.count(si) && si < (int)items.size() && !ds[si].stroke) r.orig[si] = roto::pointsAt(items[si], frame);
                     break;
                 }
                 // 3. a point (topmost item first; strokes have no editable points)
@@ -802,13 +805,15 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                         }
                 }
                 if (hs >= 0 && io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
-                    // Ctrl+drag a point: pull its own feather out (or in) from wherever it is now
-                    r.sel = {{hs, hp}};
+                    // Ctrl+drag a point: pull its feather out (or in) from wherever it is now - and, when
+                    // it is one of several selected points, all of theirs with it
+                    if (!r.sel.count({hs, hp})) r.sel = {{hs, hp}};
                     r.curShape = hs;
                     r.tanShape = hs;
                     r.tanPoint = hp;
                     r.drag = Drag::PointFeather;
-                    r.orig[hs] = roto::pointsAt(items[hs], frame);
+                    for (auto& [si, pi] : r.sel)
+                        if (!r.orig.count(si) && si < (int)items.size() && !ds[si].stroke) r.orig[si] = roto::pointsAt(items[si], frame);
                     break;
                 }
                 if (hs >= 0) {
@@ -1005,6 +1010,35 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                         Pts bez = roto::toBezier(items[r.tanShape], pts);
                         p.fx = m.x - bez[r.tanPoint].x;
                         p.fy = m.y - bez[r.tanPoint].y;
+                    }
+                    if (r.drag == Drag::Feather || r.drag == Drag::PointFeather) {
+                        // Every other selected point's feather moves out (or in) by as much as this one did,
+                        // each along its own outward direction, so a whole selection feathers evenly.
+                        // Open curves have no outside: their feathers move by the same offset instead.
+                        const Pt& o = r.orig[r.tanShape][r.tanPoint];
+                        const double ddx = p.fx - o.fx, ddy = p.fy - o.fy;
+                        const bool closedHere = items[r.tanShape].value("closed", true);
+                        const roto::V2 n0 = roto::outwardNormal(r.orig[r.tanShape], r.tanPoint);
+                        const double amount = ddx * n0.x + ddy * n0.y;  // how far it went outwards
+                        for (auto& [si, idx] : selByShape(r)) {
+                            if (!r.orig.count(si)) continue;
+                            Pts q = si == r.tanShape ? pts : r.orig[si];
+                            const bool closed = items[si].value("closed", true);
+                            for (int pi : idx) {
+                                if ((si == r.tanShape && pi == r.tanPoint) || pi >= (int)q.size()) continue;
+                                const Pt& oq = r.orig[si][pi];
+                                if (closed && closedHere) {
+                                    const roto::V2 nn = roto::outwardNormal(r.orig[si], pi);
+                                    q[pi].fx = oq.fx + nn.x * amount;
+                                    q[pi].fy = oq.fy + nn.y * amount;
+                                } else {
+                                    q[pi].fx = oq.fx + ddx;
+                                    q[pi].fy = oq.fy + ddy;
+                                }
+                            }
+                            if (si == r.tanShape) pts = q;
+                            else result[si] = q;
+                        }
                     } else {
                         double hx = m.x - p.x, hy = m.y - p.y;
                         bool left = r.drag == Drag::TanL;

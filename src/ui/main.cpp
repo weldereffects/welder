@@ -668,6 +668,11 @@ int main(int argc, char** argv) {
             std::printf("ALIGN overlaps (within a node's size): %d\n", overlaps);
             for (auto& n : app.comp->nodes) std::printf("ALIGN %s %.0f %.0f\n", n->name.c_str(), n->ui.value("x", 0.0f), n->ui.value("y", 0.0f));
         }
+        // STRATA_TEST_ROTOSEL: every point of the open roto's shapes selected (as Ctrl+A)
+        if (std::getenv("STRATA_TEST_ROTOSEL") && !opt.screenshot.empty() && frameCount == 12)
+            if (Node* rn = app.node(ui.roto.node); rn && rn->params.has("shapes"))
+                for (int si = 0; si < (int)rn->params.data["shapes"].size(); ++si)
+                    for (int pi = 0; pi < (int)rn->params.data["shapes"][si].value("points", json::array()).size(); ++pi) ui.roto.sel.insert({si, pi});
         // STRATA_TEST_MAXIMIZE=<panel>: that panel maximized (Space); STRATA_TEST_NO_OVERLAYS: Q pressed over the viewer
         if (const char* tm = std::getenv("STRATA_TEST_MAXIMIZE"); tm && *tm && !opt.screenshot.empty() && frameCount == 5) ui.maximized = tm;
         if (std::getenv("STRATA_TEST_NO_OVERLAYS") && !opt.screenshot.empty() && frameCount == 5) ui.viewer.overlays = false;
