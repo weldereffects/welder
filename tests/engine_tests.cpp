@@ -723,7 +723,7 @@ int main(int argc, char** argv) {
         auto m = root / "models" / "mapanything" / "map-anything-apache";
         std::filesystem::create_directories(m);
         std::ofstream(m / "config.json") << "{}";
-        CHECK(std::filesystem::path(ml::modelLocation("mapanything")) == m);
+        CHECK(std::filesystem::weakly_canonical(ml::modelLocation("mapanything")) == std::filesystem::weakly_canonical(m));  // (macOS: /var is /private/var)
         CHECK(!ml::modelReady("ltx-ic-relight"));
         ml::writeModelDirs();
         std::ifstream md(root / "home" / "model_dirs.json");
