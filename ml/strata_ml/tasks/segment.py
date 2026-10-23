@@ -41,7 +41,7 @@ def _vendor_path():
 
 def load_predictor(ctx, size):
     import importlib.util
-    for mod in ("torch", "torchvision", "hydra", "iopath", "PIL"):
+    for mod in ("torch", "torchvision", "hydra", "PIL"):
         if importlib.util.find_spec(mod) is None:
             raise RuntimeError(f"the ML worker's Python has no '{mod}': run Set up ML again (it adds what TrackMask needs)")
     import torch

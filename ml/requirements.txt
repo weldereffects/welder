@@ -13,7 +13,6 @@ einops
 tqdm
 # SAM 2.1 (its code is bundled in strata_ml/vendor/sam2pkg)
 hydra-core
-iopath
 # LTX-2.5 (Lightricks' official pipelines), pinned to a tested commit
 ltx-core @ https://github.com/Lightricks/LTX-2/archive/9ec55f9f22798a3198d9c923856824821bc3317e.zip#subdirectory=packages/ltx-core
 ltx-pipelines @ https://github.com/Lightricks/LTX-2/archive/9ec55f9f22798a3198d9c923856824821bc3317e.zip#subdirectory=packages/ltx-pipelines

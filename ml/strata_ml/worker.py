@@ -96,7 +96,7 @@ def probe_packages():
         info["torch_error"] = str(e)
     import importlib.util
     for mod, key in (("ltx_pipelines", "ltx"), ("gsplat", "gsplat"), ("mapanything", "mapanything"),
-                     ("huggingface_hub", "huggingface_hub"), ("cv2", "opencv"), ("av", "av"), ("einops", "einops"), ("hydra", "hydra"), ("iopath", "iopath")):
+                     ("huggingface_hub", "huggingface_hub"), ("cv2", "opencv"), ("av", "av"), ("einops", "einops"), ("hydra", "hydra")):
         info[key] = importlib.util.find_spec(mod) is not None
     return info
 
