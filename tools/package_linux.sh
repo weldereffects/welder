@@ -63,6 +63,7 @@ mkdir -p "$STAGE/examples/nk"
 cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"
 cp "$ROOT/tools/linux/README-LINUX.txt" "$STAGE/"
+python3 "$ROOT/tools/build_manual.py" "$STAGE/Welder-Manual.html" --os linux   # Help > User Manual
 install -m 755 "$ROOT/tools/linux/welder-launcher.sh" "$STAGE/Welder"
 install -m 755 "$ROOT/tools/linux/install-desktop-entry.sh" "$STAGE/install-desktop-entry.sh"
 cp "$ROOT/assets/brand/welder-icon-256.png" "$STAGE/bin/welder.png"

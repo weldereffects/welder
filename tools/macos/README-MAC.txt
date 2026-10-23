@@ -10,6 +10,9 @@ FIRST LAUNCH
   right-click (or Control-click) Welder.app > Open > Open.
   After that it opens normally.
 
+USER MANUAL
+  Welder-Manual.html (open it in any browser, or Help > User Manual in Welder).
+
 WHAT IT NEEDS
   - macOS 11 (Big Sur) or later.
   - Optional: Python 3 (python.org or Homebrew) for the .nk importer

@@ -321,6 +321,20 @@ if(Python3_FOUND)
   add_test(NAME nk_importer
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_nk2strata.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  # The user manual (Help > User Manual) beside the built editor; the packages make their own.
+  if(WIN32)
+    set(WELDER_MANUAL_OS win)
+  elseif(APPLE)
+    set(WELDER_MANUAL_OS mac)
+  else()
+    set(WELDER_MANUAL_OS linux)
+  endif()
+  add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/Welder-Manual.html
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/build_manual.py ${CMAKE_BINARY_DIR}/Welder-Manual.html --os ${WELDER_MANUAL_OS}
+    DEPENDS ${CMAKE_SOURCE_DIR}/tools/build_manual.py ${CMAKE_SOURCE_DIR}/docs/manual/template.html
+            ${CMAKE_SOURCE_DIR}/docs/manual/new_nodes.txt ${CMAKE_SOURCE_DIR}/src/core/Schema.cpp ${CMAKE_SOURCE_DIR}/src/ui/Hotkeys.cpp
+    COMMENT "Building the user manual")
+  add_custom_target(welder_manual ALL DEPENDS ${CMAKE_BINARY_DIR}/Welder-Manual.html)
 endif()
 
 # ---------------------------------------------------------------- editor (welder_ui)

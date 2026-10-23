@@ -73,6 +73,8 @@ cp "$BUILD/welder_tests" "$BUILD/welder_exr_tests" "$STAGE/"   # self-tests, out
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$ROOT/tools/macos/README-MAC.txt" "$STAGE/"
+python3 "$ROOT/tools/build_manual.py" "$STAGE/Welder-Manual.html" --os mac --platform "macOS $ARCH"
+cp "$STAGE/Welder-Manual.html" "$RES/"   # Help > User Manual opens the one inside the app
 mkdir -p "$STAGE/examples/nk"
 cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"

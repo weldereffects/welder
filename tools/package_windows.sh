@@ -96,6 +96,7 @@ cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"
 python3 "$ROOT/tools/nk2strata.py" "$STAGE/examples/nk/shot010_comp_v003.nk" -q   # pre-translated copy
 cp "$ROOT/tools/windows/README-WINDOWS.txt" "$STAGE/"
+python3 "$ROOT/tools/build_manual.py" "$STAGE/Welder-Manual.html" --os win   # Help > User Manual
 cp "$ROOT/tools/windows/try-it.bat" "$STAGE/"
 cp "$ROOT/tools/windows/Welder.bat" "$STAGE/"
 cp "$ROOT/tools/windows/Welder-reset-workspace.bat" "$STAGE/"

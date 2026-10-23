@@ -216,6 +216,21 @@ void drawMenuBar(App& app, UiState& ui) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Help")) {
+        if (ImGui::MenuItem("User Manual")) {
+            // the manual next to the app (packages), inside a macOS app, or beside a dev build
+            std::string found;
+            const fs::path exe(app.exeDir);
+            for (const fs::path& p : {exe / ".." / "Welder-Manual.html", exe / "Welder-Manual.html",
+                                      exe / ".." / "Resources" / "Welder-Manual.html"}) {
+                std::error_code ec;
+                if (fs::exists(p, ec)) {
+                    found = fs::weakly_canonical(p, ec).string();
+                    break;
+                }
+            }
+            if (found.empty()) app.message("Welder-Manual.html isn't next to Welder (build it with tools/build_manual.py)");
+            else ml::openFolder(found);
+        }
         if (ImGui::MenuItem("Keyboard Shortcuts")) ui.showShortcuts = true;
         if (ImGui::MenuItem("About Welder")) ui.showAbout = true;
         ImGui::EndMenu();

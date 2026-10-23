@@ -13,6 +13,9 @@ tarballs that all unpack into the same folder: unpack them in the same place.
 
   ./install-desktop-entry.sh   adds Welder to your applications menu.
 
+USER MANUAL
+  Welder-Manual.html (open it in any browser, or Help > User Manual in Welder).
+
 WHAT IT NEEDS
   - A 64-bit distribution with glibc as new as the one it was built on
     (this build: glibc 2.38 or newer - Ubuntu 24.04+, Fedora 39+, Debian 13+,

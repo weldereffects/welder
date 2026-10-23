@@ -54,7 +54,7 @@ std::string modelLocation(const std::string& id);  // the ready model's folder (
 void writeModelDirs();                              // <ml home>/model_dirs.json, for the worker
 // Makes <installDir>/<id> with a PUT_FILES_HERE.txt naming the files; returns the folder.
 std::string prepareInstallFolder(const std::string& id);
-void openFolder(const std::string& dir);
+void openFolder(const std::string& dir);  // a folder or a file, in the system's own app
 std::string splatPythonPath();                      // venv-splat's python ("" when not set up)
 std::string modelLabel(const std::string& id);
 double modelSizeGB(const std::string& id);

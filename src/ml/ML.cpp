@@ -410,6 +410,9 @@ std::string prepareInstallFolder(const std::string& id) {
 void openFolder(const std::string& dir) {
 #ifdef _WIN32
     ShellExecuteW(nullptr, L"open", W(dir).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#elif defined(__APPLE__)
+    std::string err;
+    spawn({"open", dir}, "/dev/null", &err);
 #else
     std::string err;
     spawn({"xdg-open", dir}, "/dev/null", &err);

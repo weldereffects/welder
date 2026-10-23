@@ -12,6 +12,9 @@ the same place.
   welder-0.1.0-win64-tests.zip        self-tests (optional)
   welder-0.1.0-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
 
+USER MANUAL
+  Welder-Manual.html (open it in any browser, or Help > User Manual in Welder).
+
 THE EDITOR
   Double-click Welder.bat (or bin\welder_ui.exe).
   Drag a .weld comp or a .nk script onto Welder.bat to open it.
