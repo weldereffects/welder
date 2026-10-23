@@ -159,6 +159,7 @@ void registerSplatNodes();
 void registerMLNodes();
 void registerColorMgmtNodes();
 void registerMergeExtraNodes();
+void registerKillOutline();
 void registerColorExtraNodes();
 void registerFilterExtraNodes();
 void registerTimeExtraNodes();
@@ -204,6 +205,7 @@ void registerBuiltinNodes() {
     registerMLNodes();
     registerColorMgmtNodes();
     registerMergeExtraNodes();
+    registerKillOutline();
     registerColorExtraNodes();
     registerFilterExtraNodes();
     registerTimeExtraNodes();

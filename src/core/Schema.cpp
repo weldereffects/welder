@@ -858,6 +858,19 @@ std::vector<NodeDef> build() {
                  "Alpha from hue: 1 within width/2 degrees of the hue, falling off over the softness."});
     d.push_back({"Difference", "Keyer", {F("offset", "offset", 0, 0, 1), F("gain", "gain", 1, 0, 10)},
                  "Alpha = (|A - B| - offset) * gain. Inputs: B (clean plate or reference), A."});
+    d.push_back({"KillOutline", "Keyer",
+                 withMask({C("remove", "remove", "light outline", {"light outline", "dark outline", "both"}),
+                           F("size", "size", 4, 0.5, 50, "How far the clean colour from inside the edge is spread outward (px)"),
+                           F("erode", "erode", 1, 0, 20, "How far inside the edge the clean colour is taken from (px)"),
+                           F("core_threshold", "core threshold", 0.95, 0.1, 1, "Matte values above this count as solid core"),
+                           Tip(C("method", "method", "per channel", {"per channel", "luminance"}), "per channel: each channel held to the inside colour (the rim takes the subject's colour); luminance: only brightness, so the edge keeps its own hue (coloured hair detail)"),
+                           F("tolerance", "tolerance", 0, 0, 0.5, "How much brighter (or darker) than the inside an edge pixel may stay"),
+                           F("amount", "amount", 1, 0, 1), B("premultiplied", "premultiplied", true),
+                           Width(S("matte_channel", "matte channel", "A"), 110),
+                           C("output", "output", "result", {"result", "edge band", "fix"})}),
+                 "Takes out the light (or dark) outline a key leaves around its edge: in the edge band each pixel is held to the "
+                 "colour just inside the matte. Input: the keyed image (premultiplied); matte: an optional matte to use instead of "
+                 "its alpha. output > edge band shows where it works, fix shows what changed (x10)."});
     d.push_back({"Despill", "Keyer",
                  {C("screen", "screen", "green", {"green", "blue"}), C("limit", "limit", "average", {"average", "max", "min"}),
                   F("amount", "amount", 1, 0, 2), B("restore_luminance", "restore luminance", false),

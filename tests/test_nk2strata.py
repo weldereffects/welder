@@ -1405,6 +1405,15 @@ AdjBBox { numpixels {10 10} name AB }
         self.assertEqual(n["AB"]["type"], "AdjustBBox")
         self.assertNotIn("KeyMix", report["unsupported_classes"])
 
+    def test_killoutline_gizmo(self):
+        _, report, n = convert("""
+Constant { inputs 0 name Key }
+KillOutline { name KO1 }
+""")
+        self.assertEqual(n["KO1"]["type"], "KillOutline")
+        self.assertEqual(n["KO1"]["inputs"], ["Key"])
+        self.assertNotIn("KillOutline", report["unsupported_classes"])
+
 
 
 if __name__ == "__main__":

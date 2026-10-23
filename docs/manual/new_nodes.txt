@@ -80,3 +80,4 @@ Toe
 TransformMasked
 VolumeRays
 ZSlice
+KillOutline

@@ -598,6 +598,8 @@ SIMPLE_CLASSES = {
     "VolumeRays": ("VolumeRays", {"channels": "channels:ch", "center": "center", "steps": "steps"}),
     "BumpBoss": ("BumpBoss", {}),
     "ZSlice": ("ZSlice", {}),
+    # keying gizmos with a Welder node of their own
+    "KillOutline": ("KillOutline", {}),
     "Bokeh": ("Defocus", {"size": "defocus"}),
     "MarkerRemoval": ("MarkerRemoval", {"channels": "channels:ch", "area": "area"}),
     # transforms
@@ -717,6 +719,7 @@ SIMPLE_FIXUPS = {
     "Blend": _warn_approx("the weights are not translated (all 1)"),
     "DegrainSimple": _warn_approx("the degrain settings are approximated"),
     "Histogram": _warn_approx("the input / output ranges are not translated"),
+    "KillOutline": _warn_approx("the KillOutline gizmo became Welder's KillOutline node; its settings are not translated (defaults used)"),
 }
 SIMPLE_CLASSES["GridWarp3"] = ("GridWarp", {})
 

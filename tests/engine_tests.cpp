@@ -993,6 +993,32 @@ int main(int argc, char** argv) {
         CHECK_NEAR(d, 0.0, 1e-5);
     });
 
+    test("KillOutline: the light rim of a key takes the colour inside it; alpha and the core stay", [] {
+        const std::string d = "hypot(x - 32, y - 24)", al = "clamp((14 - " + d + ") / 3)";
+        auto c = comp(json::array({
+            {{"name", "K"}, {"type", "Expression"},
+             {"params", {{"channel0", "rgb"}, {"expr0", "(" + d + " < 11 ? 0.3 : 0.9) * " + al}, {"channel1", "A"}, {"expr1", al}}}},
+            {{"name", "KO"}, {"type", "KillOutline"}, {"inputs", {"K"}}},
+            {{"name", "KD"}, {"type", "KillOutline"}, {"inputs", {"K"}}, {"params", {{"remove", "dark outline"}}}},
+            {{"name", "KH"}, {"type", "KillOutline"}, {"inputs", {"K"}}, {"params", {{"amount", 0.5}}}},
+        }), 64, 48);
+        auto k = render(*c, "K"), o = render(*c, "KO"), dk = render(*c, "KD"), h = render(*c, "KH");
+        // a rim pixel (alpha 0.5ish): was 0.9 straight, now the inside's 0.3
+        const int rx = 32 + 12, ry = 24;
+        const float a = px(k, rx, ry, "A");
+        CHECK(a > 0.2f && a < 0.9f);
+        CHECK_NEAR(px(k, rx, ry, "R") / a, 0.9, 1e-4);
+        CHECK_NEAR(px(o, rx, ry, "R") / a, 0.3, 0.02);
+        CHECK_NEAR(px(o, rx, ry, "A"), a, 0);                         // alpha untouched
+        CHECK_NEAR(px(o, 32, 24, "G"), px(k, 32, 24, "G"), 1e-6);      // the core untouched
+        CHECK_NEAR(px(dk, rx, ry, "R"), px(k, rx, ry, "R"), 1e-6);     // a dark-outline pass leaves a light rim
+        CHECK_NEAR(px(h, rx, ry, "R") / a, 0.6, 0.02);                 // amount mixes
+        auto o16 = render(*c, "KO", 1, 16);
+        double m = 0;
+        for (size_t i = 0; i < o->data.size(); ++i) m = std::max(m, (double)std::fabs(o->data[i] - o16->data[i]));
+        CHECK_NEAR(m, 0.0, 1e-5);
+    });
+
     test("EdgeBlur: blurs along the alpha's edge only", [] {
         auto c = comp(json::array({
             {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {1, 0.5, 0.25, 1}}}}},
