@@ -382,26 +382,19 @@ public:
     }
 };
 
-// Tracker: tracks (see Track.h) and, from them, a match-move or stabilise.
-// params: tracks, transform ("none" | "match-move" | "stabilize"),
-//         reference_frame, filter.
-class TrackerNode : public MatrixNode {
+// Tracker: tracks (see Track.h) and, from them, the Transform tab's transform:
+// transform ("none" | "stabilize" | "stabilize 1pt" | "match-move" | "match-move 1pt" |
+// "remove jitter" | "add jitter"), reference_frame, jitter_period, smooth [t, r, s],
+// then filter / clamp / black_outside / motionblur / shutter / shutteroffset as Transform's.
+class TrackerNode : public TransformNode {
 public:
-    double refFrame(double f) const {
-        if (params.has("reference_frame")) return params.num("reference_frame", f, f);
-        auto fr = track::trackedFrames(params.has("tracks") ? params.data["tracks"] : json::array());
-        return fr.empty() ? f : fr.front();
-    }
     std::string mode() const { return params.str("transform", "none"); }
     int identityInput(double) override { return mode() == "none" ? 0 : -1; }
     bool timeDependent() const override { return mode() != "none" || Node::timeDependent(); }
-    Mat3 matrix(Engine& e, double f) override {
+    Mat3 matrixAt(Engine& e, double f) override {
         Mat3 M;
-        if (mode() == "none" || !params.has("tracks")) return M;
-        track::Solve so = track::solve(params.data["tracks"], refFrame(f), f);
-        if (!so.ok) return M;
-        track::Affine A = so.matrix();
-        if (mode() == "stabilize") A = A.inverse();
+        if (mode() == "none") return M;
+        track::Affine A = track::trackerTransform(params.data, f);
         const double sc = e.scale();
         M.m[0][0] = A.a;
         M.m[0][1] = A.b;

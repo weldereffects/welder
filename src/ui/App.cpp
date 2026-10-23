@@ -64,6 +64,12 @@ App::App() {
 App::~App() {
     trackCancel_ = true;
     if (track_.joinable()) track_.join();
+    {
+        std::lock_guard<std::mutex> l(patchM_);
+        patchQuit_ = true;
+    }
+    patchCv_.notify_all();
+    if (patch_.joinable()) patch_.join();
     mlCancel_ = true;
     if (ml_.joinable()) ml_.join();
     batchCancel_ = true;
@@ -968,31 +974,172 @@ void App::clearCaches() {
 
 namespace {
 
-float lumOf(const Image& im, int x, int y, int ir, int ig, int ib) {
-    if (!im.bounds.contains(x, y)) return 0.0f;
-    float r = ir >= 0 ? im.at(x, y, ir) : 0, g = ig >= 0 ? im.at(x, y, ig) : 0, b = ib >= 0 ? im.at(x, y, ib) : 0;
-    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+double steadyNow() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
-// Pattern luminance centred on (cx, cy): pixel (i, j) samples (cx + x1 + i + 0.5, cy + y1 + j + 0.5).
-bool grabPattern(Engine& e, Node* src, double f, double cx, double cy, double x1, double y1, int pw, int ph, std::vector<float>& out) {
-    double ax = cx + x1, ay = cy + y1;
-    Box box((int)std::floor(ax) - 1, (int)std::floor(ay) - 1, (int)std::ceil(ax + pw) + 2, (int)std::ceil(ay + ph) + 2);
-    ImagePtr im = e.renderRegion(src, f, box);
-    if (!im) return false;
-    int ir = im->ch("R"), ig = im->ch("G"), ib = im->ch("B");
-    out.assign((size_t)pw * ph, 0.0f);
-    for (int j = 0; j < ph; ++j)
-        for (int i = 0; i < pw; ++i) {
-            // bilinear between pixel centres
-            double sx = ax + i + 0.5 - 0.5, sy = ay + j + 0.5 - 0.5;
-            int x0 = (int)std::floor(sx), y0 = (int)std::floor(sy);
-            float tx = (float)(sx - x0), ty = (float)(sy - y0);
-            float v00 = lumOf(*im, x0, y0, ir, ig, ib), v10 = lumOf(*im, x0 + 1, y0, ir, ig, ib);
-            float v01 = lumOf(*im, x0, y0 + 1, ir, ig, ib), v11 = lumOf(*im, x0 + 1, y0 + 1, ir, ig, ib);
-            out[(size_t)j * pw + i] = (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+unsigned char encodeSRGB(float v) {  // linear -> sRGB, for pictures of the image (not a colour-managed view)
+    v = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(std::max(v, 0.0f), 1.0f / 2.4f) - 0.055f;
+    return (unsigned char)std::clamp((int)std::lround(v * 255.0f), 0, 255);
+}
+
+// RGBA8 of `box` of an image, top row first.
+std::shared_ptr<std::vector<unsigned char>> toRGBA8(const Image& im, const Box& box) {
+    auto out = std::make_shared<std::vector<unsigned char>>((size_t)box.width() * box.height() * 4, 0);
+    const int R = im.ch("R"), G = im.ch("G"), B = im.ch("B");
+    for (int row = 0; row < box.height(); ++row) {
+        const int y = box.y2 - 1 - row;
+        for (int i = 0; i < box.width(); ++i) {
+            const int x = box.x1 + i;
+            unsigned char* o = &(*out)[((size_t)row * box.width() + i) * 4];
+            o[3] = 255;
+            if (!im.bounds.contains(x, y)) continue;
+            const float* p = im.px(x, y);
+            const float r = R >= 0 ? p[R] : 0;
+            o[0] = encodeSRGB(r);
+            o[1] = encodeSRGB(G >= 0 ? p[G] : r);
+            o[2] = encodeSRGB(B >= 0 ? p[B] : r);
         }
+    }
+    return out;
+}
+
+std::array<double, 4> boxParam(const json& t, const char* k, double d) {
+    std::array<double, 4> b = {-d, -d, d, d};
+    if (t.contains(k) && t[k].is_array() && t[k].size() == 4)
+        for (int q = 0; q < 4; ++q) b[q] = t[k][q].get<double>();
+    return b;
+}
+
+// The bounding box (relative to the feature) of a pattern box as warp w shows it.
+std::array<double, 4> warpedExtent(const std::array<double, 4>& pb, const track::Warp& w) {
+    std::array<double, 4> r = {1e30, 1e30, -1e30, -1e30};
+    for (double u : {pb[0], pb[2]})
+        for (double v : {pb[1], pb[3]}) {
+            double x, y;
+            w.apply(u, v, x, y);
+            r[0] = std::min(r[0], x);
+            r[1] = std::min(r[1], y);
+            r[2] = std::max(r[2], x);
+            r[3] = std::max(r[3], y);
+        }
+    return r;
+}
+
+// One track being tracked through frames.
+struct Job {
+    int index = -1;
+    json track;                   // the track as it was (offsets, keyframes, boxes)
+    std::array<double, 4> pb{}, sb{};
+    double fx = 0, fy = 0;        // the feature
+    double offx = 0, offy = 0;    // the offset it's tracked with
+    track::Warp w;
+    double vx = 0, vy = 0;
+    track::Pattern pat;
+    int since = 0;
+    bool alive = true;
+};
+
+struct Ctx {
+    Engine& e;
+    Node* src;
+    track::Settings s;
+};
+
+// The plane (the tracked signal) around (cx, cy) covering `ext` (relative), and the image it came from.
+bool planeAt(Ctx& c, double f, double cx, double cy, const std::array<double, 4>& ext, track::Plane& pl, ImagePtr* imOut, Box* boxOut) {
+    Box b((int)std::floor(cx + ext[0]) - 2, (int)std::floor(cy + ext[1]) - 2, (int)std::ceil(cx + ext[2]) + 2, (int)std::ceil(cy + ext[3]) + 2);
+    ImagePtr im = c.e.renderRegion(c.src, f, b);
+    if (!im) return false;
+    pl = track::planeFrom(*im, b, c.s);
+    if (imOut) *imOut = im;
+    if (boxOut) *boxOut = b;
     return true;
+}
+
+bool grab(Ctx& c, Job& j, double f) {
+    track::Plane pl;
+    if (!planeAt(c, f, j.fx, j.fy, warpedExtent(j.pb, j.w), pl, nullptr, nullptr)) return false;
+    j.pat = track::grabPattern(pl, j.fx, j.fy, j.w, j.pb[0], j.pb[1], j.pb[2], j.pb[3]);
+    j.since = 0;
+    return j.pat.ok();
+}
+
+// Set a job up at frame f (where the track has a position).
+bool setupJob(Ctx& c, Job& j, const json& t, int index, double f) {
+    j.index = index;
+    j.track = t;
+    j.pb = boxParam(t, "pattern", 20);
+    j.sb = boxParam(t, "search", 50);
+    auto k = track::sampleAt(t, f);
+    if (!k) return false;
+    auto [ox, oy] = track::offsetAt(t, f);
+    j.offx = ox;
+    j.offy = oy;
+    j.fx = k->x + ox;
+    j.fy = k->y + oy;
+    j.w = {k->a, k->b, k->c, k->d};
+    return true;
+}
+
+struct StepOut {
+    bool ok = false;
+    double x = 0, y = 0, error = 1;  // the track point (feature - offset)
+    track::Warp w;
+    TrackLive live;
+};
+
+// Track job j onto frame f (coming from f - dir).
+StepOut stepJob(Ctx& c, Job& j, double f, int dir) {
+    StepOut o;
+    auto [ox, oy] = track::offsetAt(j.track, f);
+    if (std::fabs(ox - j.offx) > 1e-9 || std::fabs(oy - j.offy) > 1e-9) {  // the offset changes here: a new feature
+        j.fx += ox - j.offx;
+        j.fy += oy - j.offy;
+        j.offx = ox;
+        j.offy = oy;
+        j.vx = j.vy = 0;
+        grab(c, j, f - dir);
+    }
+    const double px = j.fx + (c.s.predict ? j.vx : 0), py = j.fy + (c.s.predict ? j.vy : 0);
+    auto pe = warpedExtent(j.pb, j.w);
+    std::array<double, 4> ext = {std::min(j.sb[0], pe[0]) - 2, std::min(j.sb[1], pe[1]) - 2, std::max(j.sb[2], pe[2]) + 2, std::max(j.sb[3], pe[3]) + 2};
+    track::Plane pl;
+    ImagePtr im;
+    Box box;
+    if (!planeAt(c, f, px, py, ext, pl, &im, &box)) return o;
+    track::StepResult r = track::trackStep(pl, j.pat, px, py, j.w, c.s);
+    o.live.frame = f;
+    o.live.box = box;
+    o.live.rgba = toRGBA8(*im, box);
+    o.live.track = j.index;
+    o.live.error = r.error;
+    o.live.fx = r.x;
+    o.live.fy = r.y;
+    o.live.a = r.w.a;
+    o.live.b = r.w.b;
+    o.live.c = r.w.c;
+    o.live.d = r.w.d;
+    if (!r.ok || r.error > c.s.maxError) {
+        o.error = r.error;
+        return o;
+    }
+    j.vx = r.x - j.fx;
+    j.vy = r.y - j.fy;
+    j.fx = r.x;
+    j.fy = r.y;
+    j.w = r.w;
+    ++j.since;
+    if (track::shouldRegrab(c.s, r.error, j.since)) {
+        j.pat = track::grabPattern(pl, j.fx, j.fy, j.w, j.pb[0], j.pb[1], j.pb[2], j.pb[3]);
+        j.since = 0;
+    }
+    o.ok = true;
+    o.x = r.x - j.offx;
+    o.y = r.y - j.offy;
+    o.error = r.error;
+    o.w = r.w;
+    return o;
 }
 
 }  // namespace
@@ -1002,7 +1149,29 @@ TrackStatus App::trackStatus() {
     return trackStatus_;
 }
 
+std::vector<TrackLive> App::trackLive() {
+    std::lock_guard<std::mutex> l(trackM_);
+    return trackLive_;
+}
+
+void App::beginTrackJob(const std::string& name, int total, const std::string& label, std::function<void()> fn) {
+    checkpoint();
+    {
+        std::lock_guard<std::mutex> l(trackM_);
+        trackStatus_ = {true, name, frame, 0, std::max(1, total), label, steadyNow()};
+        trackResults_.clear();
+        trackLive_.clear();
+    }
+    trackCancel_ = false;
+    track_ = std::thread(std::move(fn));
+}
+
 void App::startTracking(const std::string& name, std::vector<int> which, int dir, bool all) {
+    auto [first, last] = visibleRange();
+    startTrackingRange(name, which, frame, all ? (dir > 0 ? last : first) : frame + dir);
+}
+
+void App::startTrackingRange(const std::string& name, std::vector<int> which, double from, double to) {
     if (trackStatus().running) return;
     if (track_.joinable()) track_.join();
     Node* n = node(name);
@@ -1015,53 +1184,62 @@ void App::startTracking(const std::string& name, std::vector<int> which, int dir
     if (which.empty())
         for (int i = 0; i < (int)tracks.size(); ++i)
             if (tracks[i].value("enabled", true)) which.push_back(i);
-    std::vector<TrackJob> jobs;
+    std::vector<int> ok;
     for (int i : which) {
         if (i < 0 || i >= (int)tracks.size()) continue;
-        const json& t = tracks[i];
-        auto p = track::positionAt(t, frame);
-        if (!p) {
-            message(t.value("name", "track") + " has no position on this frame; place it first");
+        if (!track::positionAt(tracks[i], from)) {
+            message(tracks[i].value("name", "track") + " has no position on frame " + std::to_string((int)from) + "; place it there first");
             continue;
         }
-        auto box = [&](const char* k, double d) {
-            std::array<double, 4> b = {-d, -d, d, d};
-            if (t.contains(k) && t[k].is_array() && t[k].size() == 4)
-                for (int q = 0; q < 4; ++q) b[q] = t[k][q].get<double>();
-            return b;
-        };
-        auto pb = box("pattern", 15), sb = box("search", 40);
-        TrackJob j;
-        j.index = i;
-        j.x = p->first;
-        j.y = p->second;
-        j.px1 = pb[0]; j.py1 = pb[1]; j.px2 = pb[2]; j.py2 = pb[3];
-        j.sx1 = std::min(sb[0], pb[0]); j.sy1 = std::min(sb[1], pb[1]);
-        j.sx2 = std::max(sb[2], pb[2]); j.sy2 = std::max(sb[3], pb[3]);
-        j.pw = std::max(3, (int)std::lround(j.px2 - j.px1));
-        j.ph = std::max(3, (int)std::lround(j.py2 - j.py1));
-        jobs.push_back(j);
+        ok.push_back(i);
     }
-    if (jobs.empty()) return;
-    auto [first, last] = visibleRange();
-    double from = frame, to = all ? (dir > 0 ? last : first) : frame + dir;
-    if ((dir > 0 && to <= from) || (dir < 0 && to >= from)) {
+    if (ok.empty()) return;
+    if (std::fabs(to - from) < 0.5) {
         message("tracking: already at the end of the frame range");
         return;
     }
-    double minScore = n->params.num("min_score", frame, 0.7);
-    bool every = n->params.str("pattern_update", "keyframe") == "every frame";
-    checkpoint();
-    {
-        std::lock_guard<std::mutex> l(trackM_);
-        trackStatus_ = {true, name, from, 0, (int)std::lround(std::fabs(to - from)), "tracking"};
-        trackResults_.clear();
-    }
-    trackCancel_ = false;
-    track_ = std::thread([this, name, jobs, from, to, dir, minScore, every] { trackLoop(name, jobs, from, to, dir, minScore, every); });
+    const int dir = to > from ? 1 : -1;
+    beginTrackJob(name, (int)std::lround(std::fabs(to - from)), "tracking", [this, name, ok, from, to, dir] {
+        trackRun(name, ok, from, to, dir, {});
+    });
 }
 
-void App::trackLoop(std::string name, std::vector<TrackJob> jobs, double from, double to, int dir, double minScore, bool every) {
+void App::startKeyTracking(const std::string& name, std::vector<int> which, bool all) {
+    Node* n = node(name);
+    if (!n || n->type != "Tracker") return;
+    const json& tracks = n->params.has("tracks") ? n->params.data["tracks"] : json::array();
+    if (which.empty())
+        for (int i = 0; i < (int)tracks.size(); ++i)
+            if (tracks[i].value("enabled", true)) which.push_back(i);
+    std::vector<std::tuple<int, double, double>> segs;
+    for (int i : which) {
+        if (i < 0 || i >= (int)tracks.size()) continue;
+        auto kf = track::keyframesOf(tracks[i]);
+        for (size_t k = 0; k + 1 < kf.size(); ++k) {
+            const double a = kf[k].frame, b = kf[k + 1].frame;
+            if (b - a < 1.5) continue;
+            if (all || (frame >= a - 1e-6 && frame <= b + 1e-6)) segs.push_back({i, a, b});
+        }
+    }
+    if (segs.empty()) {
+        message(all ? "key track: the tracks need two or more keyframes" : "key track: the current frame isn't between two keyframes of the selected tracks");
+        return;
+    }
+    startKeySegments(name, segs);
+}
+
+void App::startKeySegments(const std::string& name, std::vector<std::tuple<int, double, double>> segs) {
+    if (trackStatus().running || segs.empty()) return;
+    if (track_.joinable()) track_.join();
+    Node* n = node(name);
+    if (!n || n->type != "Tracker" || !n->input(0)) return;
+    int total = 0;
+    for (auto& [i, a, b] : segs) total += 2 * std::max(0, (int)std::lround(b - a) - 1);
+    if (total <= 0) return;
+    beginTrackJob(name, total, "keyframe tracking", [this, name, segs] { trackRun(name, {}, 0, 0, 0, segs); });
+}
+
+void App::trackRun(std::string name, std::vector<int> which, double from, double to, int dir, std::vector<std::tuple<int, double, double>> segments) {
     if (!trackEngine_) {
         EngineOptions o;
         o.cacheBytes = size_t(512) << 20;
@@ -1072,81 +1250,210 @@ void App::trackLoop(std::string name, std::vector<TrackJob> jobs, double from, d
         std::lock_guard<std::mutex> l(trackM_);
         trackMessages_.push_back(m);
     };
-    try {
-        // Reference patterns at the start frame.
-        {
-            std::shared_lock<std::shared_timed_mutex> cl(compM);
-            Node* n = comp ? comp->find(name) : nullptr;
-            Node* src = n ? n->input(0) : nullptr;
-            if (!src) throw std::runtime_error("the tracker lost its input");
-            e.clearMemo();
-            e.setScale(1.0);
-            for (auto& j : jobs) grabPattern(e, src, from, j.x, j.y, j.px1, j.py1, j.pw, j.ph, j.pattern);
+    static const bool slow = std::getenv("STRATA_TEST_TRACK_SLOW") != nullptr;  // (tests: time to look while it runs)
+    auto publish = [&](std::vector<TrackResult>& out, std::vector<TrackLive>& live, double f, int done) {
+        if (slow) std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        std::lock_guard<std::mutex> l(trackM_);
+        for (auto& r : out) trackResults_.push_back(r);
+        static uint64_t serial = 0;
+        for (auto& lv : live) {
+            lv.serial = ++serial;
+            bool rep = false;
+            for (auto& x : trackLive_)
+                if (x.track == lv.track) {
+                    x = lv;
+                    rep = true;
+                }
+            if (!rep) trackLive_.push_back(lv);
         }
-        for (double f = from + dir; dir > 0 ? f <= to + 1e-6 : f >= to - 1e-6; f += dir) {
-            if (trackCancel_) break;
-            int aliveCount = 0;
-            std::vector<TrackResult> out;
+        trackStatus_.frame = f;
+        trackStatus_.done += done;
+        out.clear();
+        live.clear();
+    };
+    auto setRes = [](int idx, double f, const StepOut& o) {
+        TrackResult r;
+        r.track = idx;
+        r.frame = f;
+        r.x = o.x;
+        r.y = o.y;
+        r.score = 1 - o.error;
+        r.a = o.w.a;
+        r.b = o.w.b;
+        r.c = o.w.c;
+        r.d = o.w.d;
+        return r;
+    };
+    try {
+        e.clearMemo();
+        e.setScale(1.0);
+        if (segments.empty()) {
+            // ---- auto-tracking: every chosen track, frame by frame, together
+            std::vector<Job> jobs;
+            track::Settings st;
             {
                 std::shared_lock<std::shared_timed_mutex> cl(compM);
                 Node* n = comp ? comp->find(name) : nullptr;
                 Node* src = n ? n->input(0) : nullptr;
                 if (!src) throw std::runtime_error("the tracker lost its input");
-                e.clearMemo();
-                const json& tracks = n->params.has("tracks") ? n->params.data["tracks"] : json::array();
-                for (auto& j : jobs) {
-                    if (!j.alive) continue;
-                    // A position placed by hand on this frame wins and becomes the new reference.
-                    bool userHere = false;
-                    if (j.index < (int)tracks.size())
-                        for (auto& k : track::keysOf(tracks[j.index]))
-                            if (k.user && std::fabs(k.frame - f) < 1e-6) {
-                                j.vx = k.x - j.x;
-                                j.vy = k.y - j.y;
-                                j.x = k.x;
-                                j.y = k.y;
-                                userHere = true;
+                st = track::settingsOf(n->params.data);
+                Ctx c{e, src, st};
+                const json& tracks = n->params.data["tracks"];
+                for (int i : which) {
+                    if (i >= (int)tracks.size()) continue;
+                    Job j;
+                    if (!setupJob(c, j, tracks[i], i, from)) continue;
+                    // the pattern: from the keyframe tracking comes from (no drift from stops and starts),
+                    // or from here (a keyframe here, regrab-when-stopped, or no keyframe behind)
+                    double pf = from;
+                    if (!st.regrabOnStop && !track::keyAt(tracks[i], from).value_or(track::Key{}).user) {
+                        double bestD = 1e30;
+                        for (auto& k : track::keyframesOf(tracks[i]))
+                            if ((dir > 0 ? k.frame < from : k.frame > from) && std::fabs(k.frame - from) < bestD) {
+                                bestD = std::fabs(k.frame - from);
+                                pf = k.frame;
                             }
-                    if (userHere) {
-                        grabPattern(e, src, f, j.x, j.y, j.px1, j.py1, j.pw, j.ph, j.pattern);
-                        ++aliveCount;
-                        continue;
                     }
-                    double cx = j.x + j.vx, cy = j.y + j.vy;  // predicted
-                    Box sb((int)std::floor(cx + j.sx1), (int)std::floor(cy + j.sy1), (int)std::ceil(cx + j.sx2), (int)std::ceil(cy + j.sy2));
-                    ImagePtr im = e.renderRegion(src, f, sb);
-                    if (!im) continue;
-                    int ir = im->ch("R"), ig = im->ch("G"), ib = im->ch("B");
-                    const int iw = sb.width(), ih = sb.height();
-                    std::vector<float> lum((size_t)iw * ih);
-                    for (int y = 0; y < ih; ++y)
-                        for (int x = 0; x < iw; ++x) lum[(size_t)y * iw + x] = lumOf(*im, sb.x1 + x, sb.y1 + y, ir, ig, ib);
-                    track::Match m = track::matchPattern(lum, iw, ih, j.pattern, j.pw, j.ph);
-                    if (m.score < minScore) {
-                        j.alive = false;
-                        char b[160];
-                        std::snprintf(b, sizeof(b), "track %d stopped at frame %g (match %.2f below %.2f)", j.index + 1, f, m.score, minScore);
-                        say(b);
-                        continue;
+                    if (pf != from) {
+                        Job kj;
+                        setupJob(c, kj, tracks[i], i, pf);
+                        if (grab(c, kj, pf)) j.pat = kj.pat;
+                        else grab(c, j, from);
+                    } else {
+                        grab(c, j, from);
                     }
-                    double nx = sb.x1 + m.ox - j.px1, ny = sb.y1 + m.oy - j.py1;
-                    j.vx = nx - j.x;
-                    j.vy = ny - j.y;
-                    j.x = nx;
-                    j.y = ny;
-                    out.push_back({j.index, f, nx, ny, m.score});
-                    if (every) grabPattern(e, src, f, j.x, j.y, j.px1, j.py1, j.pw, j.ph, j.pattern);
-                    ++aliveCount;
+                    if (j.pat.ok()) jobs.push_back(j);
+                    else say(tracks[i].value("name", "track") + ": nothing to track there (a flat pattern)");
                 }
             }
-            {
-                std::lock_guard<std::mutex> l(trackM_);
-                for (auto& r : out) trackResults_.push_back(r);
-                trackStatus_.frame = f;
-                ++trackStatus_.done;
+            for (double f = from + dir; dir > 0 ? f <= to + 1e-6 : f >= to - 1e-6; f += dir) {
+                if (trackCancel_) break;
+                std::vector<TrackResult> out;
+                std::vector<TrackLive> live;
+                int alive = 0;
+                {
+                    std::shared_lock<std::shared_timed_mutex> cl(compM);
+                    Node* n = comp ? comp->find(name) : nullptr;
+                    Node* src = n ? n->input(0) : nullptr;
+                    if (!src) throw std::runtime_error("the tracker lost its input");
+                    e.clearMemo();
+                    Ctx c{e, src, st};
+                    for (auto& j : jobs) {
+                        if (!j.alive) continue;
+                        // a keyframe in the way: kept (and tracking carries on from it) unless auto-tracks replace them
+                        if (!st.autoDeletesKeys) {
+                            auto k = track::keyAt(j.track, f);
+                            if (k && k->user) {
+                                setupJob(c, j, j.track, j.index, f);
+                                grab(c, j, f);
+                                ++alive;
+                                continue;
+                            }
+                        }
+                        StepOut o = stepJob(c, j, f, dir);
+                        if (o.live.rgba) live.push_back(o.live);
+                        if (!o.ok) {
+                            j.alive = false;
+                            char b[200];
+                            std::snprintf(b, sizeof(b), "%s stopped at frame %g (error %.4f above max_error %.4f)",
+                                          j.track.value("name", "track").c_str(), f, o.error, st.maxError);
+                            say(b);
+                            continue;
+                        }
+                        out.push_back(setRes(j.index, f, o));
+                        ++alive;
+                    }
+                }
+                publish(out, live, f, 1);
+                if (onResult) onResult();
+                if (alive == 0) break;
             }
-            if (onResult) onResult();
-            if (aliveCount == 0) break;
+        } else {
+            // ---- keyframe tracking: each pair of keyframes, forward from the first and back from the
+            // second (each with its own keyframe's pattern), blended across the gap
+            for (auto& [idx, k0, k1] : segments) {
+                if (trackCancel_) break;
+                std::map<double, StepOut> fwd, bwd;
+                track::Settings st;
+                json tsnap;
+                for (int pass = 0; pass < 2 && !trackCancel_; ++pass) {
+                    const int d = pass == 0 ? 1 : -1;
+                    const double a = pass == 0 ? k0 : k1, b = pass == 0 ? k1 : k0;
+                    Job j;
+                    {
+                        std::shared_lock<std::shared_timed_mutex> cl(compM);
+                        Node* n = comp ? comp->find(name) : nullptr;
+                        Node* src = n ? n->input(0) : nullptr;
+                        if (!src) throw std::runtime_error("the tracker lost its input");
+                        st = track::settingsOf(n->params.data);
+                        const json& tracks = n->params.data["tracks"];
+                        if (idx >= (int)tracks.size()) break;
+                        tsnap = tracks[idx];
+                        Ctx c{e, src, st};
+                        if (!setupJob(c, j, tsnap, idx, a) || !grab(c, j, a)) break;
+                    }
+                    for (double f = a + d; d > 0 ? f < b - 0.5 : f > b + 0.5; f += d) {
+                        if (trackCancel_) break;
+                        std::vector<TrackResult> out;
+                        std::vector<TrackLive> live;
+                        bool ok;
+                        {
+                            std::shared_lock<std::shared_timed_mutex> cl(compM);
+                            Node* n = comp ? comp->find(name) : nullptr;
+                            Node* src = n ? n->input(0) : nullptr;
+                            if (!src) throw std::runtime_error("the tracker lost its input");
+                            e.clearMemo();
+                            Ctx c{e, src, st};
+                            StepOut o = stepJob(c, j, f, d);
+                            if (o.live.rgba) live.push_back(o.live);
+                            ok = o.ok;
+                            if (ok) (pass == 0 ? fwd : bwd)[f] = o;
+                        }
+                        // the rest of this pass counts as done when it gives up
+                        const int left = ok ? 1 : (int)std::lround(std::fabs(b - f));
+                        publish(out, live, f, left);
+                        if (onResult) onResult();
+                        if (!ok) break;
+                    }
+                }
+                // blend and store
+                std::vector<TrackResult> out;
+                TrackResult clr;
+                clr.op = 1;
+                clr.track = idx;
+                clr.frame = k0;
+                clr.f2 = k1;
+                out.push_back(clr);
+                int missing = 0;
+                for (double f = k0 + 1; f < k1 - 0.5; f += 1) {
+                    const bool hf = fwd.count(f), hb = bwd.count(f);
+                    if (!hf && !hb) {
+                        ++missing;
+                        continue;
+                    }
+                    StepOut o;
+                    if (hf && hb) {
+                        const double t = (f - k0) / (k1 - k0);
+                        const StepOut &A = fwd[f], &B = bwd[f];
+                        o.x = A.x + (B.x - A.x) * t;
+                        o.y = A.y + (B.y - A.y) * t;
+                        o.w = {A.w.a + (B.w.a - A.w.a) * t, A.w.b + (B.w.b - A.w.b) * t, A.w.c + (B.w.c - A.w.c) * t, A.w.d + (B.w.d - A.w.d) * t};
+                        o.error = std::max(A.error, B.error);
+                    } else {
+                        o = hf ? fwd[f] : bwd[f];
+                    }
+                    out.push_back(setRes(idx, f, o));
+                }
+                if (missing > 0) {
+                    char b[200];
+                    std::snprintf(b, sizeof(b), "%s: %d frame(s) between keyframes %g and %g couldn't be tracked (left interpolated)",
+                                  tsnap.value("name", "track").c_str(), missing, k0, k1);
+                    say(b);
+                }
+                std::vector<TrackLive> none;
+                publish(out, none, k1, 0);
+                if (onResult) onResult();
+            }
         }
     } catch (const std::exception& ex) {
         say(std::string("tracking: ") + ex.what());
@@ -1156,6 +1463,79 @@ void App::trackLoop(std::string name, std::vector<TrackJob> jobs, double from, d
         trackStatus_.running = false;
     }
     if (onResult) onResult();
+}
+
+// ---- background patches for the tracker's zoom window and keyframe snapshots
+
+std::shared_ptr<const TrackPatch> App::trackerPatch(const std::string& tracker, double f, const Box& box) {
+    Node* n = node(tracker);
+    if (!n || !n->input(0) || box.empty()) return nullptr;
+    uint64_t h = 0;
+    try {
+        h = uiEngine().hash(n->input(0), f);
+    } catch (...) {
+    }
+    char k[200];
+    std::snprintf(k, sizeof(k), "%s|%g|%d,%d,%d,%d|%llx", tracker.c_str(), f, box.x1, box.y1, box.x2, box.y2, (unsigned long long)h);
+    const std::string key = k;
+    std::lock_guard<std::mutex> l(patchM_);
+    auto it = patchCache_.find(key);
+    if (it != patchCache_.end()) return it->second;
+    bool queued = false;
+    for (auto& q : patchQueue_)
+        if (q.key == key) queued = true;
+    if (!queued) {
+        patchQueue_.push_front({key, tracker, f, box});  // newest first
+        while (patchQueue_.size() > 64) patchQueue_.pop_back();
+        if (!patch_.joinable()) patch_ = std::thread([this] { patchLoop(); });
+        patchCv_.notify_one();
+    }
+    return nullptr;
+}
+
+void App::patchLoop() {
+    for (;;) {
+        PatchReq rq;
+        {
+            std::unique_lock<std::mutex> l(patchM_);
+            patchCv_.wait(l, [&] { return patchQuit_ || !patchQueue_.empty(); });
+            if (patchQuit_) return;
+            rq = patchQueue_.front();
+            patchQueue_.pop_front();
+        }
+        if (!patchEngine_) {
+            EngineOptions o;
+            o.cacheBytes = size_t(256) << 20;
+            patchEngine_ = std::make_unique<Engine>(o);
+        }
+        ImagePtr im;
+        try {
+            std::shared_lock<std::shared_timed_mutex> cl(compM);
+            Node* n = comp ? comp->find(rq.tracker) : nullptr;
+            Node* src = n ? n->input(0) : nullptr;
+            if (src) {
+                patchEngine_->clearMemo();
+                patchEngine_->setScale(1.0);
+                im = patchEngine_->renderRegion(src, rq.frame, rq.box);
+            }
+        } catch (...) {
+        }
+        auto p = std::make_shared<TrackPatch>();
+        p->box = rq.box;
+        p->frame = rq.frame;
+        if (im) p->rgba = toRGBA8(*im, rq.box);
+        {
+            std::lock_guard<std::mutex> l(patchM_);
+            p->serial = ++patchSerial_;
+            patchCache_[rq.key] = p;
+            patchOrder_.push_back(rq.key);
+            while (patchOrder_.size() > 300) {
+                patchCache_.erase(patchOrder_.front());
+                patchOrder_.pop_front();
+            }
+        }
+        if (onResult) onResult();
+    }
 }
 
 void App::startPlanarTracking(const std::string& name, int dir, bool all) {
@@ -1719,14 +2099,48 @@ void App::pollTracking() {
             Node* n = c.find(name);
             if (!n || !n->params.data["tracks"].is_array()) return;
             json& tracks = n->params.data["tracks"];
-            for (auto& r : res)
-                if (r.track < (int)tracks.size()) track::setKey(tracks[r.track], {r.frame, r.x, r.y, r.score, false});
+            for (auto& r : res) {
+                if (r.track < 0 || r.track >= (int)tracks.size()) continue;
+                if (r.op == 1) {  // clear the tracked keys between two keyframes
+                    auto keys = track::keysOf(tracks[r.track]);
+                    std::vector<track::Key> kept;
+                    for (auto& k : keys)
+                        if (k.user || k.frame <= r.frame + 1e-6 || k.frame >= r.f2 - 1e-6) kept.push_back(k);
+                    tracks[r.track]["keys"] = track::keysJson(kept);
+                    continue;
+                }
+                track::Key k;
+                k.frame = r.frame;
+                k.x = r.x;
+                k.y = r.y;
+                k.score = r.score;
+                k.a = r.a;
+                k.b = r.b;
+                k.c = r.c;
+                k.d = r.d;
+                track::setKey(tracks[r.track], k);
+            }
             n->paramsChanged();
         });
-        frame = res.back().frame;  // follow the track, as is standard
+        bool follow = false;
+        for (auto& r : res)
+            if (r.op == 0) follow = true;
+        if (follow) frame = res.back().frame;  // the timeline follows the tracking
+        // the full viewer image catches up a few times a second (the search areas show the frame being tracked)
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (!running || now - lastTrackView_ > 0.4) {
+            lastTrackView_ = now;
+            requestView();
+        }
+    }
+    if (!running) {  // finished: the live search areas go (the viewer shows the frame itself again)
+        std::lock_guard<std::mutex> l(trackM_);
+        if (!trackStatus_.running) trackLive_.clear();
+    }
+    if (!running && track_.joinable()) {
+        track_.join();
         requestView();
     }
-    if (!running && track_.joinable()) track_.join();
 }
 
 ImagePtr App::pickImage(const std::string& name, int input, const Box& box, double f) {

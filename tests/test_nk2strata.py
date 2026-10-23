@@ -791,6 +791,24 @@ class TrackerImport(unittest.TestCase):
         self.assertEqual(tr[1]["S"], True)
         self.assertEqual(tr[0]["pattern"], [-22.0, -22.0, 22.0, 22.0])
         self.assertEqual(tr[0]["search"], [-50.0, -50.0, 50.0, 50.0])
+        self.assertNotIn("offsets", tr[0])
+
+    def test_tracker4_offsets_and_settings(self):
+        nk = (TRACKER_NK.replace(" inputs 0\n", "")
+              .replace('300 301 302} {} {}', '300 301 302} {curve x1001 0 x1002 12 15} {curve x1001 0 x1002 -4 -4}')
+              .replace('300 300 300} {} {}', '300 300 300} 6 -3')
+              .replace(" transform match-move\n", " transform \"remove jitter\"\n jitter_period 6\n warp \"Translate/Rotate/Scale\"\n"
+                       " max_error 0.1\n predict_track true\n smooth {2 0 3}\n"))
+        _, _, n = convert("Constant { inputs 0 name C }\n" + nk)
+        p = n["Tracker1"]["params"]
+        self.assertEqual(p["transform"], "remove jitter")
+        self.assertEqual(p["jitter_period"], 6)
+        self.assertEqual(p["warp"], "Translate/Rotate/Scale")
+        self.assertEqual(p["max_error"], 0.1)
+        self.assertTrue(p["predict_track"])
+        self.assertEqual(p["smooth"], [2, 0, 3])
+        self.assertEqual(p["tracks"][0]["offsets"], [[1001.0, 0.0, 0.0], [1002.0, 12.0, -4.0], [1003.0, 15.0, -4.0]])
+        self.assertEqual(p["tracks"][1]["offsets"], [[1001.0, 6.0, -3.0]])
 
     def test_cornerpin(self):
         _, _, n = convert("Constant { inputs 0 name C }\nCornerPin2D { to1 {10 20} to2 {100 20} to3 {100 90} to4 {10 90} "

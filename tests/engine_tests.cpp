@@ -4775,6 +4775,167 @@ int main(int argc, char** argv) {
         CHECK(jobs == 1);  // frame 1 launched Blender for 1-3; frame 3 was then already there
         std::printf("    %d frames rendered by %d Blender launch(es)\n", exrs, jobs);
     });
+    test("Tracker: sub-pixel, rotation and scale tracking; offsets; keyframes; transform modes", [] {
+        // a textured image: soft blobs, drawn through a similarity transform (rotation / scale about c)
+        auto scene = [](double dx, double dy, double rotDeg, double scl, int W, int H) {
+            Image im(Box(0, 0, W, H), rgbaChannels());
+            const double r = rotDeg * M_PI / 180, cs = std::cos(r), sn = std::sin(r), cx = 100, cy = 100;
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    // the source position this pixel shows (inverse of: move by d, rotate / scale about c)
+                    const double px = x + 0.5 - dx - cx, py = y + 0.5 - dy - cy;
+                    const double u = (cs * px + sn * py) / scl + cx, v = (-sn * px + cs * py) / scl + cy;
+                    double val = 0.2;
+                    const double blobs[6][3] = {{96, 104, 5}, {108, 92, 3}, {88, 90, 4}, {112, 110, 6}, {100, 98, 2.5}, {92, 112, 3.5}};
+                    for (auto& b : blobs) val += 0.6 * std::exp(-((u - b[0]) * (u - b[0]) + (v - b[1]) * (v - b[1])) / (2 * b[2] * b[2]));
+                    float* o = im.px(x, y);
+                    o[0] = o[1] = o[2] = (float)val;
+                    o[3] = 1;
+                }
+            return im;
+        };
+        track::Settings s;
+        const Box all(0, 0, 200, 200);
+        // translation, sub-pixel
+        {
+            Image a = scene(0, 0, 0, 1, 200, 200), b = scene(3.3, -2.6, 0, 1, 200, 200);
+            auto pa = track::planeFrom(a, all, s), pb = track::planeFrom(b, all, s);
+            auto pat = track::grabPattern(pa, 100, 100, {}, -15, -15, 15, 15);
+            auto r = track::trackStep(pb, pat, 100, 100, {}, s);
+            CHECK(r.ok);
+            CHECK_NEAR(r.x, 103.3, 0.05);
+            CHECK_NEAR(r.y, 97.4, 0.05);
+            CHECK(r.error < 0.01);
+            std::printf("    translate: (%.3f, %.3f) error %.5f in %d steps\n", r.x, r.y, r.error, r.iterations);
+        }
+        // rotation and scale: found with the Translate/Rotate/Scale warp, and the warp itself measured
+        {
+            Image a = scene(0, 0, 0, 1, 200, 200), b = scene(2, 1, 8, 1.06, 200, 200);
+            auto pa = track::planeFrom(a, all, s), pb = track::planeFrom(b, all, s);
+            auto pat = track::grabPattern(pa, 100, 100, {}, -18, -18, 18, 18);
+            track::Settings trs = s;
+            trs.warp = "Translate/Rotate/Scale";
+            auto r = track::trackStep(pb, pat, 100, 100, {}, trs);
+            auto t = track::trackStep(pb, pat, 100, 100, {}, s);
+            CHECK(r.ok);
+            CHECK_NEAR(r.x, 102, 0.15);
+            CHECK_NEAR(r.y, 101, 0.15);
+            CHECK_NEAR(std::atan2(r.w.c, r.w.a) * 180 / M_PI, 8, 0.4);
+            CHECK_NEAR(std::hypot(r.w.a, r.w.c), 1.06, 0.01);
+            CHECK(r.error < t.error);  // matching rotation / scale fits better than translation alone
+            std::printf("    T/R/S: (%.3f, %.3f) rotate %.3f scale %.4f error %.5f (translate only: %.5f)\n", r.x, r.y,
+                        std::atan2(r.w.c, r.w.a) * 180 / M_PI, std::hypot(r.w.a, r.w.c), r.error, t.error);
+        }
+        // the median pre-filter and alpha-only channels still track
+        {
+            track::Settings m = s;
+            m.prefilter = "median";
+            Image a = scene(0, 0, 0, 1, 200, 200), b = scene(-4, 2, 0, 1, 200, 200);
+            auto r = track::trackStep(track::planeFrom(b, all, m), track::grabPattern(track::planeFrom(a, all, m), 100, 100, {}, -15, -15, 15, 15), 100, 100, {}, m);
+            CHECK_NEAR(r.x, 96, 0.1);
+            CHECK_NEAR(r.y, 102, 0.1);
+        }
+        // offsets: held from their frame on, none before the first
+        {
+            json t = track::newTrack(json::array(), 10, 50, 60);
+            CHECK(t["name"] == "track 1");
+            CHECK(track::offsetAt(t, 20).first == 0);
+            track::setOffset(t, 15, 12, -3);
+            CHECK(track::offsetAt(t, 14).first == 0);
+            CHECK(track::offsetAt(t, 15).first == 12);
+            CHECK(track::offsetAt(t, 40).second == -3);
+            track::setOffset(t, 15, 0, 0);
+            CHECK(!track::hasOffset(t));
+        }
+        // keys: keyframes, warps stored, clear all / forward / backward, averaging
+        {
+            json t = track::newTrack(json::array(), 1, 10, 10);
+            track::Key k;
+            k.frame = 5;
+            k.x = 20;
+            k.y = 10;
+            k.score = 0.97;
+            k.a = 0.9;
+            k.d = 1.1;
+            track::setKey(t, k);
+            k.frame = 9;
+            k.x = 40;
+            k.user = true;
+            k.a = k.d = 1;
+            track::setKey(t, k);
+            CHECK(track::keyframesOf(t).size() == 2);
+            auto m = track::sampleAt(t, 3);
+            CHECK_NEAR(m->x, 15, 1e-9);
+            CHECK_NEAR(m->a, 0.95, 1e-9);
+            CHECK_NEAR(track::errorOf(*track::keyAt(t, 5)), 0.03, 1e-9);
+            json u = t;
+            track::clearKeys(u, 5, 1);
+            CHECK(track::keysOf(u).size() == 2);
+            json tracks = json::array({t, track::newTrack(json::array({t}), 1, 30, 30)});
+            CHECK(tracks[1]["name"] == "track 2");
+            track::Key k2;
+            k2.frame = 9;
+            k2.x = 50;
+            k2.y = 30;
+            track::setKey(tracks[1], k2);
+            json avg = track::averageTrack(tracks, {0, 1});
+            CHECK_NEAR(track::positionAt(avg, 9)->first, 45, 1e-9);
+            CHECK_NEAR(track::positionAt(avg, 1)->second, 20, 1e-9);
+        }
+        // the transform modes
+        {
+            json t1 = track::newTrack(json::array(), 1, 100, 100), t2 = track::newTrack(json::array({t1}), 1, 200, 100);
+            for (int f = 2; f <= 21; ++f) {
+                const double jit = (f % 2 ? 1.0 : -1.0);  // +-1 px every other frame on top of a steady drift
+                track::Key a, b;
+                a.frame = b.frame = f;
+                a.x = 100 + 2 * (f - 1) + jit;
+                a.y = 100;
+                b.x = 200 + 2 * (f - 1) + jit;
+                b.y = 100;
+                track::setKey(t1, a);
+                track::setKey(t2, b);
+            }
+            json p = {{"tracks", {t1, t2}}, {"reference_frame", 1}, {"transform", "match-move"}};
+            track::Affine A = track::trackerTransform(p, 11, nullptr);
+            CHECK_NEAR(A.tx, 21, 1e-6);  // 2 * 10 drift + jitter (+1 on odd frames)
+            p["transform"] = "stabilize";
+            CHECK_NEAR(track::trackerTransform(p, 11, nullptr).tx, -21, 1e-6);
+            // the motion on frame f, and its average over n centred frames
+            auto raw = [](int f) { return 2.0 * (f - 1) + (f % 2 ? 1.0 : -1.0); };
+            auto mean = [&](int f, int n) {
+                double sum = 0;
+                for (int k = -(n - 1) / 2; k <= n / 2; ++k) sum += raw(f + k);
+                return sum / n;
+            };
+            p["transform"] = "remove jitter";
+            p["jitter_period"] = 3;
+            CHECK_NEAR(track::trackerTransform(p, 11, nullptr).tx, mean(11, 3) - raw(11), 1e-6);  // back to the steady motion
+            p["transform"] = "add jitter";
+            CHECK_NEAR(track::trackerTransform(p, 11, nullptr).tx, raw(11) - mean(11, 3), 1e-6);
+            p["transform"] = "match-move";
+            p["smooth"] = {3, 0, 0};
+            CHECK_NEAR(track::trackerTransform(p, 11, nullptr).tx, mean(11, 3), 1e-6);  // smoothed translation
+            p["smooth"] = {0, 0, 0};
+            p["transform"] = "match-move 1pt";
+            CHECK_NEAR(track::trackerTransform(p, 11, nullptr).tx, 21, 1e-6);
+            track::Solve sh;
+            p["transform"] = "match-move";
+            track::trackerTransform(p, 11, &sh);
+            CHECK(sh.ok && std::fabs(sh.tx - 21) < 1e-6 && std::fabs(sh.scale - 1) < 1e-9);
+        }
+        // settings from the node, and when to grab a new pattern
+        {
+            auto st = track::settingsOf({{"channels", "alpha"}, {"max_error", 0.1}, {"grab_behavior", "every n frames"}, {"grab_interval", 3}});
+            CHECK(!st.ch[0] && st.ch[3] && st.maxError == 0.1);
+            CHECK(!track::shouldRegrab(st, 0.5, 2) && track::shouldRegrab(st, 0, 3));
+            st.grab = "if error above";
+            st.grabAbove = 0.05;
+            CHECK(track::shouldRegrab(st, 0.06, 0) && !track::shouldRegrab(st, 0.04, 9));
+            CHECK(track::settingsOf({{"min_score", 0.7}}).maxError > 0.29);  // older comps
+        }
+    });
+
     test("Brand: comp extensions, WELDER_* settings, the Strata-era settings folder", [] {
         CHECK(brand::isCompFile("a/shot_v001.weld") && brand::isCompFile("C:\\x\\OLD.STRATA") && !brand::isCompFile("a.nk"));
 #if !defined(_WIN32)

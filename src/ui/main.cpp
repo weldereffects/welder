@@ -32,6 +32,7 @@
 #include "ofx/OfxHost.h"
 #include "stb_image_write.h"
 #include "Splash.h"
+#include "nodes/Track.h"
 #include "core/Brand.h"
 
 namespace fs = std::filesystem;
@@ -668,6 +669,28 @@ int main(int argc, char** argv) {
             std::printf("ALIGN overlaps (within a node's size): %d\n", overlaps);
             for (auto& n : app.comp->nodes) std::printf("ALIGN %s %.0f %.0f\n", n->name.c_str(), n->ui.value("x", 0.0f), n->ui.value("y", 0.0f));
         }
+        // STRATA_TEST_TRACK=fwd|key|shot: the open Tracker's first track tracked forward from the current frame /
+        // key-tracked between its keyframes; "shot" takes the screenshot while it's still tracking. The keys are printed.
+        static int trackDone = -1;
+        bool trackTest = false, forceShot = false;
+        if (const char* tt = std::getenv("STRATA_TEST_TRACK"); tt && *tt && !opt.screenshot.empty()) {
+            const std::string mode = tt;
+            Node* tn = app.node(ui.tracker.node.empty() ? std::string("Tracker1") : ui.tracker.node);
+            if (!tn) tn = app.node("Tracker1");
+            const TrackStatus ts = app.trackStatus();
+            if (frameCount == 10 && tn) {
+                ui.tracker.sel = {0};
+                if (mode == "key") app.startKeyTracking(tn->name, {0}, true);
+                else app.startTracking(tn->name, {}, 1, true);
+            }
+            trackTest = frameCount <= 12 || (mode == "shot" ? !(ts.running && ts.done >= 8) : (ts.running || trackDone < 0 || frameCount < trackDone + 6));
+            if (frameCount > 12 && !ts.running && trackDone < 0) trackDone = frameCount;
+            forceShot = mode == "shot" && ts.running && ts.done >= 8;  // (a picture of it mid-track)
+            if (mode != "shot" && trackDone > 0 && frameCount == trackDone + 4 && tn)
+                for (auto& t : tn->params.data["tracks"])
+                    for (auto& k : track::keysOf(t))
+                        std::printf("TRACK %s %g %.3f %.3f err %.5f%s\n", t.value("name", "").c_str(), k.frame, k.x, k.y, track::errorOf(k), k.user ? " key" : "");
+        }
         // STRATA_TEST_ROTOSEL: every point of the open roto's shapes selected (as Ctrl+A)
         if (std::getenv("STRATA_TEST_ROTOSEL") && !opt.screenshot.empty() && frameCount == 12)
             if (Node* rn = app.node(ui.roto.node); rn && rn->params.has("shapes"))
@@ -781,6 +804,10 @@ int main(int argc, char** argv) {
             } else if (frameCount == b + 2) tio.AddMouseButtonEvent(0, false);
             else if (frameCount == 60)
                 for (auto& n : app.comp->nodes) {
+                    if (n->type == "Tracker" && n->params.has("tracks"))
+                        for (auto& t : n->params.data["tracks"])
+                            for (auto& k : track::keysOf(t))
+                                std::printf("DRAG track %s %g %.3f %.3f%s\n", t.value("name", "").c_str(), k.frame, k.x, k.y, k.user ? " key" : "");
                     if ((n->type == "Roto" || n->type == "SplineWarp") && n->params.has("shapes"))
                         std::printf("DRAG %s shapes %s\n", n->name.c_str(), n->params.data["shapes"].dump().c_str());
                     if (n->type == "CameraTracker") std::printf("DRAG %s scene %s\n", n->name.c_str(), n->params.has("scene") ? n->params.data["scene"].dump().c_str() : "{}");
@@ -998,7 +1025,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && settled > 4 && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

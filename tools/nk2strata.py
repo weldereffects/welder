@@ -1034,9 +1034,20 @@ def tracker_tracks(text, warn):
         t = {"name": name, "enabled": flag("enable", True), "T": flag("T", True), "R": flag("R", False),
              "S": flag("S", False), "pattern": box("pattern", [-15, -15, 15, 15]),
              "search": box("search", [-40, -40, 40, 40]), "keys": [keys[f] for f in sorted(keys)]}
-        ox, oy = curve(value(row, "offset_x"))[0], curve(value(row, "offset_y"))[0]
-        if (ox or 0) != 0 or (oy or 0) != 0:
-            warn("%s has a track offset; it is not applied" % name)
+        # offsets: a constant (from the track's first frame) or keyed (each held from its frame on)
+        (ox, oxk), (oy, oyk) = curve(value(row, "offset_x")), curve(value(row, "offset_y"))
+        if oxk or oyk:
+            px = {f: v for f, v in (oxk or [])}
+            py = {f: v for f, v in (oyk or [])}
+            offs, lx, ly = [], ox or 0.0, oy or 0.0
+            for f in sorted(set(px) | set(py)):
+                lx, ly = px.get(f, lx), py.get(f, ly)
+                offs.append([f, round(lx, 3), round(ly, 3)])
+            if offs:
+                t["offsets"] = offs
+        elif (ox or 0) != 0 or (oy or 0) != 0:
+            first = min(keys) if keys else 1.0
+            t["offsets"] = [[first, round(ox or 0.0, 3), round(oy or 0.0, 3)]]
         out.append(t)
     return out
 
@@ -2621,11 +2632,34 @@ class Translator:
         if klass in ("Tracker4", "Tracker"):
             params["tracks"] = tracker_tracks(str(k.get("tracks", "")), warn) if "tracks" in k else []
             mode = str(k.get("transform", "none")).lower()
-            if mode in ("match-move", "stabilize", "none"):
+            if mode in ("match-move", "stabilize", "none", "stabilize 1pt", "match-move 1pt", "remove jitter", "add jitter"):
                 params["transform"] = mode
             elif mode:
                 warn("tracker transform '%s' is not supported; using none" % mode)
             num("reference_frame", dest="reference_frame")
+            # the Settings / Transform tab knobs, which keep their names
+            for kn in ("pretrack_filter", "warp", "grab_behavior", "zoom_window_behavior", "keyframe_display", "channels"):
+                if kn in k:
+                    params[kn] = str(k[kn]).strip('"')
+            for kn in ("max_iter", "epsilon", "max_error", "grab_interval", "grab_error_above", "grab_error_below", "jitter_period",
+                       "keyframe_size", "max_number_of_keyframe_tracks_to_display", "motionblur", "shutter"):
+                if kn in k:
+                    try:
+                        params[kn] = float(scalar(k[kn]))
+                    except (TypeError, ValueError, Expression):
+                        pass
+            for kn, dest in (("adjust_for_luminance_changes", None), ("clamp_footage", None), ("show_error_on_track_links", None),
+                             ("hide_progress_bar", None), ("predict_track", None), ("auto_regrab_pattern", None), ("regrab_when_offset", None),
+                             ("retrack_on_move", None), ("create_key_on_move", None), ("auto-tracks_delete_keyframes", "auto_tracks_delete_keyframes"),
+                             ("black_outside", None), ("clamp", None)):
+                if kn in k:
+                    params[dest or kn] = str(k[kn]).strip('"').lower() in ("true", "1")
+            if "smooth" in k:
+                try:
+                    sm = [float(x) for x in str(k["smooth"]).strip("{}").split()]
+                    params["smooth"] = (sm + [0, 0, 0])[:3]
+                except ValueError:
+                    pass
             if "filter" in k:
                 f = str(k["filter"]).lower()
                 params["filter"] = "impulse" if f == "impulse" else "bilinear" if f in ("bilinear", "triangle") else "cubic"

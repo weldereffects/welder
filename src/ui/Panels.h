@@ -163,12 +163,19 @@ struct RotoState {
 struct TrackerState {
     std::string node;
     std::set<int> sel;                 // selected tracks
-    enum class Drag { None, Move, Corner } drag = Drag::None;
+    enum class Drag { None, Move, Offset, Corner } drag = Drag::None;
     int corner = -1;                   // 0-3 pattern corners, 4-7 search corners
     int dragTrack = -1;
-    ImVec2 startImg;
+    ImVec2 startImg, startScreen;
     json orig;                         // tracks when the drag started
     bool changed = false;
+    bool addMode = false;              // toolbar: clicks in the viewer add tracks
+    bool centerViewer = false;         // toolbar: the viewer follows the selected tracks
+    bool rangeOpen = false;            // toolbar: the track-range dialog
+    int rangeFrom = 1, rangeTo = 100;
+    int exportChoice = 0;              // the panel's export menu
+    float keyScroll = 0;               // keyframe snapshots: scroll (in snapshots)
+    double lastDragAt = -1;            // when a track was last moved (zoom window "on track change")
 };
 
 // PlanarTracker tools in the viewer.
@@ -422,6 +429,8 @@ void drawViewer3DIn2D(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p
 void drawCamTrackerPanel(App& app, UiState& ui, Node* n);
 void drawMLPanel(App& app, UiState& ui, Node* n);  // ML nodes: worker, models, run
 void drawTrackerViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+// The Tracker's row of tools over the viewer (add track, grab, track, keyframes, clear, centre).
+void drawTrackerToolbar(App& app, UiState& ui);
 bool trackerHotkeys(App& app, UiState& ui);
 void drawTrackerPanel(App& app, UiState& ui, Node* n);
 // Bake a Tracker's match-move into keys (exports and roto shapes).

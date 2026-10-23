@@ -8,6 +8,7 @@
 #include "Panels.h"
 #include "core/NetPath.h"
 #include "PanelKit.h"
+#include "nodes/Track.h"
 #include "core/Expr.h"
 #include "color/Color.h"
 #include "nodes/BlenderNode.h"
@@ -2187,6 +2188,34 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         else if (!sp.error.empty()) ImGui::TextColored(ImVec4(1, .4f, .4f, 1), "copy: %s", sp.error.c_str());
         return;
     }
+    if (k.info == "tracker_xform") {  // Tracker: the transform it applies on this frame (read-only, like the classic knobs)
+        track::Solve sh;
+        track::trackerTransform(c.node->params.data, c.app.frame, &sh);
+        auto ro = [&](const char* label, const char* fmt, std::initializer_list<double> vals) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s", label);
+            ImGui::SameLine(kit::labelWidth());
+            bool first = true;
+            for (double v : vals) {
+                if (!first) ImGui::SameLine();
+                first = false;
+                char b[48];
+                std::snprintf(b, sizeof(b), fmt, v);
+                ImGui::SetNextItemWidth(90);
+                ImGui::BeginDisabled();
+                ImGui::InputText((std::string("##") + label + std::to_string((long long)&v)).c_str(), b, sizeof(b), ImGuiInputTextFlags_ReadOnly);
+                ImGui::EndDisabled();
+            }
+        };
+        ro("translate", "%.3f", {sh.tx, sh.ty});
+        ro("rotate", "%.4f", {sh.rotate});
+        ro("scale", "%.5f", {sh.ok ? sh.scale : 1.0});
+        ro("skew X", "%.3f", {0.0});
+        ro("skew Y", "%.3f", {0.0});
+        ro("center", "%.2f", {sh.cx, sh.cy});
+        return;
+    }
+    if (k.info == "tracker_panel") return;  // (drawn by drawTrackerPanel)
     if (k.info == "reflink") {  // ReferenceLink: what the motion comes from
         Node* l = c.node->input(1);
         std::string chain;
@@ -2440,6 +2469,11 @@ void buttonAction(Ctx& c, const std::string& action) {
     }
     if (action == "trackmask_clear_frame" || action == "trackmask_clear_all") {
         trackMaskClear(c.app, c.node, action == "trackmask_clear_all");
+        return;
+    }
+    if (action == "tracker_ref_here") {  // Tracker: the frame being viewed is the reference frame
+        const double fr = std::round(c.app.frame);
+        change(c, "reference_frame", [fr](json& j) { j = fr; });
         return;
     }
     if (action == "reflink_this_frame") {  // ReferenceLink: the frame being viewed is the reference
@@ -2828,7 +2862,9 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
         for (const char* k : {"region", "surface", "reference_frame", "keys", "transform", "filter", "min_score"}) shown.insert(k);
     } else if (n->type == "Tracker") {
         drawTrackerPanel(app, ui, n);
-        for (const char* k : {"tracks", "transform", "reference_frame", "filter", "min_score", "pattern_update"}) shown.insert(k);
+        for (const char* k : {"tracks", "min_score", "pattern_update"}) shown.insert(k);
+        if (def)
+            for (auto& k : def->knobs) shown.insert(k.name);  // (the Settings and Transform tabs)
     } else if (n->type == "SplineWarp" && def) {
         drawKnobs(c, *def, mainTabKey);
         for (auto& k : def->knobs) shown.insert(k.name);

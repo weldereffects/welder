@@ -1073,7 +1073,71 @@ std::vector<NodeDef> build() {
                  "Renders Gaussian splats (splat: a ReadSplat / GaussianSplat, or a Scene of them) through the camera (cam) over bg."});
     d.push_back({"CameraTracker", "3D", {},
                  "Tracks features through the shot and solves the 3D camera; exports a Camera, cards on tracked points and camera files."});
-    d.push_back({"Tracker", "Transform", {}, "2D point tracks, match-move and stabilise. Tracks are placed and tracked in the viewer."});
+    {
+        auto S_ = [](KnobDef k) { return OnTab(k, "Settings"); };
+        auto X_ = [](KnobDef k) { return OnTab(k, "Transform"); };
+        KnobDef ref = Field(F("reference_frame", "reference frame", 1, -100000, 100000, "The frame the transform leaves as it is"), 90);
+        ref.def = "$first";
+        KnobDef smooth = Comps(Field(XYZ("smooth", "smooth", json::array({0, 0, 0}), 0, 100), 60), {"t", "r", "s"});
+        d.push_back({"Tracker", "Transform",
+                     {InfoRow("tracker_panel", ""),  // the Tracker tab (drawn by the tracker's own panel)
+                      // ---- Settings
+                      S_(Div("General")),
+                      S_(Width(C("channels", "track channels", "rgb", {"rgb", "rgba", "alpha"}), 110)),
+                      S_(Same(B("track_red", "red", true))), S_(Same(B("track_green", "green", true))), S_(Same(B("track_blue", "blue", true))),
+                      S_(Same(EnableIf(B("track_alpha", "alpha", true), "channels=rgba|alpha"))),
+                      S_(Tip(Width(C("pretrack_filter", "pre-track filter", "adjust contrast", {"none", "adjust contrast", "median"}), 130),
+                             "Applied to the patterns before they're compared: adjust contrast (recommended) stretches them, median takes out noise")),
+                      S_(Tip(B("adjust_for_luminance_changes", "adjust for luminance changes", false),
+                             "Allow for the feature getting brighter or darker. Slower, and less exact when the light doesn't change")),
+                      S_(Tip(I("max_iter", "max iterations", 100, 1, 100), "Most refinement steps per frame")),
+                      S_(Tip(Log(F("epsilon", "epsilon / resolution", 0.01, 0.001, 1)), "A match is accepted once a step moves the pattern less than this (px)")),
+                      S_(Tip(Log(F("max_error", "max_error", 0.2, 0.01, 1)), "A track stops when its error goes above this")),
+                      S_(Tip(B("clamp_footage", "clamp super-white, sub-zero footage", true), "Clamp the patterns to 0-1 before matching")),
+                      S_(Tip(B("show_error_on_track_links", "show error on track paths", false), "Colour the track paths by error: green good, amber fair, red poor")),
+                      S_(B("hide_progress_bar", "hide progress bar", false)),
+                      S_(Tip(Width(C("snap_to_markers", "snap to markers", "off", {"off", "blob", "corner"}), 90),
+                             "While a track is dragged, snap it to the blob (dot) or corner under it")),
+                      S_(Width(C("zoom_window_behavior", "show zoom window", "always", {"always", "on track change", "when tracking", "when tracking or track change", "never"}), 200)),
+                      S_(Width(C("zoom_window_size", "zoom size / mag.", "200px", {"100px", "200px", "300px", "400px"}), 80)),
+                      S_(Same(Width(C("zoom_magnification_size", "", "x1", {"x1", "x2", "x4", "x8"}), 60), true)),
+                      S_(Width(C("zoom_window_filter_behaviour", "zoom window filter", "on playback", {"always", "on playback", "never"}), 110)),
+                      S_(Div("Auto-Tracking")),
+                      S_(Tip(B("predict_track", "predict track", false), "Look for the feature where its motion so far says it will be")),
+                      S_(Tip(Width(C("warp", "warp type", "Translate", {"Translate", "Translate/Rotate", "Translate/Scale", "Translate/Rotate/Scale", "Affine"}), 170),
+                             "How the pattern may change while it's matched: Translate is fastest; the others follow features that turn or change size")),
+                      S_(Tip(Width(C("grab_behavior", "pattern grab behavior", "if error above", {"on first frame", "every frame", "every n frames", "if error above", "if error below", "custom"}), 150),
+                             "When to take a new reference pattern from the frame just tracked")),
+                      S_(EnableIf(I("grab_interval", "every n frames", 0, 0, 100), "grab_behavior=every n frames|custom")),
+                      S_(EnableIf(Log(F("grab_error_above", "when error >", 0.05, 0.001, 1)), "grab_behavior=if error above|custom")),
+                      S_(EnableIf(Log(F("grab_error_below", "when error <", 0, 0.001, 1)), "grab_behavior=if error below|custom")),
+                      S_(Tip(B("auto_regrab_pattern", "when tracking is stopped", false), "Take a new pattern where a track is when tracking stops")),
+                      S_(Tip(B("regrab_when_offset", "when tracker is moved", true), "Take a new pattern when a track is moved by hand")),
+                      S_(Div("Keyframe Tracking")),
+                      S_(Tip(B("retrack_on_move", "retrack when keyframe is moved / created", true),
+                             "Moving a track sets a keyframe and tracks again between it and the keyframes either side")),
+                      S_(Tip(B("create_key_on_move", "create new key when track is moved", true), "Moving a track by hand makes a keyframe there")),
+                      S_(Tip(B("auto_tracks_delete_keyframes", "auto-tracks delete keyframes", true),
+                             "On: tracking forward / backward replaces the keyframes it runs over. Off: it keeps them and picks up from each")),
+                      S_(Width(C("keyframe_display", "keyframe display", "scroll, single line only", {"all", "nearest, single line only", "scroll, single line only", "none"}), 200)),
+                      S_(Field(I("keyframe_size", "keyframe size", 100, 40, 300), 70)),
+                      S_(Tip(Field(I("max_number_of_keyframe_tracks_to_display", "on_screen key-track limit", 3, 0, 20), 70),
+                             "Most tracks whose keyframe snapshots show in the viewer (0: the selected ones)")),
+                      // ---- Transform
+                      X_(Width(C("transform", "transform", "none", {"none", "stabilize", "stabilize 1pt", "match-move", "match-move 1pt", "remove jitter", "add jitter"}), 140)),
+                      X_(ref), X_(Same(Btn("tracker_ref_here", "set to current frame", "Make the frame you're on the reference frame"), true)),
+                      X_(Tip(F("jitter_period", "jitter period", 10, 1, 100), "Frames averaged to find the steady motion (remove / add jitter)")),
+                      X_(Tip(smooth, "Frames averaged to smooth the translation, rotation and scale")),
+                      X_(Tip(B("livelink_transform", "live-link transform", true), "The transform follows the tracks as they change (always on in Welder)")),
+                      X_(InfoRow("tracker_xform", "")),
+                      X_(Width(C("filter", "filter", "cubic", {"impulse", "cubic", "keys", "simon", "rifman", "mitchell", "parzen", "notch",
+                                                           "lanczos4", "lanczos6", "sinc4", "bilinear"}), 110)),
+                      X_(Same(B("clamp", "clamp", false))), X_(Same(B("black_outside", "black outside", true))),
+                      X_(Log(F("motionblur", "motionblur", 0, 0, 4))), X_(F("shutter", "Shutter Length", 0.5, 0, 2)),
+                      X_(Width(C("shutteroffset", "Shutter Offset", "start", {"centred", "start", "end", "custom"}), 100)),
+                      X_(Same(EnableIf(F("shuttercustomoffset", "", 0, -1, 1), "shutteroffset=custom"), true))},
+                     "2D point tracks: tracking, keyframe tracking and offsets in the viewer; stabilize, match-move and jitter on the Transform tab."});
+    }
     d.push_back({"PlanarTracker", "Transform", {}, "Tracks a flat surface (perspective, rotation, scale) from a region drawn in the viewer."});
     {
         KnobDef ref = F("reference_frame", "reference frame", 1, -100000, 100000,

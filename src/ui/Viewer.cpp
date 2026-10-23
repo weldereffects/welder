@@ -365,6 +365,12 @@ void drawViewer(App& app, UiState& ui) {
         ImGui::TextDisabled("%.0f ms", app.lastRenderMs());
     }
 
+    // ---- a viewer tool's own row (the Tracker's toolbar)
+    if (activeTracker(app)) {
+        ImGui::Spacing();
+        drawTrackerToolbar(app, ui);
+    }
+
     // ---- image area
     const float infoH = ImGui::GetFrameHeight() + 4;
     ImVec2 p0 = ImGui::GetCursorScreenPos();

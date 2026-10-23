@@ -10,6 +10,7 @@
 #include <map>
 
 #include "Panels.h"
+#include "nodes/Track.h"
 #include "imgui_internal.h"
 
 namespace strata::ui {
@@ -17,7 +18,70 @@ namespace strata::ui {
 namespace {
 
 // ------------------------------------------------------------------ curve access
+// A Tracker's tracks show as curves too: param "track:<i>:x" / "track:<i>:y" (track_x / track_y),
+// built from the track's keys; edits to them are written back to the track (keys moved,
+// deleted, or added as keyframes) when the edit is applied.
+bool trackCurveRef(const CurveRef& r, int& index, int& axis) {
+    if (r.param.rfind("track:", 0) != 0) return false;
+    const size_t c2 = r.param.find(':', 6);
+    if (c2 == std::string::npos) return false;
+    index = std::atoi(r.param.c_str() + 6);
+    axis = r.param.substr(c2 + 1) == "y" ? 1 : 0;
+    return true;
+}
+std::map<std::string, json> gTrackCurves;
+std::set<std::pair<std::string, std::string>> gTrackDirty;  // (node, param)
+const json* trackCurve(const Comp& c, const CurveRef& r, bool dirty) {
+    int i, axis;
+    if (!trackCurveRef(r, i, axis)) return nullptr;
+    Node* n = c.find(r.node);
+    if (!n || !n->params.has("tracks") || !n->params.data["tracks"].is_array() || i < 0 || i >= (int)n->params.data["tracks"].size())
+        return nullptr;
+    json cv = {{"keys", json::array()}, {"interp", "linear"}};
+    for (auto& k : track::keysOf(n->params.data["tracks"][i])) cv["keys"].push_back({k.frame, axis ? k.y : k.x});
+    json& slot = gTrackCurves[r.node + "|" + r.param];
+    if (!dirty || !gTrackDirty.count({r.node, r.param})) slot = cv;  // (an edit in progress keeps its own copy)
+    if (dirty) gTrackDirty.insert({r.node, r.param});
+    return &slot;
+}
+void writeBackTrackCurves(Comp& c) {
+    for (auto& [node, param] : gTrackDirty) {
+        int i, axis;
+        CurveRef r{node, param, -1};
+        if (!trackCurveRef(r, i, axis)) continue;
+        Node* n = c.find(node);
+        if (!n || !n->params.has("tracks") || i < 0 || i >= (int)n->params.data["tracks"].size()) continue;
+        json& t = n->params.data["tracks"][i];
+        const json& cv = gTrackCurves[node + "|" + param];
+        auto old = track::keysOf(t);
+        std::vector<track::Key> out;
+        for (auto& e : cv["keys"]) {
+            const double f = e[0].get<double>(), v = e[1].get<double>();
+            track::Key k;
+            bool found = false;
+            for (auto& o : old)
+                if (std::fabs(o.frame - f) < 1e-6) {
+                    k = o;
+                    found = true;
+                }
+            if (!found) {  // a key added on the curve: a keyframe, the other coordinate where the track is
+                auto s = track::sampleAt(t, f);
+                if (s) k = *s;
+                k.frame = f;
+                k.user = true;
+                k.score = 1;
+            }
+            (axis ? k.y : k.x) = v;
+            out.push_back(k);
+        }
+        std::sort(out.begin(), out.end(), [](const track::Key& a, const track::Key& b) { return a.frame < b.frame; });
+        t["keys"] = track::keysJson(out);
+    }
+    gTrackDirty.clear();
+}
+
 const json* curveJson(const Comp& c, const CurveRef& r) {
+    if (r.param.rfind("track:", 0) == 0) return trackCurve(c, r, false);
     Node* n = c.find(r.node);
     if (!n || !n->params.data.contains(r.param)) return nullptr;
     const json& v = n->params.data[r.param];
@@ -26,6 +90,7 @@ const json* curveJson(const Comp& c, const CurveRef& r) {
 }
 
 json* curveJsonMut(Comp& c, const CurveRef& r) {
+    if (r.param.rfind("track:", 0) == 0) return const_cast<json*>(trackCurve(c, r, true));
     Node* n = c.find(r.node);
     if (!n || !n->params.data.contains(r.param)) return nullptr;
     json& v = n->params.data[r.param];
@@ -52,6 +117,12 @@ std::vector<CurveRef> curvesOf(App& app, const std::string& node) {
     std::vector<CurveRef> v;
     Node* n = app.node(node);
     if (!n) return v;
+    if (n->type == "Tracker" && n->params.has("tracks") && n->params.data["tracks"].is_array())
+        for (int i = 0; i < (int)n->params.data["tracks"].size(); ++i)
+            if (!track::keysOf(n->params.data["tracks"][i]).empty()) {
+                v.push_back({node, "track:" + std::to_string(i) + ":x", -1});
+                v.push_back({node, "track:" + std::to_string(i) + ":y", -1});
+            }
     for (auto& [k, val] : n->params.data.items()) {
         if (internalParam(k)) continue;
         if (params::isAnimated(val)) v.push_back({node, k, -1});
@@ -63,6 +134,8 @@ std::vector<CurveRef> curvesOf(App& app, const std::string& node) {
 }
 
 std::string curveName(const CurveRef& r) {
+    int ti, ta;
+    if (trackCurveRef(r, ti, ta)) return std::string(ta ? "track_y" : "track_x") + " " + std::to_string(ti + 1);
     static const char* xyzw[] = {"x", "y", "z", "w"};
     std::string s = r.param;
     if (r.comp >= 0) s += std::string(".") + (r.comp < 4 ? xyzw[r.comp] : std::to_string(r.comp).c_str());
@@ -70,6 +143,8 @@ std::string curveName(const CurveRef& r) {
 }
 
 ImU32 curveColor(const CurveRef& r, int idx) {
+    int ti, ta;
+    if (trackCurveRef(r, ti, ta)) return ta ? IM_COL32(110, 220, 100, 255) : IM_COL32(235, 90, 80, 255);
     if (r.comp == 0) return IM_COL32(235, 90, 80, 255);
     if (r.comp == 1) return IM_COL32(110, 220, 100, 255);
     if (r.comp == 2) return IM_COL32(100, 150, 255, 255);
@@ -119,6 +194,7 @@ double niceStep(double range, double pixels, double minPx) {
 void edit(App& app, std::function<void(Comp&)> fn) {
     app.edit([fn](Comp& c) {
         fn(c);
+        writeBackTrackCurves(c);
         for (auto& n : c.nodes) n->paramsChanged();
     });
 }

@@ -53,6 +53,29 @@ struct TrackStatus {
     double frame = 0;
     int done = 0, total = 0;
     std::string label;  // what's running ("tracking features", "solving ...")
+    double started = 0;  // when it started (seconds, ImGui-independent steady clock)
+};
+
+// What a Tracker's tracking job is looking at right now (drawn in the viewer while it runs):
+// the search area of the frame being tracked, where the feature was found and how well.
+struct TrackLive {
+    int track = -1;
+    double frame = 0;
+    double fx = 0, fy = 0;            // the feature (pattern centre)
+    double a = 1, b = 0, c = 0, d = 1;  // its warp
+    double error = 0;
+    Box box;                          // the search area (image pixels)
+    std::shared_ptr<const std::vector<unsigned char>> rgba;  // that area, display-encoded, top row first
+    uint64_t serial = 0;
+};
+
+// A region of a Tracker's input on some frame (full resolution), for the zoom window and the
+// keyframe snapshots.
+struct TrackPatch {
+    std::shared_ptr<const std::vector<unsigned char>> rgba;  // display-encoded RGBA8, top row first
+    Box box;
+    double frame = 0;
+    uint64_t serial = 0;
 };
 
 // Writing an ML node's inputs out as a job (before the worker runs it).
@@ -225,6 +248,17 @@ public:
     // (all = false) or to the end of the visible range, forwards (dir 1) or
     // backwards (-1). Runs in the background; results arrive through pollTracking().
     void startTracking(const std::string& node, std::vector<int> tracks, int dir, bool all);
+    // Track over a range of frames (the R button): from `from` towards `to`.
+    void startTrackingRange(const std::string& node, std::vector<int> tracks, double from, double to);
+    // Keyframe tracking: between the keyframes either side of the current frame (all = false),
+    // or between every pair of keyframes (all = true), for the given tracks (empty: all enabled).
+    void startKeyTracking(const std::string& node, std::vector<int> tracks, bool all);
+    // Between given keyframe pairs (retracking after a keyframe was moved or made): (track, from, to).
+    void startKeySegments(const std::string& node, std::vector<std::tuple<int, double, double>> segments);
+    std::vector<TrackLive> trackLive();
+    // A region of a Tracker's input on `frame`, rendered in the background: the one for that
+    // frame and region when ready (null until then).
+    std::shared_ptr<const TrackPatch> trackerPatch(const std::string& tracker, double frame, const Box& box);
     // Planar-track a PlanarTracker node from the current frame (same controls).
     void startPlanarTracking(const std::string& node, int dir, bool all);
     // CameraTracker: track features through its range / solve the camera.
@@ -379,19 +413,13 @@ private:
     std::set<std::string> chanFresh_, chanWant_;
 
     struct TrackResult {
-        int track;
-        double frame, x, y, score;
+        int op = 0;  // 0: set this key; 1: clear the tracked (not hand-placed) keys between frame and f2
+        int track = -1;
+        double frame = 0, x = 0, y = 0, score = 1;
+        double a = 1, b = 0, c = 0, d = 1;
+        double f2 = 0;
     };
-    struct TrackJob {
-        int index;
-        double x, y;                    // current position
-        double vx = 0, vy = 0;          // motion last frame (prediction)
-        double px1, py1, px2, py2;      // pattern box (relative)
-        double sx1, sy1, sx2, sy2;      // search box (relative)
-        std::vector<float> pattern;     // reference pattern luminance
-        int pw = 0, ph = 0;
-        bool alive = true;
-    };
+    struct TrackPass;  // (App.cpp)
     struct PlanarResult {
         double frame, score;
         std::array<double, 9> h;
@@ -404,7 +432,27 @@ private:
     void camTrackLoop(std::string node, int first, int last);
     void camSolveLoop(std::string node, json tracks, json opts, int w, int h);
     void planarLoop(std::string node, double from, double to, int dir, double minScore);
-    void trackLoop(std::string node, std::vector<TrackJob> jobs, double from, double to, int dir, double minScore, bool everyFrame);
+    void trackRun(std::string node, std::vector<int> tracks, double from, double to, int dir,
+                  std::vector<std::tuple<int, double, double>> segments);
+    void beginTrackJob(const std::string& node, int total, const std::string& label, std::function<void()> fn);
+    std::vector<TrackLive> trackLive_;
+    double lastTrackView_ = 0;
+    // background patches (trackerPatch)
+    void patchLoop();
+    std::thread patch_;
+    std::mutex patchM_;
+    std::condition_variable patchCv_;
+    bool patchQuit_ = false;
+    struct PatchReq {
+        std::string key, tracker;
+        double frame;
+        Box box;
+    };
+    std::deque<PatchReq> patchQueue_;
+    std::map<std::string, std::shared_ptr<const TrackPatch>> patchCache_;
+    std::deque<std::string> patchOrder_;
+    std::unique_ptr<Engine> patchEngine_;
+    uint64_t patchSerial_ = 0;
     std::thread track_;
     std::atomic<bool> trackCancel_{false};
     std::mutex trackM_;
