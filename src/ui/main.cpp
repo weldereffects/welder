@@ -11,6 +11,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -151,9 +152,8 @@ void buildLayout(ImGuiID dock, ImVec2 size) {
     ImGui::DockBuilderDockWindow("Dope Sheet", bottom);
     ImGui::DockBuilderDockWindow("Node Graph", bottom);
     ImGui::DockBuilderDockWindow("Properties", right);
-    for (ImGuiID id : {left, timeline}) {
-        if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(id))
-            n->LocalFlags |= ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoResizeY;
+    for (ImGuiID id : {left, timeline}) {  // no tab bars; every edge can still be dragged
+        if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(id)) n->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;
     }
     ImGui::DockBuilderFinish(dock);
 }
@@ -354,6 +354,21 @@ int main(int argc, char** argv) {
                 buildLayout(dock, ImVec2(vp->WorkSize.x, vp->WorkSize.y));
             layoutBuilt = true;
         }
+        if (ui.resetWorkspace) {  // Workspace > Reset Workspace: every panel back in its default place and size
+            ui.resetWorkspace = false;
+            ui.maximized.clear();
+            resetTimelineHeight();
+            for (const char* w : {"Nodes", "Viewer", "Timeline", "Node Graph", "Properties", "Messages", "Curve Editor", "Dope Sheet"})
+                if (ImGuiWindow* win = ImGui::FindWindowByName(w)) {
+                    win->Collapsed = false;
+                    win->Hidden = false;
+                }
+            buildLayout(dock, ImVec2(vp->WorkSize.x, vp->WorkSize.y));
+            ImGui::MarkIniSettingsDirty();
+            focusGraph = true;
+            app.message("workspace reset to the default layout");
+        }
+        keepDockResizable();
         // While a panel is maximized the dockspace is only kept alive (not drawn): the
         // docked panels keep their places and come back untouched on restore.
         lockTimelineHeight();  // only the viewer and node graph resize; the timeline keeps its height
@@ -702,6 +717,48 @@ int main(int argc, char** argv) {
         // STRATA_TEST_COLLAPSE=<backdrop>: minimise it (as its corner button does)
         if (const char* tb = std::getenv("STRATA_TEST_COLLAPSE"); tb && *tb && !opt.screenshot.empty() && frameCount == 12)
             graphToggleBackdrop(app, app.node(tb));
+        // STRATA_TEST_PANELDRAG=x0,y0,x1,y1[;...]: plain left-drags (panel splitters), one after another;
+        // STRATA_TEST_RESET_AT=<frame>: Workspace > Reset Workspace then. Prints the panel sizes at the end.
+        bool panelDragTest = false;
+        if (const char* tp = std::getenv("STRATA_TEST_PANELDRAG"); tp && *tp && !opt.screenshot.empty()) {
+            std::vector<std::array<float, 4>> drags;
+            for (std::string part : [&] {
+                     std::vector<std::string> v;
+                     std::string t = tp, cur;
+                     for (char ch : t) {
+                         if (ch == ';') {
+                             v.push_back(cur);
+                             cur.clear();
+                         } else
+                             cur += ch;
+                     }
+                     v.push_back(cur);
+                     return v;
+                 }()) {
+                std::array<float, 4> q{};
+                if (std::sscanf(part.c_str(), "%f,%f,%f,%f", &q[0], &q[1], &q[2], &q[3]) == 4) drags.push_back(q);
+            }
+            ImGuiIO& tio = ImGui::GetIO();
+            const int per = 30, start = 15, end = start + per * (int)drags.size();
+            const int resetAt = std::getenv("STRATA_TEST_RESET_AT") ? std::atoi(std::getenv("STRATA_TEST_RESET_AT")) : -1;
+            panelDragTest = frameCount < std::max(end, resetAt) + 20;
+            if (frameCount >= start && frameCount < end) {
+                const auto& q = drags[(frameCount - start) / per];
+                const int k = (frameCount - start) % per;
+                if (k == 0) tio.AddMousePosEvent(q[0], q[1]);
+                else if (k == 2) tio.AddMouseButtonEvent(0, true);
+                else if (k > 2 && k <= 22) {
+                    const float t = (k - 2) / 20.0f;
+                    tio.AddMousePosEvent(q[0] + (q[2] - q[0]) * t, q[1] + (q[3] - q[1]) * t);
+                } else if (k == 24)
+                    tio.AddMouseButtonEvent(0, false);
+            }
+            if (frameCount == resetAt) ui.resetWorkspace = true;
+            if (frameCount == std::max(end, resetAt) + 18)
+                for (const char* w : {"Nodes", "Viewer", "Timeline", "Node Graph", "Properties"})
+                    if (ImGuiWindow* win = ImGui::FindWindowByName(w))
+                        std::fprintf(stderr, "PANEL %s pos %.0f,%.0f size %.0fx%.0f\n", w, win->Pos.x, win->Pos.y, win->Size.x, win->Size.y);
+        }
         // STRATA_TEST_ALTDRAG=x0,y0,x1,y1: Alt+drag between two window positions, then list the nodes
         bool altDragTest = false;
         if (const char* ta = std::getenv("STRATA_TEST_ALTDRAG"); ta && *ta && !opt.screenshot.empty()) {
@@ -1025,7 +1082,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !panelDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

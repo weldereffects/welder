@@ -158,6 +158,7 @@ void registerScanlineRender();
 void registerSplatNodes();
 void registerMLNodes();
 void registerColorMgmtNodes();
+void registerMergeExtraNodes();
 void registerBlenderNodes();
 void registerCreativeNodes();
 void registerCGNodes();
@@ -198,6 +199,7 @@ void registerBuiltinNodes() {
     registerSplatNodes();
     registerMLNodes();
     registerColorMgmtNodes();
+    registerMergeExtraNodes();
     registerBlenderNodes();
     registerCreativeNodes();
     registerCGNodes();

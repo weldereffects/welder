@@ -1011,6 +1011,84 @@ int main(int argc, char** argv) {
         CHECK_NEAR(d, 0.0, 1e-5);
     });
 
+    test("KeyMix / AddMix / CopyRectangle / ChannelMerge / Blend", [] {
+        auto c = comp(json::array({
+            {{"name", "Bk"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.2, 0.2, 1}}}}},
+            {{"name", "Ak"}, {"type", "Constant"}, {"params", {{"color", {1, 0.5, 0, 0.5}}}}},
+            {{"name", "M"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 0, 1}}}}},
+            {{"name", "Mc"}, {"type", "Crop"}, {"inputs", {"M"}}, {"params", {{"box", {0, 0, 32, 48}}}}},
+            {{"name", "KM"}, {"type", "KeyMix"}, {"inputs", {"Bk", "Ak", "Mc"}}},
+            {{"name", "AM"}, {"type", "AddMix"}, {"inputs", {"Bk", "Ak"}}},
+            {{"name", "CR"}, {"type", "CopyRectangle"}, {"inputs", {"Bk", "Ak"}}, {"params", {{"area", {10, 10, 20, 20}}}}},
+            {{"name", "CM"}, {"type", "ChannelMerge"}, {"inputs", {"Bk", "Ak"}}, {"params", {{"operation", "stencil"}}}},
+            {{"name", "BL"}, {"type", "Blend"}, {"inputs", {"Bk", "Ak"}}, {"params", {{"weights", {1, 3}}}}},
+        }));
+        auto km = render(*c, "KM");
+        CHECK_NEAR(px(km, 5, 5, "R"), 1, 1e-6);   // inside the mask: A
+        CHECK_NEAR(px(km, 40, 5, "R"), 0.2, 1e-6); // outside: B
+        auto am = render(*c, "AM");
+        CHECK_NEAR(px(am, 5, 5, "R"), 1 + 0.2 * 0.5, 1e-4);  // A + B (1 - a)
+        auto cr = render(*c, "CR");
+        CHECK_NEAR(px(cr, 15, 15, "G"), 0.5, 1e-6);
+        CHECK_NEAR(px(cr, 25, 15, "G"), 0.2, 1e-6);
+        auto cm = render(*c, "CM");
+        CHECK_NEAR(px(cm, 5, 5, "A"), 1 * (1 - 0.5), 1e-6);  // B alpha x (1 - A alpha)
+        auto bl = render(*c, "BL");
+        CHECK_NEAR(px(bl, 5, 5, "R"), (0.2 + 3 * 1) / 4, 1e-5);
+    });
+
+    test("Expression / MergeExpression: per-pixel rows, temporaries, knob references", [] {
+        auto c = comp(json::array({
+            {{"name", "Bk"}, {"type", "Constant"}, {"params", {{"color", {0.25, 0.5, 0.75, 1}}}}},
+            {{"name", "Ak"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 0.5}}}}},
+            {{"name", "E"}, {"type", "Expression"}, {"inputs", {"Bk"}},
+             {"params", {{"temp_name0", "k"}, {"temp_expr0", "2"}, {"expr0", "r * k"}, {"expr1", "x"}, {"expr2", "b > 0.5 ? 1 : 0"},
+                         {"channel3", "depth.Z"}, {"expr3", "Bk.color.g + frame"}}}},
+            {{"name", "ME"}, {"type", "MergeExpression"}, {"inputs", {"Bk", "Ak"}}, {"params", {{"expr0", "Ar * Ba - Br"}}}},
+            {{"name", "Bad"}, {"type", "Expression"}, {"inputs", {"Bk"}}, {"params", {{"expr0", "r *"}}}},
+        }));
+        auto e = render(*c, "E", 3);
+        CHECK_NEAR(px(e, 4, 4, "R"), 0.5, 1e-6);
+        CHECK_NEAR(px(e, 7, 4, "G"), 7, 1e-6);
+        CHECK_NEAR(px(e, 7, 4, "B"), 1, 1e-6);
+        CHECK_NEAR(px(e, 7, 4, "A"), 1, 1e-6);  // untouched
+        CHECK_NEAR(px(e, 7, 4, "depth.Z"), 3.5, 1e-6);
+        auto me = render(*c, "ME");
+        CHECK_NEAR(px(me, 3, 3, "R"), 1 * 1 - 0.25, 1e-6);
+        bool threw = false;
+        try {
+            render(*c, "Bad");
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        CHECK(threw);
+    });
+
+    test("ContactSheet / CopyBBox / AddChannels / TimeDissolve", [] {
+        auto c = comp(json::array({
+            {{"name", "R1"}, {"type", "Constant"}, {"params", {{"color", {1, 0, 0, 1}}}}},
+            {{"name", "G1"}, {"type", "Constant"}, {"params", {{"color", {0, 1, 0, 1}}}}},
+            {{"name", "CS"}, {"type", "ContactSheet"}, {"inputs", {"R1", "G1"}},
+             {"params", {{"size", {64, 48}}, {"rows", 1}, {"columns", 2}, {"center", false}}}},
+            {{"name", "K"}, {"type", "Crop"}, {"inputs", {"G1"}}, {"params", {{"box", {5, 5, 9, 9}}}}},
+            {{"name", "CB"}, {"type", "CopyBBox"}, {"inputs", {"R1", "K"}}},
+            {{"name", "AC"}, {"type", "AddChannels"}, {"inputs", {"R1"}}, {"params", {{"channels", "depth mask"}, {"color", 0.5}}}},
+            {{"name", "TD"}, {"type", "TimeDissolve"}, {"inputs", {"R1", "G1"}}, {"params", {{"in", 1}, {"out", 11}, {"curve", "linear"}}}},
+        }));
+        auto cs = render(*c, "CS");
+        CHECK_NEAR(px(cs, 10, 20, "R"), 1, 1e-5);
+        CHECK_NEAR(px(cs, 50, 20, "G"), 1, 1e-5);
+        auto cb = render(*c, "CB");
+        CHECK_NEAR(px(cb, 20, 20, "R"), 0, 0);  // outside A's bbox
+        CHECK_NEAR(px(cb, 6, 6, "R"), 1, 0);
+        auto ac = render(*c, "AC");
+        CHECK(ac->ch("depth.Z") >= 0 && ac->ch("mask.a") >= 0);
+        CHECK_NEAR(px(ac, 3, 3, "depth.Z"), 0.5, 0);
+        auto td = render(*c, "TD", 6);
+        CHECK_NEAR(px(td, 3, 3, "R"), 0.5, 1e-6);
+        CHECK_NEAR(px(td, 3, 3, "G"), 0.5, 1e-6);
+    });
+
     test("SplineWarp: the A curve's picture moves onto the B curve", [] {
         auto rect = [](double x1, double y1, double x2, double y2) {
             return json::array({{x1, y1, 0, 0, 0, 0, 0, 0}, {x2, y1, 0, 0, 0, 0, 0, 0}, {x2, y2, 0, 0, 0, 0, 0, 0}, {x1, y2, 0, 0, 0, 0, 0, 0}});

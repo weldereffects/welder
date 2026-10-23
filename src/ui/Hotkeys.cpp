@@ -37,6 +37,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Global", "Ctrl+P", "toggle proxy mode", true},
         {"Global", "Ctrl+Shift+P", "toggle pixel aspect ratio", false},
         {"Global", "F12", "clear cached images (buffers)", true},
+        {"Global", "Shift+F12", "reset the workspace (every panel back in its default place)", true},
         {"Global", "Shift+S", "preferences", false},
         {"Global", "Ctrl+I", "new viewer", false},
         {"Global", "Space (hold)", "right-click menu", false},
@@ -288,6 +289,7 @@ void handleHotkeys(App& app, UiState& ui) {
         app.message(pm ? "proxy mode on" : "proxy mode off");
         return;
     }
+    if (key(ImGuiKey_F12, false, true)) { ui.resetWorkspace = true; return; }
     if (key(ImGuiKey_F12)) { app.clearCaches(); return; }
     if (key(ImGuiKey_Space)) { ui.toggleMaximize = panel.empty() ? std::string("Viewer") : panel; return; }
     if (key(ImGuiKey_S, false, true)) { ui.showPrefs = true; return; }

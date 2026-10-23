@@ -26,7 +26,7 @@ struct ExprError : std::runtime_error {
 struct Ast;
 using AstP = std::shared_ptr<const Ast>;
 struct Ast {
-    enum Kind { Num, Frame, Curve, Ref, Unary, Binary, Ternary, Call } kind = Num;
+    enum Kind { Num, Frame, Curve, Ref, Unary, Binary, Ternary, Call, Var } kind = Num;
     double num = 0;
     std::string op;                 // Unary / Binary operator, Call function name
     std::vector<std::string> path;  // Ref: Node.knob.component segments
@@ -126,6 +126,7 @@ const std::map<std::string, int>& functions() {  // name -> argument count (-1: 
 struct Parser {
     std::vector<Tok> t;
     size_t p = 0;
+    const std::vector<std::string>* vars = nullptr;  // pixel expressions: per-pixel variables (r, g, x, y...)
     const Tok& peek() const { return t[p]; }
     bool isOp(const char* o) const { return t[p].t == Tok::Op && t[p].s == o; }
     bool eat(const char* o) {
@@ -270,7 +271,15 @@ struct Parser {
                 if (id == "clamp" && n->kids.size() != 1 && n->kids.size() != 3) throw ExprError("clamp() takes 1 or 3 arguments");
                 return n;
             }
-            if (id == "frame" || id == "t" || id == "x") return mk(Ast::Frame);
+            if (vars && !isOp(".") && !isOp("(")) {
+                auto it = std::find(vars->begin(), vars->end(), id);
+                if (it != vars->end()) {
+                    auto n = mk(Ast::Var);
+                    n->num = (double)(it - vars->begin());
+                    return n;
+                }
+            }
+            if (id == "frame" || id == "t" || (id == "x" && !vars)) return mk(Ast::Frame);
             if (id == "curve") {
                 auto n = mk(Ast::Curve);
                 if (eat("(")) {
@@ -549,11 +558,16 @@ double ref(const Ast& a, const Ctx& c, double frame) {
     return knobValue(n, knob, compName, frame);
 }
 
+double applyFn(const std::string& f, const std::vector<double>& v, double frame);
+
 double call(const Ast& a, const Ctx& c) {
     std::vector<double> v;
     v.reserve(a.kids.size());
     for (auto& k : a.kids) v.push_back(eval(k, c));
-    const std::string& f = a.op;
+    return applyFn(a.op, v, c.frame);
+}
+
+double applyFn(const std::string& f, const std::vector<double>& v, double frame) {
     auto arg = [&](size_t i, double d = 0) { return i < v.size() ? v[i] : d; };
     if (f == "sin") return std::sin(v[0]);
     if (f == "cos") return std::cos(v[0]);
@@ -600,7 +614,7 @@ double call(const Ast& a, const Ctx& c) {
         return std::frexp(v[0], &e);
     }
     if (f == "ldexp") return std::ldexp(v[0], (int)v[1]);
-    if (f == "random") return v.empty() ? hash3(c.frame, 0, 0) : hash3(arg(0), arg(1), arg(2));
+    if (f == "random") return v.empty() ? hash3(frame, 0, 0) : hash3(arg(0), arg(1), arg(2));
     if (f == "noise") return perlin(arg(0), arg(1), arg(2));
     if (f == "fBm" || f == "turbulence") {
         // (x, y, z, octaves = 6, lacunarity = 2, gain = 0.5)
@@ -648,6 +662,7 @@ double eval(const AstP& ap, const Ctx& c) {
         }
         case Ast::Ternary: return eval(a.kids[0], c) != 0 ? eval(a.kids[1], c) : eval(a.kids[2], c);
         case Ast::Call: return call(a, c);
+        case Ast::Var: throw ExprError("a pixel variable outside a pixel expression");
         case Ast::Binary: {
             const std::string& o = a.op;
             if (o == "&&") return eval(a.kids[0], c) != 0 && eval(a.kids[1], c) != 0 ? 1 : 0;
@@ -812,6 +827,146 @@ uint64_t hashValues(const Node& n, double frame, uint64_t h) {
             for (auto& [k2, v2] : v.items()) one(v2);
     }
     return h;
+}
+
+// ------------------------------------------------------------------ pixel expressions
+namespace {
+enum PCode { P_CONST, P_VAR, P_NEG, P_NOT, P_BIN, P_TERN, P_CALL };
+const std::vector<std::string>& binOps() {
+    static const std::vector<std::string> v = {"+", "-", "*", "/", "%", "**", "==", "!=", "<", "<=", ">", ">=", "&&", "||"};
+    return v;
+}
+bool hasVar(const AstP& a) {
+    if (a->kind == Ast::Var) return true;
+    for (auto& k : a->kids)
+        if (hasVar(k)) return true;
+    return false;
+}
+void emitPixel(const AstP& ap, const Ctx& c, std::vector<PixelExpr::Op>& out) {
+    const Ast& a = *ap;
+    if (!hasVar(ap)) {
+        out.push_back({P_CONST, eval(ap, c), nullptr});
+        return;
+    }
+    switch (a.kind) {
+        case Ast::Var: out.push_back({P_VAR, a.num, nullptr}); return;
+        case Ast::Unary:
+            emitPixel(a.kids[0], c, out);
+            if (a.op == "-") out.push_back({P_NEG, 0, nullptr});
+            else if (a.op == "!") out.push_back({P_NOT, 0, nullptr});
+            return;
+        case Ast::Binary: {
+            emitPixel(a.kids[0], c, out);
+            emitPixel(a.kids[1], c, out);
+            auto& ops = binOps();
+            out.push_back({P_BIN, (double)(std::find(ops.begin(), ops.end(), a.op) - ops.begin()), nullptr});
+            return;
+        }
+        case Ast::Ternary:
+            for (auto& k : a.kids) emitPixel(k, c, out);
+            out.push_back({P_TERN, 0, nullptr});
+            return;
+        case Ast::Call:
+            for (auto& k : a.kids) emitPixel(k, c, out);
+            out.push_back({P_CALL, (double)a.kids.size(), &a.op});
+            return;
+        default: throw ExprError("a pixel variable can't be used there (as a frame)");
+    }
+}
+}  // namespace
+
+PixelExpr compilePixel(const std::string& text, const std::vector<std::string>& vars, double frame, const Node* owner) {
+    PixelExpr r;
+    try {
+        Parser ps;
+        ps.vars = &vars;
+        ps.t = lex(text);
+        if (ps.peek().t == Tok::End) throw ExprError("empty expression");
+        AstP tree = ps.expr();
+        if (ps.peek().t != Tok::End) throw ExprError("unexpected '" + ps.peek().s + "'");
+        r.usesVars = hasVar(tree);
+        // keep the tree alive for the function names the code points at
+        static std::mutex m;
+        static std::vector<AstP> keep;
+        {
+            std::lock_guard<std::mutex> l(m);
+            if (keep.size() > 4096) keep.erase(keep.begin(), keep.begin() + 2048);
+            keep.push_back(tree);
+        }
+        emitPixel(tree, Ctx{frame, owner, nullptr}, r.code);
+    } catch (const std::exception& e) {
+        r.code.clear();
+        r.error = e.what();
+    }
+    return r;
+}
+
+double PixelExpr::run(const double* vars) const {
+    double st[64];
+    int sp = 0;
+    std::vector<double> args;
+    for (const Op& o : code) {
+        switch (o.code) {
+            case P_CONST: st[sp++] = o.v; break;
+            case P_VAR: st[sp++] = vars[(int)o.v]; break;
+            case P_NEG: st[sp - 1] = -st[sp - 1]; break;
+            case P_NOT: st[sp - 1] = st[sp - 1] == 0 ? 1 : 0; break;
+            case P_BIN: {
+                const double y = st[--sp], x = st[sp - 1];
+                double r = 0;
+                switch ((int)o.v) {
+                    case 0: r = x + y; break;
+                    case 1: r = x - y; break;
+                    case 2: r = x * y; break;
+                    case 3: r = x / y; break;
+                    case 4: r = std::fmod(x, y); break;
+                    case 5: r = std::pow(x, y); break;
+                    case 6: r = x == y; break;
+                    case 7: r = x != y; break;
+                    case 8: r = x < y; break;
+                    case 9: r = x <= y; break;
+                    case 10: r = x > y; break;
+                    case 11: r = x >= y; break;
+                    case 12: r = (x != 0 && y != 0) ? 1 : 0; break;
+                    case 13: r = (x != 0 || y != 0) ? 1 : 0; break;
+                }
+                st[sp - 1] = r;
+                break;
+            }
+            case P_TERN: {
+                const double b = st[--sp], a = st[--sp], cnd = st[sp - 1];
+                st[sp - 1] = cnd != 0 ? a : b;
+                break;
+            }
+            case P_CALL: {
+                const int n = (int)o.v;
+                args.assign(st + sp - n, st + sp);
+                sp -= n;
+                double r;
+                try {
+                    r = applyFn(*o.fn, args, 0);
+                } catch (...) {
+                    r = 0;
+                }
+                st[sp++] = r;
+                break;
+            }
+        }
+        if (sp >= 62) return 0;  // too deep
+    }
+    return sp > 0 ? st[sp - 1] : 0;
+}
+
+bool pixelTimeDependent(const std::string& text) {
+    try {
+        auto t = lex(text);
+        for (size_t i = 0; i < t.size(); ++i) {
+            if (t[i].t == Tok::Id && (t[i].s == "frame" || t[i].s == "t" || t[i].s == "random" || t[i].s == "curve")) return true;
+            if (t[i].t == Tok::Op && (t[i].s == "." || t[i].s == "[")) return true;  // other knobs
+        }
+    } catch (...) {
+    }
+    return false;
 }
 
 }  // namespace strata::expr

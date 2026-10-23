@@ -217,25 +217,53 @@ float timelineHeight() {
     return std::round(6 * 2 + rulerHeight() + st.ItemSpacing.y + ImGui::GetFrameHeight());
 }
 
-// Called before the dockspace each frame: the timeline's node keeps its
-// height whatever is dragged (only the viewer and node graph grow), and the
-// splitter next to it doesn't move.
+// Called before the dockspace each frame: the timeline's node keeps its height when the
+// panels around it are resized (only the viewer and node graph grow), but its own edge can be
+// dragged: the height it's dragged to is kept from then on (never less than the timeline needs).
+namespace {
+float gTimelineH = 0;  // the dragged height (0: the default)
+float gLastNodeH = 0, gLastParentH = 0;
+}  // namespace
+
+void resetTimelineHeight() {
+    gTimelineH = 0;
+    gLastNodeH = gLastParentH = 0;
+}
+
+void keepDockResizable() {
+    ImGuiContext& g = *GImGui;
+    const ImGuiDockNodeFlags no = ImGuiDockNodeFlags_NoResize | ImGuiDockNodeFlags_NoResizeX | ImGuiDockNodeFlags_NoResizeY;
+    for (int i = 0; i < g.DockContext.Nodes.Data.Size; ++i)
+        if (auto* n = (ImGuiDockNode*)g.DockContext.Nodes.Data[i].val_p)
+            if (n->LocalFlags & no) {
+                n->LocalFlags &= ~no;
+                n->UpdateMergedFlags();
+            }
+}
+
 void lockTimelineHeight() {
     ImGuiWindow* w = ImGui::FindWindowByName("Timeline");
     if (!w || !w->DockNode) return;
     ImGuiDockNode* n = w->DockNode;
     ImGuiDockNode* parent = n->ParentNode;
     if (!parent || parent->SplitAxis != ImGuiAxis_Y || parent->ChildNodes[0] == nullptr || parent->ChildNodes[1] == nullptr) return;
-    const float H = timelineHeight();
+    const float minH = timelineHeight();
     ImGuiDockNode* other = parent->ChildNodes[0] == n ? parent->ChildNodes[1] : parent->ChildNodes[0];
-    n->LocalFlags |= ImGuiDockNodeFlags_NoResizeY;
-    n->UpdateMergedFlags();
+    if (gLastNodeH <= 0 && gTimelineH <= 0 && n->Size.y > minH + 1) gTimelineH = n->Size.y;  // as saved in the layout
+    // its own splitter was dragged: the parent kept its size and the timeline's changed
+    if (gLastNodeH > 0 && std::fabs(parent->Size.y - gLastParentH) < 0.5f && std::fabs(n->Size.y - gLastNodeH) > 0.5f &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        gTimelineH = n->Size.y;
+    const float maxH = std::max(minH, parent->Size.y - 60 - ImGui::GetStyle().DockingSeparatorSize);
+    const float H = std::clamp(gTimelineH > 0 ? gTimelineH : minH, minH, maxH);
     n->Size.y = H;
     n->SizeRef.y = H;
     n->WantLockSizeOnce = true;
     other->WantLockSizeOnce = false;
+    gLastNodeH = H;
+    gLastParentH = parent->Size.y;
     // the area holding the timeline never gets too short to show all of it
-    const float minArea = H + 60 + ImGui::GetStyle().DockingSeparatorSize;
+    const float minArea = minH + 60 + ImGui::GetStyle().DockingSeparatorSize;
     for (ImGuiDockNode* a = parent; a && a->ParentNode; a = a->ParentNode) {
         ImGuiDockNode* p = a->ParentNode;
         if (p->SplitAxis != ImGuiAxis_Y) continue;
@@ -251,7 +279,7 @@ void lockTimelineHeight() {
 void drawTimeline(App& app, UiState& ui) {
     // floating: the same fixed height; under a maximized viewer: that plus its title bar
     const float H = timelineHeight() + (ui.maximized == "Viewer" ? ImGui::GetFrameHeight() : 0.0f);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(160, H), ImVec2(FLT_MAX, H));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(160, H), ImVec2(FLT_MAX, FLT_MAX));  // at least tall enough; taller when dragged
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 6));
     ImGui::Begin(ui.win("Timeline").c_str(), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();

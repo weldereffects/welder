@@ -23,6 +23,11 @@ inline Format nodeFormat(Engine& e, Node* self, Node* n, double frame) {
 ChannelSet parseChannels(const Params& p, const std::string& key, const std::string& def,
                          const ChannelSet& available);
 
+// A channel name as typed ("rgba.red", "red", "alpha", "depth", "mask.a") -> Welder's ("R", "A",
+// "depth.Z", "mask.a"); and a list of channels to create ("rgba", "depth", "diffuse", "a.b c.d").
+std::string resolveChannelName(const std::string& in);
+ChannelSet channelsToCreate(const std::string& text);
+
 // Mix/mask: blend `out` back towards `src` by (1 - mix * mask) per pixel for
 // the channels in `affected`. Mask input is optional.
 struct MaskMix {

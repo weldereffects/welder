@@ -808,6 +808,16 @@ std::vector<NodeDef> build() {
                  withMask({InfoRow("copy_rows", "Copy channel"), Ch("layer_copy", "channels", "none"),
                            Width(C("bbox", "set bbox to", "B", {"B", "A", "union", "intersection"}), 110)}),
                  "Copies channels from A into B: up to four channel rows, and whole layers with 'channels'."});
+    d.push_back({"AddChannels", "Channel",
+                 {S("channels", "channels", "mask"), S("channels2", "and", ""), S("channels3", "and", ""), S("channels4", "and", ""),
+                  F("color", "fill value", 0, 0, 1)},
+                 "Adds channels (filled with the value): rgba, depth, mask, motion, a layer name (diffuse -> diffuse.R G B A) or full names."});
+    d.push_back({"ChannelMerge", "Channel",
+                 withMask({S("A", "A channel", "A"),
+                           C("operation", "operation", "union", {"union", "plus", "minus", "from", "absminus", "multiply", "intersect", "in",
+                                                                  "divide", "out", "stencil", "max", "min", "xor", "screen", "average"}),
+                           S("B", "B channel", "A"), S("output", "output", "A")}),
+                 "Combines one channel of A with one of B (union, intersect, stencil...) into the output channel."});
     d.push_back({"Remove", "Channel", {C("operation", "operation", "remove", {"remove", "keep"}), Ch("channels", "channels", "none")}, ""});
     // ---------------------------------------------------------------- Color
     d.push_back({"Grade", "Color",
@@ -905,6 +915,81 @@ std::vector<NodeDef> build() {
     d.push_back({"Unpremult", "Merge", withMask({Ch("channels", "channels", "rgb"), S("alpha", "by", "A")}), ""});
     d.push_back({"Switch", "Merge", {I("which", "which", 0, 0, 10)}, ""});
     d.push_back({"Dissolve", "Merge", {F("which", "which", 0, 0, 1)}, ""});
+    d.push_back({"KeyMix", "Merge",
+                 {Ch("channels", "channels", "all"), Width(S("mask_channel", "mask channel", "A"), 110),
+                  Same(B("invert_mask", "invert", false)), Width(C("bbox", "set bbox to", "union", {"union", "B", "A", "intersection"}), 110),
+                  F("mix", "mix", 1, 0, 1)},
+                 "A over B through the mask input's channel: B where the mask is 0, A where it is 1."});
+    d.push_back({"AddMix", "Merge",
+                 withMask({Ch("channels", "channels", "rgba"), B("premultiplied", "A is premultiplied", true),
+                           {"curves", "alpha curves", Knob::Curves, json::object({{"A", json::array({json::array({0, 1}), json::array({1, 1})})},
+                                                                                 {"B", json::array({json::array({0, 1}), json::array({1, 0})})}}),
+                            0, 1, {"A", "B"}, "A x curve A(alpha) + B x curve B(alpha): the defaults give an over"}}),
+                 "Adds A to B with A's alpha remapped by two curves (a softer or harder over)."});
+    {
+        std::vector<KnobDef> k = {Div("Temporaries")};
+        for (int i = 0; i < 4; ++i) {
+            std::string n = std::to_string(i);
+            KnobDef tn = S(("temp_name" + n).c_str(), "", "");
+            tn.name = "temp_name" + n;
+            tn.label = "temp " + n;
+            tn.width = 70;
+            KnobDef te = S(("temp_expr" + n).c_str(), "", "");
+            te.name = "temp_expr" + n;
+            te.label = "=";
+            te.sameLine = true;
+            k.push_back(tn);
+            k.push_back(te);
+        }
+        k.push_back(Div("Expressions"));
+        const char* defs[4] = {"R", "G", "B", "A"};
+        for (int i = 0; i < 4; ++i) {
+            std::string n = std::to_string(i);
+            KnobDef ch = Ch("", "", defs[i]);
+            ch.name = "channel" + n;
+            ch.label = "channels " + n;
+            KnobDef ex = S("", "", "");
+            ex.name = "expr" + n;
+            ex.label = "= ";
+            k.push_back(ch);
+            k.push_back(ex);
+        }
+        std::vector<KnobDef> me = k;
+        me.insert(me.begin(), InfoRow("", "Variables: Ar Ag Ab Aa, Br Bg Bb Ba, x y (pixel), cx cy (-1..1), frame, Node.knob"));
+        d.push_back({"MergeExpression", "Merge", withMask(me),
+                     "Per-pixel expressions over A and B: each row writes its expression into its channels "
+                     "(e.g. Ar * Ba). Functions: sin cos pow clamp lerp smoothstep noise random ..."});
+        std::vector<KnobDef> ce = k;
+        ce.insert(ce.begin(), InfoRow("", "Variables: r g b a, z (depth), x y (pixel), cx cy (-1..1), u v (0..1), frame, Node.knob"));
+        d.push_back({"Expression", "Color", withMask(ce),
+                     "Per-pixel expressions: each row writes its expression into its channels (e.g. r * 2, or "
+                     "a > 0.5 ? 1 : 0). Functions: sin cos pow clamp lerp smoothstep noise random ..."});
+    }
+    d.push_back({"CopyBBox", "Merge", {}, "B's picture with A's bounding box."});
+    d.push_back({"CopyRectangle", "Merge",
+                 withMask({Ch("channels", "channels", "rgba"), {"area", "area", Knob::Box, "$box", 0, 4096, {}, "The rectangle copied from A"},
+                           F("softness", "softness", 0, 0, 100)}),
+                 "Copies a rectangle of A into B, with a soft edge."});
+    d.push_back({"Blend", "Merge",
+                 {J("weights", "weights", json::array({1, 1}), "A weight per input: [1, 1, 0.5]"), B("normalize", "normalize (divide by the sum)", true)},
+                 "The weighted average of its inputs."});
+    d.push_back({"TimeDissolve", "Merge",
+                 {Field(I("in", "in", 1, -100000, 100000), 70), Same(Field(I("out", "out", 10, -100000, 100000), 70)),
+                  C("curve", "curve", "smooth", {"linear", "smooth", "ease in", "ease out"})},
+                 "Dissolves from input 1 to input 2 between the in and out frames."});
+    d.push_back({"ContactSheet", "Merge",
+                 {XY("size", "resolution", json::array({1920, 1080}), 1, 8192), I("rows", "rows", 3, 1, 32), I("columns", "columns", 3, 1, 32),
+                  F("gap", "gap", 0, 0, 100), C("roworder", "row order", "TopBottom", {"TopBottom", "BottomTop"}),
+                  C("colorder", "column order", "LeftRight", {"LeftRight", "RightLeft"}), B("center", "keep aspect (centre in cells)", true),
+                  Div("Split input"), B("splitinputs", "frames of input 1 instead of the inputs", false),
+                  When(Field(I("startframe", "start frame", 1, -100000, 100000), 70), "splitinputs=true"),
+                  When(Same(Field(I("endframe", "end frame", 10, -100000, 100000), 70)), "splitinputs=true"),
+                  When(I("frame_step", "every n frames", 1, 1, 100), "splitinputs=true")},
+                 "Lays its inputs (or the frames of one) out in a grid."});
+    d.push_back({"LayerContactSheet", "Merge",
+                 {I("rows", "rows (0 = auto)", 0, 0, 16), I("columns", "columns (0 = auto)", 0, 0, 16), F("gap", "gap", 4, 0, 100),
+                  B("showLayerNames", "show layer names", true), File("font", "font")},
+                 "Every layer of the input side by side, with its name."});
     // ---------------------------------------------------------------- OCIO (Color group)
     d.push_back({"Log2Lin", "Color",
                  {C("operation", "operation", "log2lin", {"log2lin", "lin2log"}), F("blackpoint", "black point", 95, 0, 1023),

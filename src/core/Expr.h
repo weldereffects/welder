@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "Params.h"
 
@@ -56,5 +57,26 @@ bool timeDependent(const Node& n);
 // Mix the current values of the node's expressions into a hash (cache keys
 // follow what expressions read, including other nodes' knobs).
 uint64_t hashValues(const Node& n, double frame, uint64_t h);
+
+// ------------------------------------------------------------------ pixel expressions
+// The same language run once per pixel (the Expression / MergeExpression nodes): names in
+// `vars` (r g b a x y ...) are per-pixel values; everything else (frame, knobs of other nodes,
+// constants) is evaluated once when compiled. `x` is a pixel variable here, not the frame.
+struct PixelExpr {
+    struct Op {
+        int code = 0;     // see Expr.cpp
+        double v = 0;     // constant / variable index / argument count
+        const std::string* fn = nullptr;
+    };
+    std::vector<Op> code;
+    std::string error;  // "" = compiled
+    bool ok() const { return error.empty() && !code.empty(); }
+    // Whether the text reads a per-pixel variable at all (else run() is a constant).
+    bool usesVars = false;
+    double run(const double* vars) const;
+};
+PixelExpr compilePixel(const std::string& text, const std::vector<std::string>& vars, double frame, const Node* owner);
+// Does the text read the frame, random() or other nodes' knobs (so the result can change over time)?
+bool pixelTimeDependent(const std::string& text);
 
 }  // namespace strata::expr

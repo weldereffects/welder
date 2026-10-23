@@ -204,6 +204,17 @@ void drawMenuBar(App& app, UiState& ui) {
         if (ImGui::MenuItem("Go to Frame...", "Alt+G")) ui.openGotoFrame = true;
         ImGui::EndMenu();
     }
+    if (ImGui::BeginMenu("Workspace")) {
+        if (ImGui::MenuItem("Reset Workspace", "Shift+F12")) ui.resetWorkspace = true;
+        ImGui::Separator();
+        // bring a panel to the front (a tab hidden behind others, or a floating one)
+        for (const char* w : {"Viewer", "Node Graph", "Properties", "Curve Editor", "Dope Sheet", "Messages", "Timeline", "Nodes"})
+            if (ImGui::MenuItem(w)) {
+                if (!ui.maximized.empty() && ui.maximized != w) ui.maximized.clear();
+                ImGui::SetWindowFocus(w);
+            }
+        ImGui::EndMenu();
+    }
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("Keyboard Shortcuts")) ui.showShortcuts = true;
         if (ImGui::MenuItem("About Welder")) ui.showAbout = true;

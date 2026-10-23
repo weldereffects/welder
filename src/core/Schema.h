@@ -32,6 +32,7 @@ enum class Knob {
     Button,      // runs an action (the knob's name), labelled with its label
     Format,      // an image size [w, h]: the project's (unset), the classic named formats, or custom
     Info,        // read-only facts about the node (`info` says which)
+    Curves,      // named lookup curves {"name": [[x, y], ...]} (options: the names; lo..hi: the x range)
 };
 
 struct KnobDef {

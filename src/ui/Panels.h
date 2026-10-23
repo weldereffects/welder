@@ -311,6 +311,7 @@ struct UiState {
     std::string maximized;        // currently maximized panel
     bool showShortcuts = false;
     bool showAbout = false;
+    bool resetWorkspace = false;  // Workspace > Reset Workspace: the default layout on the next frame
     bool showPrefs = false;  // Edit > Preferences (Shift+S)
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)
     std::string dropOpenComp;  // a .weld dropped on the window: opened (asking first when there are unsaved changes)
@@ -343,6 +344,10 @@ void drawTimeline(App& app, UiState& ui);
 // The timeline's fixed height (it never resizes vertically) and keeping its dock node at it.
 float timelineHeight();
 void lockTimelineHeight();
+// Forget the height the timeline was dragged to (Reset Workspace).
+void resetTimelineHeight();
+// Every docked panel stays resizable (clears no-resize flags, including ones saved in an older layout).
+void keepDockResizable();
 void drawCurveEditor(App& app, UiState& ui);
 void drawDopeSheet(App& app, UiState& ui);
 void tickPlayback(App& app, UiState& ui);

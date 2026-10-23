@@ -25,6 +25,7 @@
 #include "nodes/Keyer.h"
 #include "nodes/MeshEdit.h"
 #include "nodes/PrecompNode.h"
+#include "nodes/Curves.h"
 #include <thread>
 #include "core/Engine.h"
 #include <future>
@@ -1111,6 +1112,222 @@ void ocioKnob(Ctx& c, const KnobDef& k, float avail) {
 }
 
 bool condOk(const Node* n, const std::string& cond);
+// Named lookup curves (ColorLookup, HueCorrect, AddMix...): a list of the curves to pick from, and a
+// graph: click on the curve to add a point, drag points, double-click a point to delete it.
+void curvesKnob(Ctx& c, const KnobDef& k, float avail) {
+    struct State {
+        std::string sel;
+        int drag = -1;
+        bool dragging = false;
+        json working;
+        std::set<std::string> hidden;
+    };
+    static std::map<std::string, State> states;
+    State& stt = states[c.node->name + "/" + k.name];
+    const json* pv = findParam(c.node, k.name);
+    json val = stt.dragging ? stt.working : (pv && pv->is_object() ? *pv : k.def);
+    if (!val.is_object()) val = json::object();
+    auto curveOf = [&](const std::string& n) -> json {
+        if (val.contains(n) && val[n].is_array()) return val[n];
+        if (k.def.is_object() && k.def.contains(n)) return k.def[n];
+        return json::array({json::array({k.lo, k.lo}), json::array({k.hi, k.hi})});
+    };
+    if (stt.sel.empty() || std::find(k.options.begin(), k.options.end(), stt.sel) == k.options.end())
+        stt.sel = k.options.empty() ? "" : k.options[0];
+    const double period = c.node->type == "HueCorrect" ? k.hi - k.lo : 0;
+    auto curveColour = [](const std::string& n) -> ImU32 {
+        std::string l = n;
+        for (auto& ch : l) ch = (char)std::tolower((unsigned char)ch);
+        if (l == "red" || l == "r" || l.find("r_") == 0 || l.find("red") != std::string::npos) return IM_COL32(230, 80, 80, 255);
+        if (l == "green" || l == "g" || l.find("green") != std::string::npos) return IM_COL32(90, 200, 90, 255);
+        if (l == "blue" || l == "b" || l.find("blue") != std::string::npos) return IM_COL32(100, 130, 240, 255);
+        if (l == "alpha" || l == "a") return IM_COL32(200, 200, 200, 255);
+        if (l.find("sat") != std::string::npos) return IM_COL32(220, 180, 60, 255);
+        if (l.find("lum") != std::string::npos) return IM_COL32(240, 240, 240, 255);
+        return IM_COL32(230, 230, 230, 255);
+    };
+    ImGui::NewLine();
+    // the curve list
+    const float listW = 90;
+    ImGui::BeginGroup();
+    for (auto& n : k.options) {
+        ImGui::PushID(n.c_str());
+        bool vis = !stt.hidden.count(n);
+        if (ImGui::Checkbox("##vis", &vis)) {
+            if (vis) stt.hidden.erase(n);
+            else stt.hidden.insert(n);
+        }
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, curveColour(n));
+        if (ImGui::Selectable(n.c_str(), stt.sel == n, 0, ImVec2(listW - 30, 0))) stt.sel = n;
+        ImGui::PopStyleColor();
+        ImGui::PopID();
+    }
+    if (ImGui::SmallButton("reset")) {
+        c.app.checkpoint();
+        std::string s = stt.sel;
+        json d = k.def.is_object() && k.def.contains(s) ? k.def[s] : json();
+        change(c, k.name, [s, d, def = k.def](json& j) {
+            if (!j.is_object()) j = def.is_object() ? def : json::object();
+            if (d.is_null()) j.erase(s);
+            else j[s] = d;
+        });
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("reset the selected curve");
+    ImGui::EndGroup();
+    ImGui::SameLine();
+    // the graph
+    const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x - 4), h = std::clamp(w * 0.6f, 140.0f, 260.0f);
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    double ylo = std::min(0.0, k.lo), yhi = std::max(1.0, k.hi);
+    if (c.node->type == "HueCorrect") ylo = 0, yhi = 2;
+    for (auto& n : k.options)
+        for (auto& p : curveOf(n))
+            if (p.is_array() && p.size() >= 2 && p[1].is_number()) {
+                ylo = std::min(ylo, p[1].get<double>());
+                yhi = std::max(yhi, p[1].get<double>());
+            }
+    const double pad = (yhi - ylo) * 0.05;
+    ylo -= pad;
+    yhi += pad;
+    auto toS = [&](double x, double y) {
+        return ImVec2(p0.x + (float)((x - k.lo) / (k.hi - k.lo) * w), p0.y + h - (float)((y - ylo) / (yhi - ylo) * h));
+    };
+    auto fromS = [&](ImVec2 s, double& x, double& y) {
+        x = k.lo + (s.x - p0.x) / w * (k.hi - k.lo);
+        y = ylo + (p0.y + h - s.y) / h * (yhi - ylo);
+    };
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(32, 32, 32, 255));
+    if (c.node->type == "HueCorrect") {  // the hues along the bottom
+        for (int i = 0; i < 60; ++i) {
+            auto hue = [](float t) {
+                float r = std::clamp(std::fabs(t * 6 - 3) - 1, 0.0f, 1.0f), g = std::clamp(2 - std::fabs(t * 6 - 2), 0.0f, 1.0f),
+                      b = std::clamp(2 - std::fabs(t * 6 - 4), 0.0f, 1.0f);
+                return IM_COL32((int)(r * 200), (int)(g * 200), (int)(b * 200), 255);
+            };
+            dl->AddRectFilledMultiColor(ImVec2(p0.x + w * i / 60, p0.y + h - 6), ImVec2(p0.x + w * (i + 1) / 60, p0.y + h), hue(i / 60.0f),
+                                        hue((i + 1) / 60.0f), hue((i + 1) / 60.0f), hue(i / 60.0f));
+        }
+    }
+    for (int g = 0; g <= 4; ++g) {  // grid
+        const float gx = p0.x + w * g / 4, gy = p0.y + h * g / 4;
+        dl->AddLine(ImVec2(gx, p0.y), ImVec2(gx, p0.y + h), IM_COL32(55, 55, 55, 255));
+        dl->AddLine(ImVec2(p0.x, gy), ImVec2(p0.x + w, gy), IM_COL32(55, 55, 55, 255));
+    }
+    {  // y = 0 and y = 1
+        ImVec2 a = toS(k.lo, 0), b = toS(k.hi, 0);
+        dl->AddLine(a, b, IM_COL32(80, 80, 80, 255));
+        a = toS(k.lo, 1), b = toS(k.hi, 1);
+        dl->AddLine(a, b, IM_COL32(70, 70, 70, 255));
+    }
+    auto drawCurve = [&](const std::string& n, bool selected) {
+        LookupCurve cv = LookupCurve::fromJson(curveOf(n), {}, period);
+        ImU32 col = curveColour(n);
+        if (!selected) col = (col & 0x00ffffff) | 0x70000000;
+        ImVec2 prev;
+        for (int i = 0; i <= 200; ++i) {
+            const double x = k.lo + (k.hi - k.lo) * i / 200.0;
+            ImVec2 s = toS(x, cv.pts.empty() ? x : cv.eval(x));
+            s.y = std::clamp(s.y, p0.y - 2, p0.y + h + 2);
+            if (i) dl->AddLine(prev, s, col, selected ? 2.0f : 1.0f);
+            prev = s;
+        }
+        if (selected)
+            for (auto& [x, y] : cv.pts) dl->AddCircleFilled(toS(x, y), 4, col);
+    };
+    dl->PushClipRect(p0, ImVec2(p0.x + w, p0.y + h), true);
+    for (auto& n : k.options)
+        if (n != stt.sel && !stt.hidden.count(n)) drawCurve(n, false);
+    if (!stt.sel.empty()) drawCurve(stt.sel, true);
+    dl->PopClipRect();
+    dl->AddRect(p0, ImVec2(p0.x + w, p0.y + h), IM_COL32(15, 15, 15, 255));
+    ImGui::InvisibleButton("##graph", ImVec2(w, h));
+    const ImVec2 m = ImGui::GetIO().MousePos;
+    json pts = curveOf(stt.sel);
+    auto nearest = [&]() {
+        int best = -1;
+        float bd = 8 * 8;
+        for (int i = 0; i < (int)pts.size(); ++i) {
+            ImVec2 s = toS(pts[i][0].get<double>(), pts[i][1].get<double>());
+            float d = (s.x - m.x) * (s.x - m.x) + (s.y - m.y) * (s.y - m.y);
+            if (d < bd) bd = d, best = i;
+        }
+        return best;
+    };
+    auto commit = [&](json np) {
+        std::sort(np.begin(), np.end(), [](const json& a, const json& b) { return a[0].get<double>() < b[0].get<double>(); });
+        std::string s = stt.sel;
+        json def = k.def;
+        val[s] = np;
+        change(c, k.name, [s, np, def](json& j) {
+            if (!j.is_object()) j = def.is_object() ? def : json::object();
+            j[s] = np;
+        });
+    };
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+        int i = nearest();
+        if (i >= 0 && pts.size() > 1) {
+            c.app.checkpoint();
+            pts.erase(pts.begin() + i);
+            commit(pts);
+        }
+        stt.drag = -1;
+        stt.dragging = false;
+    } else if (ImGui::IsItemActivated()) {
+        int i = nearest();
+        c.app.checkpoint();
+        if (i < 0) {  // a new point on the curve (or where clicked, away from it)
+            double x, y;
+            fromS(m, x, y);
+            LookupCurve cv = LookupCurve::fromJson(pts, {}, period);
+            const double cy = cv.pts.empty() ? x : cv.eval(x);
+            if (std::fabs(toS(x, cy).y - m.y) < 10) y = cy;
+            pts.push_back(json::array({x, y}));
+            commit(pts);
+            std::sort(pts.begin(), pts.end(), [](const json& a, const json& b) { return a[0].get<double>() < b[0].get<double>(); });
+            for (int q = 0; q < (int)pts.size(); ++q)
+                if (pts[q][0].get<double>() == x) i = q;
+        }
+        stt.drag = i;
+        stt.dragging = true;
+        stt.working = val;
+        stt.working[stt.sel] = pts;
+    }
+    if (ImGui::IsItemActive() && stt.dragging && stt.drag >= 0 && ImGui::IsMouseDragging(0, 0)) {
+        json wp = stt.working[stt.sel];
+        if (stt.drag < (int)wp.size()) {
+            double x, y;
+            fromS(m, x, y);
+            // stay between the neighbours
+            const double lo = stt.drag > 0 ? wp[stt.drag - 1][0].get<double>() + 1e-4 : (period > 0 ? k.lo : -1e9);
+            const double hi = stt.drag + 1 < (int)wp.size() ? wp[stt.drag + 1][0].get<double>() - 1e-4 : (period > 0 ? k.hi : 1e9);
+            x = std::clamp(x, lo, hi);
+            if (ImGui::GetIO().KeyShift) y = wp[stt.drag][1].get<double>();  // shift: sideways only
+            if (ImGui::GetIO().KeyCtrl) x = wp[stt.drag][0].get<double>();   // ctrl: up and down only
+            wp[stt.drag] = json::array({x, y});
+            stt.working[stt.sel] = wp;
+            std::string s = stt.sel;
+            json def = k.def;
+            change(c, k.name, [s, wp, def](json& j) {
+                if (!j.is_object()) j = def.is_object() ? def : json::object();
+                j[s] = wp;
+            });
+        }
+    }
+    if (ImGui::IsItemDeactivated()) {
+        stt.dragging = false;
+        stt.drag = -1;
+    }
+    if (ImGui::IsItemHovered()) {
+        double x, y;
+        fromS(m, x, y);
+        ImGui::SetTooltip("%s  x %.3f  y %.3f\nclick: add / drag a point, double-click: delete\nshift-drag: sideways, ctrl-drag: up / down",
+                          stt.sel.c_str(), x, y);
+    }
+    (void)avail;
+}
+
 void knobBody(Ctx& c, const KnobDef& k);
 void infoKnob(Ctx& c, const KnobDef& k);
 void buttonAction(Ctx& c, const std::string& action);
@@ -1453,6 +1670,8 @@ void knobBody(Ctx& c, const KnobDef& k) {
         if (ImGui::IsItemActivated()) c.app.checkpoint();
     } else if (k.type == Knob::Gradient) {
         gradientKnob(c, k, avail);
+    } else if (k.type == Knob::Curves) {
+        curvesKnob(c, k, avail);
     } else if (k.type == Knob::Text) {
         textEdit(c, k, getString(c.node, k.name, k.def.is_string() ? k.def.get<std::string>() : ""), avail);
     } else if (k.type == Knob::String) {
