@@ -107,6 +107,18 @@ comment line .nk apps skip, so a copy pasted back into Welder loses nothing.
 | Grade | Grade | black→lift, white→gain, add→offset, reverse. (Un)premult by on all colour nodes. |
 | ColorCorrect | ColorCorrect | Custom range lookup curves flagged. |
 | Saturation, Multiply, Add, Gamma, Invert, Clamp, Premult, Unpremult | same | Saturation's luminance math. |
+| KeyMix, AddMix, MergeExpression, CopyBBox, CopyRectangle, TimeDissolve, ContactSheet, LayerContactSheet, AddChannels, ChannelMerge | same | AddMix's alpha curves and Blend's weights are not read (flagged). |
+| Expression | Expression | temp_name / temp_expr rows, expr0‥3 with their channels; the same variables (r g b a x y). |
+| Exposure, ColorLookup, HueCorrect, HSVTool, SoftClip, ColorMatrix, Posterize, Toe, RollOffContrast, PLogLin, ClipTest, OCIOLogConvert, CMSTestPattern | same | Lookup curves (ColorLookup, HueCorrect) read point by point. |
+| MatchGrade, ColorTransfer, MinColor, HistEQ, CrossTalk, Histogram | same | Their analysis runs live; CrossTalk's curves and Histogram's ranges are not read (flagged). |
+| Vectorfield | OCIOFileTransform | the LUT file. |
+| Median, DirBlurWrapper, MotionBlur, MotionBlur2D, Convolve(2), Matrix, Soften, Laplacian, Bilateral, GodRays, VolumeRays, DegrainSimple, DegrainBlue, EdgeExtend, Inpaint, DropShadow, BumpBoss, ZSlice, MarkerRemoval | same (DirBlurWrapper -> DirBlur) | Settings with no counterpart use Welder's defaults. |
+| Bokeh | Defocus | No depth input (flagged). |
+| TransformMasked | TransformMasked | The mask input and channel are kept. |
+| CameraShake(2, 3), AdjBBox, BlackOutside, Tile, SphericalTransform, TVIScale, GridWarp3 | CameraShake, AdjustBBox, ... | GridWarp grids and SphericalTransform projections are not read (flagged). |
+| Retime, TimeWarp, FrameRange, AppendClip, TimeClip, FrameBlend, TimeBlur, TemporalMedian, NoTimeBlur, add32p / remove32p | same | |
+| Text2, Text | Text | message (with [frame], [value ...]), box, justification, size x global font scale, kerning, leading, colour, transform. The font family is not read (flagged). |
+| Rectangle, Grid, Flare, Sparkles, Glint, Grain2, ScannedGrain, Dither, ColorBars, ColorWheel, CurveTool | same (Grain2 -> Grain) | ScannedGrain needs its grain plate connected (flagged). CurveTool's analysed curves come along. |
 | Transform, TransformMasked | Transform | Skew X / Y and order, every classic filter, clamp, black outside, motion blur with shutter and shutter offset. Non-SRT order flagged. |
 | Position, Reformat, Crop | same | Reformat: to format / to box / scale, turn, black outside, preserve bbox, filter and clamp. |
 | Blur | Blur | Size calibration vs the original still to verify. |

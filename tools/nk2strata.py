@@ -275,6 +275,35 @@ def parse_curve(words):
     return {"keys": keys, "interp": interp}
 
 
+def parse_lut(value):
+    """A lookup-curves knob ({master {curve C 0 1} red {} ...}) -> {"master": [[x, y], ...], ...}.
+    Values without an x<n> before them sit at x = 0, 1, 2 ... (like frames, but from 0)."""
+    words = [str(w) for w in split_words(str(value))]
+    out = {}
+    i = 0
+    while i + 1 < len(words):
+        name, body = words[i], words[i + 1]
+        i += 2
+        cw = [str(w) for w in split_words(body)]
+        if not cw or cw[0] != "curve":
+            continue
+        x, pts, j = 0.0, [], 1
+        while j < len(cw):
+            w = cw[j]
+            if w.startswith("x") and is_number(w[1:]):
+                x = float(w[1:])
+            elif w[:1] in ("s", "t", "u", "v") and (is_number(w[1:]) or w[1:] == ""):
+                if w[1:] == "" and j + 1 < len(cw) and is_number(cw[j + 1]):
+                    j += 1
+            elif is_number(w):
+                pts.append([x, float(w)])
+                x += 1.0
+            j += 1
+        if pts:
+            out[name] = pts
+    return out
+
+
 def scalar(word):
     """Convert one knob word to a number or an animation curve. Raises Expression."""
     s = str(word)
@@ -494,6 +523,202 @@ def channel_set(value):
             return [channel_name(w)]
         return w  # a layer name
     return [channel_name(w) if "." in w or w in CHAN_SUFFIX else w for w in words]
+
+
+# Classes translated by copying knobs: class -> (Welder type, {nk knob: "dest[:kind]"}).
+# kinds: (number, the default) ch (channel set) chname (one channel) flag str lower lut (lookup
+# curves) rows (a matrix) comp<i>/<n> (one component of a vector).
+_ROWS = {"channel%d" % i: "channel%d:ch" % i for i in range(4)}
+_ROWS.update({"expr%d" % i: "expr%d:str" % i for i in range(4)})
+_ROWS.update({"temp_name%d" % i: "temp_name%d:str" % i for i in range(4)})
+_ROWS.update({"temp_expr%d" % i: "temp_expr%d:str" % i for i in range(4)})
+SIMPLE_CLASSES = {
+    # merge / channel
+    "KeyMix": ("KeyMix", {"channels": "channels:ch", "maskChannel": "mask_channel:chname", "invertMask": "invert_mask:flag",
+                          "bbox": "bbox:lower"}),
+    "AddMix": ("AddMix", {"channels": "channels:ch", "premultiplied": "premultiplied:flag"}),
+    "MergeExpression": ("MergeExpression", dict(_ROWS)),
+    "Expression": ("Expression", dict(_ROWS)),
+    "CopyBBox": ("CopyBBox", {}),
+    "CopyRectangle": ("CopyRectangle", {"channels": "channels:ch", "area": "area", "softness": "softness"}),
+    "Blend": ("Blend", {}),
+    "TimeDissolve": ("TimeDissolve", {"in": "in", "out": "out"}),
+    "ContactSheet": ("ContactSheet", {"width": "size:comp0/2", "height": "size:comp1/2", "rows": "rows", "columns": "columns", "gap": "gap",
+                                      "roworder": "roworder:str", "colorder": "colorder:str", "center": "center:flag",
+                                      "splitinputs": "splitinputs:flag", "startframe": "startframe", "endframe": "endframe"}),
+    "LayerContactSheet": ("LayerContactSheet", {"showLayerNames": "showLayerNames:flag"}),
+    "AddChannels": ("AddChannels", {"channels": "channels:str", "channels2": "channels2:str", "channels3": "channels3:str",
+                                    "channels4": "channels4:str", "color": "color"}),
+    "ChannelMerge": ("ChannelMerge", {"A": "A:chname", "B": "B:chname", "operation": "operation:lower", "output": "output:chname"}),
+    # colour
+    "Exposure": ("Exposure", {"channels": "channels:ch", "mode": "mode:lower", "red": "value:comp0/4", "green": "value:comp1/4",
+                              "blue": "value:comp2/4"}),
+    "ColorLookup": ("ColorLookup", {"channels": "channels:ch", "lut": "lut:lut"}),
+    "HueCorrect": ("HueCorrect", {"channels": "channels:ch", "hue": "hue:lut"}),
+    "HSVTool": ("HSVTool", {"hue_rotation": "hue_rotation", "hue_range": "hue_range", "hue_range_rolloff": "hue_range_rolloff",
+                            "saturation_adjust": "saturation_adjust", "saturation_range": "saturation_range",
+                            "saturation_range_rolloff": "saturation_range_rolloff", "brightness_adjust": "brightness_adjust",
+                            "brightness_range": "brightness_range", "brightness_range_rolloff": "brightness_range_rolloff"}),
+    "SoftClip": ("SoftClip", {"channels": "channels:ch", "softclip_min": "softclip_min", "softclip_max": "softclip_max"}),
+    "ColorMatrix": ("ColorMatrix", {"channels": "channels:ch", "invert": "invert:flag"}),
+    "Posterize": ("Posterize", {"channels": "channels:ch", "Colors": "Colors"}),
+    "Toe": ("Toe", {"channels": "channels:ch", "lift": "lift"}),
+    "RollOffContrast": ("RollOffContrast", {"channels": "channels:ch", "contrast": "contrast", "center": "center", "soft_clip": "soft_clip"}),
+    "CrossTalk": ("CrossTalk", {"channels": "channels:ch"}),
+    "Histogram": ("Histogram", {"channels": "channels:ch", "gamma": "gamma"}),
+    "ClipTest": ("ClipTest", {"channels": "channels:ch", "lower": "lower", "upper": "upper"}),
+    "PLogLin": ("PLogLin", {"operation": "operation:str", "linref": "linref", "logref": "logref", "negativegamma": "negativegamma",
+                            "density": "density"}),
+    "OCIOLogConvert": ("OCIOLogConvert", {"operation": "operation:lower"}),
+    "MatchGrade": ("MatchGrade", {"channels": "channels:ch"}),
+    "ColorTransfer": ("ColorTransfer", {"channels": "channels:ch"}),
+    "MinColor": ("MinColor", {"channels": "channels:ch"}),
+    "HistEQ": ("HistEQ", {"channels": "channels:ch"}),
+    "CMSTestPattern": ("CMSTestPattern", {"rgbcubesize": "rgbcubesize"}),
+    "Vectorfield": ("OCIOFileTransform", {"vfield_file": "file:str"}),
+    # filters
+    "Median": ("Median", {"channels": "channels:ch", "size": "size"}),
+    "DirBlurWrapper": ("DirBlur", {"channels": "channels:ch", "BlurType": "BlurType:str", "BlurCenter": "BlurCenter",
+                                   "BlurLength": "BlurLength", "BlurAngle": "BlurAngle", "BlurQuality": "BlurQuality"}),
+    "MotionBlur": ("MotionBlur", {"shutterTime": "shutter", "shutterSamples": "shutter_samples", "vectorDetail": "vector_detail"}),
+    "MotionBlur2D": ("MotionBlur2D", {"shutter": "shutter", "shutteroffset": "shutteroffset:lower"}),
+    "Convolve2": ("Convolve", {"channels": "channels:ch", "normalize": "normalize:flag"}),
+    "Convolve": ("Convolve", {"channels": "channels:ch", "normalize": "normalize:flag"}),
+    "Matrix": ("Matrix", {"channels": "channels:ch", "matrix": "matrix:rows", "normalize": "normalize:flag"}),
+    "EdgeExtend": ("EdgeExtend", {}),
+    "Inpaint": ("Inpaint", {}), "Inpaint2": ("Inpaint", {}),
+    "DropShadow": ("DropShadow", {"angle": "angle", "distance": "distance", "softness": "size", "opacity": "opacity", "color": "color"}),
+    "Soften": ("Soften", {"channels": "channels:ch", "size": "size", "amount": "amount", "minimum": "minimum", "maximum": "maximum"}),
+    "Laplacian": ("Laplacian", {"channels": "channels:ch", "size": "size"}),
+    "Bilateral": ("Bilateral", {"channels": "channels:ch", "size": "size"}), "Bilateral2": ("Bilateral", {"channels": "channels:ch", "size": "size"}),
+    "DegrainSimple": ("DegrainSimple", {}),
+    "DegrainBlue": ("DegrainBlue", {"size": "size"}),
+    "GodRays": ("GodRays", {"channels": "channels:ch", "center": "center", "scale": "scale", "steps": "steps", "from_color": "from_color",
+                            "to_color": "to_color"}),
+    "VolumeRays": ("VolumeRays", {"channels": "channels:ch", "center": "center", "steps": "steps"}),
+    "BumpBoss": ("BumpBoss", {}),
+    "ZSlice": ("ZSlice", {}),
+    "Bokeh": ("Defocus", {"size": "defocus"}),
+    "MarkerRemoval": ("MarkerRemoval", {"channels": "channels:ch", "area": "area"}),
+    # transforms
+    "CameraShake": ("CameraShake", {"amplitude": "amplitude", "rotation": "rotation", "scale": "scale", "frequency": "frequency",
+                                    "octaves": "octaves", "seed": "seed", "motionblur": "motionblur", "shutter": "shutter"}),
+    "CameraShake2": ("CameraShake", {"amplitude": "amplitude", "rotation": "rotation", "scale": "scale", "frequency": "frequency",
+                                     "octaves": "octaves", "seed": "seed"}),
+    "CameraShake3": ("CameraShake", {"amplitude": "amplitude", "rotation": "rotation", "scale": "scale", "frequency": "frequency",
+                                     "octaves": "octaves", "seed": "seed"}),
+    "AdjBBox": ("AdjustBBox", {"numpixels": "numpixels"}),
+    "BlackOutside": ("BlackOutside", {}),
+    "Tile": ("Tile", {"rows": "rows", "columns": "columns", "mirror_rows": "mirror_rows:flag", "mirror_columns": "mirror_columns:flag"}),
+    "SphericalTransform": ("SphericalTransform", {}), "SphericalTransform2": ("SphericalTransform", {}),
+    "TVIScale": ("TVIScale", {}),
+    # time
+    "Retime": ("Retime", {"input.first": "input.first", "input.last": "input.last", "output.first": "output.first",
+                          "output.last": "output.last", "speed": "speed", "reverse": "reverse:flag", "filter": "filter:lower",
+                          "before": "before:lower", "after": "after:lower"}),
+    "TimeWarp": ("TimeWarp", {"lookup": "lookup", "filter": "filter:lower"}),
+    "FrameRange": ("FrameRange", {"first_frame": "first_frame", "last_frame": "last_frame"}),
+    "AppendClip": ("AppendClip", {"firstFrame": "firstFrame", "fadeIn": "fadeIn", "fadeOut": "fadeOut", "dissolve": "dissolve"}),
+    "TimeClip": ("TimeClip", {"first": "first", "last": "last", "frame": "frame", "before": "before:lower", "after": "after:lower",
+                              "fadeIn": "fadeIn", "fadeOut": "fadeOut", "reverse": "reverse:flag"}),
+    "FrameBlend": ("FrameBlend", {"numframes": "numframes", "userange": "userange:flag", "startframe": "startframe", "endframe": "endframe"}),
+    "TimeBlur": ("TimeBlur", {"divisions": "divisions", "shutter": "shutter", "shutteroffset": "shutteroffset:lower",
+                              "shuttercustomoffset": "shuttercustomoffset"}),
+    "TemporalMedian": ("TemporalMedian", {"core": "core"}),
+    "NoTimeBlur": ("NoTimeBlur", {"rounding": "rounding:lower"}),
+    "Add32p": ("Add32Pulldown", {}), "add32p": ("Add32Pulldown", {}),
+    "Remove32p": ("Remove32Pulldown", {}), "remove32p": ("Remove32Pulldown", {}),
+    # draw / image
+    "Text2": ("Text", {"message": "message:str", "box": "box", "xjustify": "xjustify:lower", "yjustify": "yjustify:lower",
+                       "global_font_scale": "_scale", "font_size": "size", "kerning": "tracking", "leading": "leading", "color": "color",
+                       "translate": "translate", "rotate": "rotate", "scale": "scale", "center": "center"}),
+    "Text": ("Text", {"message": "message:str", "box": "box", "xjustify": "xjustify:lower", "yjustify": "yjustify:lower",
+                      "size": "size", "kerning": "tracking", "leading": "leading", "color": "color", "translate": "translate",
+                      "rotate": "rotate", "scale": "scale", "center": "center", "font": "font:str"}),
+    "Rectangle": ("Rectangle", {"area": "area", "softness": "softness", "color": "color", "invert": "invert:flag"}),
+    "Grid": ("Grid", {"number": "number", "size": "size", "translate": "translate", "color": "color"}),
+    "Flare": ("Flare", {"position": "position", "brightness": "brightness"}),
+    "Sparkles": ("Sparkles", {"position": "position", "size": "size", "rays": "rays"}),
+    "Glint": ("Glint", {"no_of_rays": "no_of_rays", "length": "length", "odd_ray_length": "odd_ray_length", "rotation": "rotation",
+                        "steps": "steps", "tolerance": "tolerance", "gain": "gain"}),
+    "Grain2": ("Grain", {"red_size": "size:comp0/3", "green_size": "size:comp1/3", "blue_size": "size:comp2/3",
+                         "red_i": "intensity:comp0/3", "green_i": "intensity:comp1/3", "blue_i": "intensity:comp2/3",
+                         "red_m": "irregularity:comp0/3", "green_m": "irregularity:comp1/3", "blue_m": "irregularity:comp2/3",
+                         "black": "black", "minimum": "minimum", "seed": "seed"}),
+    "ScannedGrain": ("ScannedGrain", {}),
+    "Dither": ("Dither", {"amount": "amount", "seed": "seed", "static_seed": "static:flag"}),
+    "ColorBars": ("ColorBars", {"barintensity": "barintensity"}),
+    "ColorWheel": ("ColorWheel", {"rotate": "rotate", "gamma": "gamma"}),
+    "CurveTool": ("CurveTool", {"operation": "operation:str", "ROI": "ROI", "intensitydata": "intensitydata", "autocropdata": "autocropdata",
+                                "exposure": "exposure", "maxlumapixdata": "maxlumapixdata", "minlumapixdata": "minlumapixdata"}),
+}
+SIMPLE_VECTOR_DEFAULTS = {("ContactSheet", "size"): [1920, 1080], ("Exposure", "value"): [0, 0, 0, 0],
+                          ("Grain", "size"): [3.3, 3.5, 6], ("Grain", "intensity"): [0.1, 0.1, 0.18],
+                          ("Grain", "irregularity"): [0.6, 0.6, 0.6]}
+# main inputs per Welder type (the rest: a mask)
+SIMPLE_INPUTS = {"KeyMix": 3, "AddMix": 2, "MergeExpression": 2, "CopyBBox": 2, "CopyRectangle": 2, "Blend": 8, "TimeDissolve": 2,
+                 "ContactSheet": 16, "ChannelMerge": 2, "Convolve": 2, "MatchGrade": 3, "ColorTransfer": 3, "MotionBlur2D": 2,
+                 "AppendClip": 16, "ScannedGrain": 2, "BumpBoss": 2, "EdgeExtend": 2, "Inpaint": 2,
+                 "ColorBars": 0, "ColorWheel": 0, "CMSTestPattern": 0}
+
+
+def _fix_colormatrix(p, k, warn):
+    if "matrix" in k:
+        rows = [[float(x) for x in split_words(str(r)) if is_number(str(x))] for r in split_words(str(k["matrix"]))]
+        if len(rows) == 3 and all(len(r) == 3 for r in rows):
+            p["matrix_r"], p["matrix_g"], p["matrix_b"] = rows
+
+
+def _fix_text2(p, k, warn):
+    if "_scale" in p:  # Text2's global font scale multiplies its size
+        p["size"] = float(p.get("size", 100)) * float(p.pop("_scale"))
+    if "font" in k:
+        warn("the font family is not translated (Welder uses Arial, or the font file you pick)")
+    if "message" in p:
+        p["message"] = p["message"].replace("\\n", "\n")
+
+
+def _fix_exposure(p, k, warn):
+    m = p.get("mode", "")
+    p["mode"] = "densities" if "dens" in m else "cineon" if "cineon" in m else "stops"
+
+
+def _fix_retime(p, k, warn):
+    f = p.get("filter", "")
+    if f:
+        p["filter"] = "none" if f in ("none", "nearest") else "box"
+    for key in ("before", "after"):
+        if key in p and p[key] not in ("hold", "loop", "bounce", "black"):
+            p[key] = "hold"
+
+
+def _fix_logconvert(p, k, warn):
+    op = p.get("operation", "")
+    p["operation"] = "log to lin" if "log to" in op or op.startswith("log") else "lin to log"
+
+
+def _warn_approx(msg):
+    def f(p, k, warn):
+        warn(msg)
+    return f
+
+
+SIMPLE_FIXUPS = {
+    "ColorMatrix": _fix_colormatrix, "Text2": _fix_text2, "Text": _fix_text2, "Exposure": _fix_exposure, "Retime": _fix_retime,
+    "OCIOLogConvert": _fix_logconvert,
+    "TimeWarp": lambda p, k, w: p.update({"filter": "none" if p.get("filter", "none") in ("none", "nearest") else "box"}),
+    "AddMix": _warn_approx("the A / B alpha curves are not translated (defaults used)"),
+    "CrossTalk": _warn_approx("the cross-talk curves are not translated"),
+    "ScannedGrain": _warn_approx("connect a Read of the grain plate to the grain input"),
+    "GridWarp3": _warn_approx("the grids are not translated"),
+    "SphericalTransform": _warn_approx("the projections are not translated (latlong to latlong)"),
+    "EdgeExtend": _warn_approx("EdgeExtend's settings are approximated"),
+    "Bokeh": _warn_approx("Bokeh became a Defocus (no depth input)"),
+    "Blend": _warn_approx("the weights are not translated (all 1)"),
+    "DegrainSimple": _warn_approx("the degrain settings are approximated"),
+    "Histogram": _warn_approx("the input / output ranges are not translated"),
+}
+SIMPLE_CLASSES["GridWarp3"] = ("GridWarp", {})
 
 
 # ----------------------------------------------------------------------------
@@ -2273,6 +2498,12 @@ class Translator:
             if "shutteroffset" in k or "shuttercustomoffset" in k:
                 pass
             self.translated += 1
+            if klass == "TransformMasked":
+                if "maskChannelInput" in k and str(k["maskChannelInput"]) != "none":
+                    params["mask_channel"] = channel_name(str(k["maskChannelInput"]))
+                if flag("invert_mask"):
+                    params["invert_mask"] = True
+                return self.emit(nk_name, klass, "TransformMasked", main[:1] + (masks[:1] or main[1:2]), params, k)
             return self.emit(nk_name, klass, "Transform", main[:1], params, k)
 
         if klass == "Position":
@@ -2851,6 +3082,54 @@ class Translator:
                  % (len(shapes) - n_paint, n_paint))
             self.translated += 1
             return self.emit(nk_name, klass, klass, main[:2] if klass == "RotoPaint" else main[:1], params, k)
+
+        # ---------------------------------------------------- table-driven classes (knobs copied as they are)
+        if klass in SIMPLE_CLASSES:
+            stype, knobs_map = SIMPLE_CLASSES[klass]
+            for nk, spec in knobs_map.items():
+                if nk not in k:
+                    continue
+                dest, _, kind = spec.partition(":")
+                dest = dest or nk
+                v = k[nk]
+                if kind == "ch":
+                    params[dest] = channel_set(v)
+                elif kind == "chname":
+                    params[dest] = channel_name(str(v).strip('"'))
+                elif kind == "flag":
+                    params[dest] = flag(nk)
+                elif kind == "str":
+                    params[dest] = str(v).strip('"').strip("{}").strip()
+                elif kind == "lower":
+                    params[dest] = str(v).strip('"').lower()
+                elif kind == "lut":
+                    curves = parse_lut(v)
+                    if curves:
+                        params[dest] = curves
+                elif kind == "rows":
+                    rows = [[float(x) for x in split_words(str(r)) if is_number(str(x))] for r in split_words(str(v))]
+                    rows = [r for r in rows if r]
+                    if rows:
+                        params[dest] = rows
+                elif kind.startswith("comp"):  # one component of a vector param: comp<i>/<n>
+                    idx, n = (int(t) for t in kind[4:].split("/"))
+                    val = num(nk)
+                    if val is not None:
+                        cur = params.get(dest)
+                        if not isinstance(cur, list):
+                            cur = list(SIMPLE_VECTOR_DEFAULTS.get((stype, dest), [0] * n))
+                        cur[idx] = val
+                        params[dest] = cur
+                else:
+                    num(nk, dest=dest)
+            common_mix_mask()
+            fix = SIMPLE_FIXUPS.get(klass)
+            if fix:
+                fix(params, k, warn)
+            self.translated += 1
+            n_in = SIMPLE_INPUTS.get(stype, 1)
+            ins = list(main[:n_in]) + [None] * max(0, n_in - len(main[:n_in]))
+            return self.emit(nk_name, klass, stype, ins + masks[:1], params, k)
 
         # ---------------------------------------------------- unsupported
         self.unsupported[klass] = self.unsupported.get(klass, 0) + 1

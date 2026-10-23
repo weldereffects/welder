@@ -1089,6 +1089,225 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(td, 3, 3, "G"), 0.5, 1e-6);
     });
 
+    test("colour extras: Exposure, ColorLookup, HueCorrect, HSVTool, SoftClip, ColorMatrix, Posterize, levels, PLogLin", [] {
+        auto c = comp(json::array({
+            {{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.25, 0.1, 1}}}}},
+            {{"name", "Ex"}, {"type", "Exposure"}, {"inputs", {"K"}}, {"params", {{"value", {1, 1, 1, 0}}}}},
+            {{"name", "CL"}, {"type", "ColorLookup"}, {"inputs", {"K"}}, {"params", json::parse(R"({"lut": {"master": [[0, 0], [1, 2]]}})")}},
+            {{"name", "HC"}, {"type", "HueCorrect"}, {"inputs", {"K"}},
+             {"params", json::parse(R"({"hue": {"sat": [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [5, 0]]}})")}},
+            {{"name", "HV"}, {"type", "HSVTool"}, {"inputs", {"K"}}, {"params", {{"brightness_adjust", 2}}}},
+            {{"name", "SC"}, {"type", "SoftClip"}, {"inputs", {"Ex"}}},
+            {{"name", "CM"}, {"type", "ColorMatrix"}, {"inputs", {"K"}}, {"params", {{"matrix_r", {0, 1, 0}}, {"matrix_g", {1, 0, 0}}}}},
+            {{"name", "CMi"}, {"type", "ColorMatrix"}, {"inputs", {"CM"}}, {"params", {{"matrix_r", {0, 1, 0}}, {"matrix_g", {1, 0, 0}}, {"invert", true}}}},
+            {{"name", "PO"}, {"type", "Posterize"}, {"inputs", {"K"}}, {"params", {{"Colors", 3}}}},
+            {{"name", "HI"}, {"type", "Histogram"}, {"inputs", {"K"}}, {"params", {{"input_range", {0, 0.5}}}}},
+            {{"name", "PL"}, {"type", "PLogLin"}, {"inputs", {"K"}}, {"params", {{"operation", "lin2log"}}}},
+            {{"name", "PL2"}, {"type", "PLogLin"}, {"inputs", {"PL"}}},
+            {{"name", "CT"}, {"type", "ClipTest"}, {"inputs", {"Ex"}}, {"params", {{"animate", false}, {"upper", 0.9}}}},
+        }));
+        CHECK_NEAR(px(render(*c, "Ex"), 3, 3, "R"), 1.0, 1e-6);
+        CHECK_NEAR(px(render(*c, "CL"), 3, 3, "R"), 1.0, 1e-4);
+        auto hc = render(*c, "HC");
+        CHECK_NEAR(px(hc, 3, 3, "R"), px(hc, 3, 3, "G"), 1e-5);  // desaturated
+        auto hv = render(*c, "HV");
+        CHECK_NEAR(px(hv, 3, 3, "R"), 1.0, 1e-5);
+        CHECK_NEAR(px(hv, 3, 3, "G"), 0.5, 1e-5);
+        auto sc = render(*c, "SC");
+        CHECK(px(sc, 3, 3, "R") < 1.0f && px(sc, 3, 3, "R") > 0.5f);  // 1.0 rolled off below 1
+        CHECK_NEAR(px(sc, 3, 3, "B"), 0.2, 1e-6);                     // below the knee: untouched
+        auto cm = render(*c, "CM");
+        CHECK_NEAR(px(cm, 3, 3, "R"), 0.25, 1e-6);
+        CHECK_NEAR(px(render(*c, "CMi"), 3, 3, "R"), 0.5, 1e-5);
+        CHECK_NEAR(px(render(*c, "PO"), 3, 3, "G"), 0.5, 1e-6);
+        CHECK_NEAR(px(render(*c, "HI"), 3, 3, "G"), 0.5, 1e-6);
+        CHECK_NEAR(px(render(*c, "PL2"), 3, 3, "R"), 0.5, 1e-4);
+        auto ct = render(*c, "CT");
+        bool stripes = false;
+        for (int x = 0; x < 20; ++x) stripes |= px(ct, x, 3, "R") == 0.0f;
+        CHECK(stripes);
+    });
+
+    test("MatchGrade / ColorTransfer / MinColor / HistEQ", [] {
+        auto c = comp(json::array({
+            {{"name", "S"}, {"type", "Ramp"}, {"params", {{"color0", {0, 0, 0, 1}}, {"color", {0.5, 0.5, 0.5, 1}}}}},
+            {{"name", "T"}, {"type", "Ramp"}, {"params", {{"color0", {0.2, 0.2, 0.2, 1}}, {"color", {1, 1, 1, 1}}}}},
+            {{"name", "MG"}, {"type", "MatchGrade"}, {"inputs", {"S", "T"}}, {"params", {{"per_frame", true}}}},
+            {{"name", "MS"}, {"type", "MatchGrade"}, {"inputs", {"S", "T"}}, {"params", {{"per_frame", true}, {"method", "mean / deviation"}}}},
+            {{"name", "MC"}, {"type", "MinColor"}, {"inputs", {"T"}}},
+            {{"name", "HE"}, {"type", "HistEQ"}, {"inputs", {"S"}}},
+        }), 64, 16);
+        auto s = render(*c, "S"), t = render(*c, "T"), mg = render(*c, "MG"), ms = render(*c, "MS");
+        CHECK_NEAR(px(mg, 32, 8, "R"), px(t, 32, 8, "R"), 0.03);
+        CHECK_NEAR(px(ms, 32, 8, "R"), px(t, 32, 8, "R"), 0.03);
+        auto mc = render(*c, "MC");
+        CHECK(px(mc, 0, 8, "R") < 0.02f);
+        auto he = render(*c, "HE");
+        CHECK_NEAR(px(he, 63, 8, "R"), 1.0, 0.05);  // the brightest goes to 1
+    });
+
+    test("filter extras: Median, DirBlur, Matrix, DropShadow, EdgeExtend, Inpaint, ZSlice, Laplacian", [] {
+        auto c = comp(json::array({
+            {{"name", "W"}, {"type", "Constant"}, {"params", {{"color", {1, 0.5, 0.25, 1}}}}},
+            {{"name", "Dot"}, {"type", "Crop"}, {"inputs", {"W"}}, {"params", {{"box", {30, 20, 31, 21}}}}},
+            {{"name", "Sq"}, {"type", "Crop"}, {"inputs", {"W"}}, {"params", {{"box", {20, 15, 40, 35}}}}},
+            {{"name", "Md"}, {"type", "Median"}, {"inputs", {"Dot"}}, {"params", {{"size", 1}}}},
+            {{"name", "DB"}, {"type", "DirBlur"}, {"inputs", {"Dot"}}, {"params", {{"BlurLength", 10}}}},
+            {{"name", "Mx"}, {"type", "Matrix"}, {"inputs", {"Dot"}}, {"params", json::parse(R"({"matrix": [[0, 0, 0], [1, 0, 0], [0, 0, 0]]})")}},
+            {{"name", "DS"}, {"type", "DropShadow"}, {"inputs", {"Sq"}}, {"params", {{"size", 0}, {"distance", 5}, {"angle", 0}, {"opacity", 1}}}},
+            {{"name", "EE"}, {"type", "EdgeExtend"}, {"inputs", {"Sq"}}, {"params", {{"size", 20}}}},
+            {{"name", "IP"}, {"type", "Inpaint"}, {"inputs", {"Sq"}}},
+            {{"name", "Lp"}, {"type", "Laplacian"}, {"inputs", {"W"}}},
+        }));
+        CHECK_NEAR(px(render(*c, "Md"), 30, 20, "R"), 0, 0);  // a single speck is removed
+        auto db = render(*c, "DB");
+        CHECK(px(db, 34, 20, "R") > 0.05f && px(db, 30, 20, "R") < 0.5f);
+        auto mx = render(*c, "Mx");
+        CHECK_NEAR(px(mx, 29, 20, "R"), 1, 1e-6);  // shifted by the kernel (a true convolution: flipped)
+        auto ds = render(*c, "DS");
+        CHECK_NEAR(px(ds, 42, 25, "A"), 0.75 * 0 + 1, 1e-5);  // the shadow, 5 px right
+        CHECK_NEAR(px(ds, 42, 25, "R"), 0, 1e-6);              // black
+        CHECK_NEAR(px(ds, 30, 25, "R"), 1, 1e-6);              // the image over it
+        auto ee = render(*c, "EE");
+        CHECK_NEAR(px(ee, 45, 25, "G"), 0.5, 1e-3);  // the colour carried out
+        CHECK_NEAR(px(ee, 45, 25, "A"), 0, 0);
+        auto ip = render(*c, "IP");
+        CHECK_NEAR(px(ip, 5, 5, "R"), 1, 1e-3);  // the hole filled from the square
+        CHECK_NEAR(px(render(*c, "Lp"), 10, 10, "R"), 0, 1e-4);  // flat: no detail
+    });
+
+    test("time extras: Retime, TimeWarp, TimeClip, AppendClip, FrameBlend, TimeBlur, NoTimeBlur, pulldown", [] {
+        // a constant whose red is the frame number
+        json kv = {{"color", {json{{"expr", "frame"}}, 0, 0, 1}}};
+        auto c = comp(json::array({
+            {{"name", "F"}, {"type", "Constant"}, {"params", kv}},
+            {{"name", "FR"}, {"type", "FrameRange"}, {"inputs", {"F"}}, {"params", {{"first_frame", 1}, {"last_frame", 10}}}},
+            {{"name", "RT"}, {"type", "Retime"}, {"inputs", {"F"}}, {"params", {{"input.first", 1}, {"input.last", 10}, {"output.first", 1}, {"output.last", 19}}}},
+            {{"name", "TW"}, {"type", "TimeWarp"}, {"inputs", {"F"}}, {"params", {{"lookup", 7}}}},
+            {{"name", "TC"}, {"type", "TimeClip"}, {"inputs", {"F"}}, {"params", {{"first", 5}, {"last", 8}, {"frame", 100}, {"after", "black"}}}},
+            {{"name", "AP"}, {"type", "AppendClip"}, {"inputs", {"FR", "FR"}}},
+            {{"name", "FB"}, {"type", "FrameBlend"}, {"inputs", {"F"}}, {"params", {{"numframes", 3}}}},
+            {{"name", "TB"}, {"type", "TimeBlur"}, {"inputs", {"F"}}, {"params", {{"divisions", 4}, {"shutter", 1}, {"shutteroffset", "centred"}}}},
+            {{"name", "NT"}, {"type", "NoTimeBlur"}, {"inputs", {"F"}}},
+            {{"name", "PD"}, {"type", "Add32Pulldown"}, {"inputs", {"F"}}},
+        }));
+        CHECK_NEAR(px(render(*c, "RT", 3), 2, 2, "R"), 2, 1e-5);     // half speed: frame 3 shows 2
+        CHECK_NEAR(px(render(*c, "RT", 4), 2, 2, "R"), 2.5, 1e-5);   // blended
+        CHECK_NEAR(px(render(*c, "TW", 30), 2, 2, "R"), 7, 1e-6);
+        CHECK_NEAR(px(render(*c, "TC", 101), 2, 2, "R"), 6, 1e-6);
+        CHECK_NEAR(px(render(*c, "TC", 110), 2, 2, "R"), 0, 0);      // after: black
+        CHECK_NEAR(px(render(*c, "AP", 13), 2, 2, "R"), 3, 1e-6);    // the second clip's frame 3
+        auto apr = nodeFrameRange(c->find("AP"));
+        CHECK(apr && apr->first == 1 && apr->second == 20);
+        CHECK_NEAR(px(render(*c, "FB", 5), 2, 2, "R"), 5, 1e-5);     // (4 + 5 + 6) / 3
+        CHECK_NEAR(px(render(*c, "TB", 5), 2, 2, "R"), 5, 1e-5);     // symmetric around 5
+        CHECK_NEAR(px(render(*c, "NT", 5.5), 2, 2, "R"), 5, 1e-6);
+        auto pd = render(*c, "PD", 3);                                // B / C fields
+        CHECK(px(pd, 2, 0, "R") != px(pd, 2, 1, "R"));
+    });
+
+    test("transform extras: TransformMasked, CameraShake, AdjustBBox, Tile, SphericalTransform, TVIScale, GridWarp, MotionBlur2D", [] {
+        auto c = comp(json::array({
+            {{"name", "W"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},
+            {{"name", "Sq"}, {"type", "Crop"}, {"inputs", {"W"}}, {"params", {{"box", {10, 10, 20, 20}}}}},
+            {{"name", "M"}, {"type", "Crop"}, {"inputs", {"W"}}, {"params", {{"box", {32, 0, 64, 48}}}}},
+            {{"name", "TM"}, {"type", "TransformMasked"}, {"inputs", {"Sq", "M"}}, {"params", {{"translate", {30, 0}}}}},
+            {{"name", "CS"}, {"type", "CameraShake"}, {"inputs", {"Sq"}}, {"params", {{"amplitude", 5}}}},
+            {{"name", "AB"}, {"type", "AdjustBBox"}, {"inputs", {"Sq"}}, {"params", {{"numpixels", {-2, -2}}}}},
+            {{"name", "TL"}, {"type", "Tile"}, {"inputs", {"Sq"}}, {"params", {{"rows", 2}, {"columns", 2}, {"filter", "impulse"}}}},
+            {{"name", "SP"}, {"type", "SphericalTransform"}, {"inputs", {"W"}}, {"params", {{"input_type", "latlong"}, {"output_type", "cube"}}}},
+            {{"name", "SR"}, {"type", "SphericalTransform"}, {"inputs", {"SP"}}, {"params", {{"input_type", "cube"}, {"output_type", "latlong"}}}},
+            {{"name", "TV"}, {"type", "TVIScale"}, {"inputs", {"Sq"}}},
+            {{"name", "GW0"}, {"type", "GridWarp"}, {"inputs", {"Sq"}}},
+            {{"name", "T"}, {"type", "Transform"}, {"inputs", {"Sq"}}, {"params", {{"translate", {json{{"expr", "frame * 4"}}, 0}}}}},
+            {{"name", "MB"}, {"type", "MotionBlur2D"}, {"inputs", {"T", "T"}}, {"params", {{"shutter", 1}}}},
+        }));
+        auto tm = render(*c, "TM");
+        CHECK_NEAR(px(tm, 15, 15, "A"), 1, 0);  // no mask here: the input as it was
+        CHECK_NEAR(px(tm, 45, 15, "A"), 1, 0);  // the mask is on here: the moved copy
+        auto cs1 = render(*c, "CS", 1), cs9 = render(*c, "CS", 9);
+        double d = 0;
+        for (size_t i = 0; i < cs1->data.size(); ++i) d += std::fabs(cs1->data[i] - cs9->data[i]);
+        CHECK(d > 1);  // it moves
+        auto ab = render(*c, "AB");
+        CHECK_NEAR(px(ab, 10, 15, "A"), 0, 0);
+        CHECK_NEAR(px(ab, 15, 15, "A"), 1, 0);
+        auto tl = render(*c, "TL");
+        CHECK_NEAR(px(tl, 7, 7, "A") + px(tl, 39, 31, "A"), 2, 1e-5);  // the square, twice
+        auto sr = render(*c, "SR");
+        CHECK_NEAR(px(sr, 20, 10, "R"), 1, 1e-3);  // white survives the round trip
+        auto tv = render(*c, "TV");
+        CHECK_NEAR(px(tv, 30, 30, "A"), 1, 0.02);  // the square at twice the size
+        CHECK_NEAR(px(tv, 50, 30, "A"), 0, 0.02);
+        auto gw0 = render(*c, "GW0"), sq = render(*c, "Sq");
+        double g = 0;
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x) g = std::max(g, (double)std::fabs(px(gw0, x, y, "A") - px(sq, x, y, "A")));
+        CHECK_NEAR(g, 0, 1e-4);  // an untouched grid changes nothing
+        auto mb = render(*c, "MB", 5);
+        CHECK(px(mb, 41, 15, "A") > 0.05f && px(mb, 41, 15, "A") < 0.95f);  // smeared along x
+    });
+
+    test("GridWarp: moving a destination point moves the picture", [] {
+        // 3 x 3 grid over 64 x 48; the centre point moves right by 8
+        json dst = json::array();
+        for (int j = 0; j < 3; ++j)
+            for (int i = 0; i < 3; ++i) dst.push_back({32.0 * i + (i == 1 && j == 1 ? 8 : 0), 24.0 * j});
+        auto c = comp(json::array({
+            {{"name", "W"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},
+            {{"name", "Dot"}, {"type", "Crop"}, {"inputs", {"W"}}, {"params", {{"box", {30, 22, 34, 26}}}}},
+            {{"name", "GW"}, {"type", "GridWarp"}, {"inputs", {"Dot"}}, {"params", {{"grid_size", {3, 3}}, {"destination", dst}}}},
+        }));
+        auto gw = render(*c, "GW");
+        CHECK(px(gw, 40, 24, "A") > 0.5f);
+        CHECK(px(gw, 30, 24, "A") < 0.5f);
+    });
+
+    test("draw extras: Text, Rectangle, Grid, ColorBars, ColorWheel, Grain, Dither, Glint, Flare, MarkerRemoval, CurveTool", [] {
+        auto c = comp(json::array({
+            {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 0, 1}}}}},
+            {{"name", "T"}, {"type", "Text"}, {"inputs", {"Bg"}},
+             {"params", {{"message", "W [frame]"}, {"size", 30}, {"box", {2, 2, 62, 46}}, {"xjustify", "center"}, {"yjustify", "center"}}}},
+            {{"name", "R"}, {"type", "Rectangle"}, {"params", {{"area", {10, 10, 20, 20}}, {"color", {1, 0, 0, 1}}}}},
+            {{"name", "G"}, {"type", "Grid"}, {"inputs", {"Bg"}}, {"params", {{"number", {4, 4}}, {"size", 1}}}},
+            {{"name", "CB"}, {"type", "ColorBars"}},
+            {{"name", "CW"}, {"type", "ColorWheel"}},
+            {{"name", "Gr"}, {"type", "Grain"}, {"inputs", {"Bg"}}},
+            {{"name", "Hot"}, {"type", "Crop"}, {"inputs", {"Wh"}}, {"params", {{"box", {30, 22, 32, 24}}}}},
+            {{"name", "Wh"}, {"type", "Constant"}, {"params", {{"color", {4, 4, 4, 1}}}}},
+            {{"name", "Gl"}, {"type", "Glint"}, {"inputs", {"Hot"}}, {"params", {{"length", 10}}}},
+            {{"name", "MR"}, {"type", "MarkerRemoval"}, {"inputs", {"Hot"}}, {"params", {{"area", {28, 20, 34, 26}}}}},
+            {{"name", "CT"}, {"type", "CurveTool"}, {"inputs", {"Hot"}}},
+        }));
+        auto t = render(*c, "T", 7);
+        double ink = 0;
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x) ink += px(t, x, y, "R");
+        CHECK(ink > 20);                     // some text drew
+        CHECK_NEAR(px(t, 1, 1, "R"), 0, 0);  // not at the corner
+        auto r = render(*c, "R");
+        CHECK_NEAR(px(r, 15, 15, "R"), 1, 1e-6);
+        CHECK_NEAR(px(r, 25, 15, "R"), 0, 0);
+        auto g = render(*c, "G");
+        CHECK(px(g, 16, 5, "R") > 0.4f);  // a line at x = 16
+        CHECK_NEAR(px(g, 8, 5, "R"), 0, 1e-6);
+        auto cb = render(*c, "CB");
+        CHECK_NEAR(px(cb, 2, 40, "R"), 0.75, 1e-6);  // the first bar: 75% white
+        auto cw = render(*c, "CW");
+        CHECK_NEAR(px(cw, 0, 0, "A"), 0, 0);
+        CHECK(px(cw, 54, 24, "R") > 0.9f);  // red at angle 0
+        auto gr = render(*c, "Gr");
+        CHECK(px(gr, 5, 5, "R") != px(gr, 9, 7, "R"));
+        auto gl = render(*c, "Gl");
+        CHECK(px(gl, 36, 22, "R") > 0.01f);  // a streak away from the hot spot
+        auto mr = render(*c, "MR");
+        CHECK_NEAR(px(mr, 31, 23, "R"), 0, 1e-3);  // painted out
+        Engine e;
+        auto ct = curveToolFrame(e, c->find("CT"), 1);
+        CHECK(ct.contains("crop") && ct["crop"][0].get<int>() == 30 && ct["crop"][3].get<int>() == 24);
+        CHECK(ct["max"][0].get<double>() == 30.5);
+    });
+
     test("SplineWarp: the A curve's picture moves onto the B curve", [] {
         auto rect = [](double x1, double y1, double x2, double y2) {
             return json::array({{x1, y1, 0, 0, 0, 0, 0, 0}, {x2, y1, 0, 0, 0, 0, 0, 0}, {x2, y2, 0, 0, 0, 0, 0, 0}, {x1, y2, 0, 0, 0, 0, 0, 0}});

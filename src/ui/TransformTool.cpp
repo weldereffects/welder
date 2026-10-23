@@ -59,7 +59,10 @@ Format nodeFormatUI(App& app, Node* n, double f) {
 
 Node* activeTransform2D(App& app) {
     Node* n = activeToolNode(app);
-    return n && (n->type == "Transform" || n->type == "Position" || n->type == "CornerPin2D") ? n : nullptr;
+    return n && (n->type == "Transform" || n->type == "TransformMasked" || n->type == "Position" || n->type == "CornerPin2D" ||
+                 n->type == "GridWarp")
+               ? n
+               : nullptr;
 }
 
 void drawTransformViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered) {
@@ -89,6 +92,73 @@ void drawTransformViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec
         st.changed = true;
     };
     const bool click = hovered && inside && !io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
+    if (n->type == "GridWarp") {  // the two grids; drag the points of the one being edited (shift: the other)
+        Format fm = nodeFormatUI(app, n, f);
+        const double W = fm.width, H = fm.height;
+        auto gs = n->params.vec<2>("grid_size", f, {5, 5});
+        const int cols = std::clamp((int)gs[0], 2, 64), rows = std::clamp((int)gs[1], 2, 64);
+        auto grid = [&](const char* key) {
+            std::vector<ImVec2> g((size_t)cols * rows);
+            for (int j = 0; j < rows; ++j)
+                for (int i = 0; i < cols; ++i) g[(size_t)j * cols + i] = ImVec2((float)(W * i / (cols - 1)), (float)(H * j / (rows - 1)));
+            if (n->params.has(key) && n->params.data[key].is_array() && n->params.data[key].size() == g.size())
+                for (size_t k = 0; k < g.size(); ++k) {
+                    const json& q = n->params.data[key][k];
+                    if (q.is_array() && q.size() >= 2 && q[0].is_number() && q[1].is_number()) g[k] = ImVec2(q[0].get<float>(), q[1].get<float>());
+                }
+            return g;
+        };
+        const bool editSrc = n->params.str("edit", "destination") == "source";
+        const auto S = grid("source"), D = grid("destination");
+        auto drawGrid = [&](const std::vector<ImVec2>& g, ImU32 col, float th) {
+            for (int j = 0; j < rows; ++j)
+                for (int i = 0; i < cols; ++i) {
+                    ImVec2 a = xf.toScreen(g[(size_t)j * cols + i].x, g[(size_t)j * cols + i].y);
+                    if (i + 1 < cols) dl->AddLine(a, xf.toScreen(g[(size_t)j * cols + i + 1].x, g[(size_t)j * cols + i + 1].y), col, th);
+                    if (j + 1 < rows) dl->AddLine(a, xf.toScreen(g[(size_t)(j + 1) * cols + i].x, g[(size_t)(j + 1) * cols + i].y), col, th);
+                }
+        };
+        const ImU32 srcCol = IM_COL32(230, 110, 230, 200), dstCol = kJack;
+        drawGrid(editSrc ? D : S, editSrc ? IM_COL32(120, 200, 255, 90) : IM_COL32(230, 110, 230, 90), 1.0f);
+        drawGrid(editSrc ? S : D, editSrc ? srcCol : dstCol, 1.5f);
+        const bool other = io.KeyShift;
+        const auto& G = (editSrc != other) ? S : D;
+        int hot = -1;
+        for (size_t k = 0; k < G.size(); ++k) {
+            ImVec2 sp = xf.toScreen(G[k].x, G[k].y);
+            if (std::hypot(mouse.x - sp.x, mouse.y - sp.y) < 7) hot = (int)k;
+        }
+        for (size_t k = 0; k < G.size(); ++k) {
+            ImVec2 sp = xf.toScreen(G[k].x, G[k].y);
+            const bool h = (int)k == hot || (dragging() && st.corner == (int)k);
+            dl->AddRectFilled(ImVec2(sp.x - 3, sp.y - 3), ImVec2(sp.x + 3, sp.y + 3), h ? kHot : ((editSrc != other) ? srcCol : dstCol));
+        }
+        if (click && hot >= 0) {
+            start(Transform2DState::Drag::Corner);
+            st.corner = hot;
+            st.t0[0] = G[hot].x;
+            st.t0[1] = G[hot].y;
+            st.k0[0] = (editSrc != other) ? 1 : 0;  // which grid
+        }
+        if (dragging() && st.drag == Transform2DState::Drag::Corner && moved && st.corner >= 0) {
+            gesture();
+            const std::string key = st.k0[0] > 0.5 ? "source" : "destination";
+            auto g = key == "source" ? S : D;
+            if (st.corner < (int)g.size()) {
+                g[st.corner] = ImVec2((float)(st.t0[0] + mi.x - st.startImg.x), (float)(st.t0[1] + mi.y - st.startImg.y));
+                json arr = json::array();
+                for (auto& q : g) arr.push_back(json::array({std::round(q.x * 100) / 100, std::round(q.y * 100) / 100}));
+                app.edit([name, key, arr](Comp& c) {
+                    if (Node* x = c.find(name)) {
+                        x->params.data[key] = arr;
+                        x->paramsChanged();
+                    }
+                });
+            }
+        }
+        return;
+    }
 
     if (n->type == "CornerPin2D") {
         Format fm = nodeFormatUI(app, n, f);

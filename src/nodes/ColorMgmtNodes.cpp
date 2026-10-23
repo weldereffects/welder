@@ -107,6 +107,16 @@ protected:
     bool timeDependent() const override { return Node::timeDependent(); }
 };
 
+// OCIOLogConvert: working space <-> the config's compositing_log role (operation "lin to log" | "log to lin").
+class OCIOLogConvertNode : public OCIOBase {
+protected:
+    color::TransformPtr transform(double, std::string* err) override {
+        const std::string lin = color::workingOf(comp), lg = params.str("log_space", "compositing_log");
+        const bool toLog = params.str("operation", "lin to log") == "lin to log";
+        return color::convert(config(), toLog ? lin : lg, toLog ? lg : lin, err);
+    }
+};
+
 // Log2Lin (the classic Cineon conversion): operation "log2lin" | "lin2log",
 // blackpoint (95), whitepoint (685), gamma (0.6), on R G B.
 class Log2LinNode : public Node {
@@ -137,6 +147,7 @@ public:
 }  // namespace
 
 void registerColorMgmtNodes() {
+    NodeRegistry::instance().add("OCIOLogConvert", [] { return std::make_unique<OCIOLogConvertNode>(); });
     NodeRegistry::instance().add("Log2Lin", [] { return std::make_unique<Log2LinNode>(); });
     auto& r = NodeRegistry::instance();
     r.add("OCIOColorSpace", [] { return std::make_unique<OCIOColorSpaceNode>(); });

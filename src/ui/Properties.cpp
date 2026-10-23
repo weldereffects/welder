@@ -186,6 +186,9 @@ std::vector<double> defaults(const KnobDef& k, int n, const Format& f) {
         if (s == "$center") return {f.width / 2.0, f.height / 2.0};
         if (s == "$format") return {(double)f.width, (double)f.height};
         if (s == "$box") return {0, 0, (double)f.width, (double)f.height};
+        if (s == "$inner") return {f.width * 0.25, f.height * 0.25, f.width * 0.75, f.height * 0.75};
+        if (s == "$margin") return {f.width * 0.1, f.height * 0.1, f.width * 0.9, f.height * 0.9};
+        if (s == "$small") return {f.width * 0.45, f.height * 0.45, f.width * 0.55, f.height * 0.55};
         if (s == "$corner1") return {0, 0};
         if (s == "$corner2") return {(double)f.width, 0};
         if (s == "$corner3") return {(double)f.width, (double)f.height};
@@ -2643,6 +2646,29 @@ void infoKnob(Ctx& c, const KnobDef& k) {
 }
 
 void buttonAction(Ctx& c, const std::string& action) {
+    if (action == "curvetool_go") {  // CurveTool: analyse (or stop)
+        if (c.app.trackStatus().running && c.app.trackStatus().node == c.node->name) c.app.stopTracking();
+        else c.app.startCurveTool(c.node->name);
+        return;
+    }
+    if (action == "gridwarp_reset" || action == "gridwarp_copy") {  // GridWarp: regular grids / destination = source
+        const bool reset = action == "gridwarp_reset";
+        std::string name = c.node->name;
+        c.app.checkpoint();
+        c.app.edit([name, reset](Comp& comp) {
+            if (Node* n = comp.find(name)) {
+                if (reset) {
+                    n->params.data.erase("source");
+                    n->params.data.erase("destination");
+                } else if (n->params.has("source"))
+                    n->params.data["destination"] = n->params.data["source"];
+                else
+                    n->params.data.erase("destination");
+                n->paramsChanged();
+            }
+        });
+        return;
+    }
     if (action == "precomp_render" || action == "precomp_sync" || action == "precomp_clear") {
         precompAction(c.app, c.node, action.substr(8));
         return;

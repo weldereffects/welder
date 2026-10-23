@@ -245,6 +245,33 @@ std::optional<std::pair<double, double>> nodeFrameRange(Node* n) {
             else if (mode == "start at") off = x->params.num("frame", 0, a) - a;
             return std::make_pair(a + off, b + off);
         }
+        if (!x->disabled()) {  // nodes that set their own range
+            const Params& p = x->params;
+            if (x->type == "FrameRange") return std::make_pair(p.num("first_frame", 0, 1), p.num("last_frame", 0, 100));
+            if (x->type == "TimeClip") {
+                const double a = p.num("first", 0, 1), b = p.num("last", 0, 100), s = p.has("frame") ? p.num("frame", 0, a) : a;
+                return std::make_pair(s, s + (b - a));
+            }
+            if (x->type == "Retime") {
+                const double inF = p.num("input.first", 0, 1), inL = p.num("input.last", 0, 100), outF = p.num("output.first", 0, inF);
+                const double sp = p.num("speed", 0, 1);
+                const double outL = p.has("output.last") ? p.num("output.last", 0, inL) : outF + (inL - inF) / (sp == 0 ? 1 : std::fabs(sp));
+                return std::make_pair(std::min(outF, outL), std::max(outF, outL));
+            }
+            if (x->type == "AppendClip") {
+                double at = p.num("firstFrame", 0, 1);
+                const double start = at, dis = std::max(0.0, p.num("dissolve", 0, 0));
+                int n = 0;
+                for (Node* in : x->inputs) {
+                    if (!in) continue;
+                    auto ri = nodeFrameRange(in);  // (fresh: the same clip may come twice)
+                    double a = ri ? ri->first : 1, b = ri ? ri->second : 1;
+                    if (n++) at -= dis;
+                    at += b - a + 1;
+                }
+                if (n) return std::make_pair(start, at - 1);
+            }
+        }
         std::optional<std::pair<double, double>> r;
         if (x->type == "Merge" && !x->disabled()) {  // the classic "range from": one input's range (B by default)
             Node* from = x->params.str("range_from", "B") == "A" ? (x->inputs.size() > 1 ? x->inputs[1] : nullptr)

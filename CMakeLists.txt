@@ -98,6 +98,10 @@ add_library(strata_core STATIC
   src/nodes/Roto.cpp
   src/nodes/SplineWarp.cpp
   src/nodes/MergeExtraNodes.cpp
+  src/nodes/ColorExtraNodes.cpp
+  src/nodes/FilterExtraNodes.cpp
+  src/nodes/TimeExtraNodes.cpp
+  src/nodes/DrawExtraNodes.cpp
   src/nodes/TextRender.cpp
   src/nodes/KeyerNodes.cpp
   src/nodes/GrainNodes.cpp

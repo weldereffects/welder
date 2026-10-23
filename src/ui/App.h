@@ -265,6 +265,8 @@ public:
     void startCameraTracking(const std::string& node);
     // WarpStabilize: measure the camera motion through the input's range (Analyse).
     void startStabilizing(const std::string& node);
+    // CurveTool: run its analysis over the input's range (Go!).
+    void startCurveTool(const std::string& node);
     void startCameraSolve(const std::string& node);
     void stopTracking() { trackCancel_ = true; }
     TrackStatus trackStatus();
@@ -429,6 +431,8 @@ private:
     std::shared_ptr<json> camTracks_, camSolve_;
     std::shared_ptr<json> stabMotion_;  // a finished WarpStabilize analysis, for pollTracking
     void stabLoop(std::string node, int first, int last);
+    std::shared_ptr<json> curveResult_;  // a finished CurveTool analysis (params to set), for pollTracking
+    void curveToolLoop(std::string node, int first, int last);
     void camTrackLoop(std::string node, int first, int last);
     void camSolveLoop(std::string node, json tracks, json opts, int w, int h);
     void planarLoop(std::string node, double from, double to, int dir, double minScore);

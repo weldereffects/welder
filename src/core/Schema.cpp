@@ -312,6 +312,77 @@ std::vector<NodeDef> build() {
                      "Combines two signals (modulators, values) component by component."});
     }
     d.push_back({"Constant", "Image", {Fmt("format", "format"), Col4("color", "color", json::array({0, 0, 0, 0}))}, ""});
+    d.push_back({"ColorBars", "Image", {Fmt("format", "format"), F("barintensity", "bar intensity", 0.75, 0, 1)},
+                 "SMPTE colour bars."});
+    d.push_back({"ColorWheel", "Image",
+                 {Fmt("format", "format"), F("rotate", "rotate", 0, -180, 180), F("value", "value", 1, 0, 2), F("gamma", "saturation gamma", 1, 0.1, 4)},
+                 "Every hue around a circle, saturated at the rim."});
+    d.push_back({"CurveTool", "Image",
+                 {C("operation", "operation", "Avg Intensities", {"Avg Intensities", "Auto Crop", "Exposure Difference", "Max Luma Pixel"}),
+                  {"ROI", "region of interest", Knob::Box, "$box", 0, 4096, {}, ""}, F("autocrop_threshold", "auto crop threshold", 0, 0, 1),
+                  B("use_range", "frame range", false), Same(EnableIf(Field(I("first", "", 1, -100000, 100000), 64), "use_range=true"), true),
+                  Same(EnableIf(Field(I("last", "", 100, -100000, 100000), 64), "use_range=true"), true),
+                  Btn("curvetool_go", "Go!", "Analyse every frame (again to stop); the results land in the curves below"),
+                  OnTab(Col("intensitydata", "intensity", 0), "Results"), OnTab({"autocropdata", "auto crop", Knob::Box, json::array({0, 0, 0, 0}), 0, 4096, {}, ""}, "Results"),
+                  OnTab(Col("exposure", "exposure difference (stops)", 0, -4, 4), "Results"),
+                  OnTab(XY("maxlumapixdata", "brightest pixel", json::array({0, 0}), 0, 4096), "Results"),
+                  OnTab(XYZ("maxlumapixvalue", "its value", json::array({0, 0, 0}), 0, 4), "Results"),
+                  OnTab(XY("minlumapixdata", "darkest pixel", json::array({0, 0}), 0, 4096), "Results"),
+                  OnTab(XYZ("minlumapixvalue", "its value", json::array({0, 0, 0}), 0, 4), "Results")},
+                 "Analyses its input over a frame range (press Go!): average intensity (flicker), the auto-crop box, the exposure "
+                 "difference to the first frame, the brightest and darkest pixel. Link other knobs to the curves it makes."});
+    d.push_back({"Text", "Draw",
+                 withMask({Txt("message", "message", "[frame], [date], [time] and [value Node.knob] are filled in"), File("font", "font"),
+                           F("size", "size", 100, 1, 1000), F("tracking", "tracking", 0, -0.5, 1), F("leading", "leading", 0, -1, 2),
+                           Width(C("xjustify", "justify", "left", {"left", "center", "right"}), 90),
+                           Same(Width(C("yjustify", "", "top", {"top", "center", "bottom", "baseline"}), 90), true),
+                           {"box", "box", Knob::Box, "$margin", 0, 4096, {}, "The text wraps inside it"}, B("wrap", "wrap lines", true),
+                           Col4("color", "color", json::array({1, 1, 1, 1})), F("opacity", "opacity", 1, 0, 1),
+                           Div("Transform"), XY("translate", "translate", json::array({0, 0}), -1000, 1000), F("rotate", "rotate", 0, -180, 180),
+                           XY("scale", "scale", json::array({1, 1}), 0.1, 10), PickXY(XY("center", "center", "$center", 0, 4096)),
+                           C("operation", "operation", "over", {"over", "plus", "replace"})}),
+                 "Text over the background input (any TrueType font, Arial by default)."});
+    d.push_back({"Rectangle", "Draw",
+                 withMask({{"area", "area", Knob::Box, "$inner", 0, 4096, {}, ""}, F("softness", "softness", 0, 0, 200),
+                           Col4("color", "color", json::array({1, 1, 1, 1})), B("invert", "invert", false),
+                           C("operation", "operation", "over", {"over", "plus", "replace"}), Fmt("format", "format (no input)")}),
+                 "A (soft-edged) rectangle over the background input."});
+    d.push_back({"Grid", "Draw",
+                 withMask({XY("number", "lines (x, y)", json::array({10, 10}), 1, 200), F("size", "thickness", 1, 0, 50),
+                           XY("translate", "translate", json::array({0, 0}), -1000, 1000), Col4("color", "color", json::array({1, 1, 1, 1})),
+                           C("operation", "operation", "over", {"over", "plus", "replace"})}),
+                 "A grid of lines over the background input."});
+    d.push_back({"Flare", "Draw",
+                 withMask({PickXY(XY("position", "position", "$center", 0, 4096)), XYZ("radius", "radius (core, halo, ring)", json::array({20, 150, 300}), 0, 2000),
+                           F("ring_width", "ring width", 20, 1, 500), F("brightness", "brightness", 1, 0, 10),
+                           Col4("color", "color", json::array({1, 0.85, 0.6, 1})), Col4("ring_color", "ring color", json::array({0.3, 0.5, 1, 1}))}),
+                 "A lens flare (core, halo and ring) added over the background."});
+    d.push_back({"Sparkles", "Draw",
+                 withMask({PickXY(XY("position", "position", "$center", 0, 4096)), I("rays", "rays", 4, 1, 32), F("size", "size", 100, 1, 2000),
+                           F("ray_width", "ray width", 1.5, 0.2, 20), F("rotation", "rotation", 0, -180, 180), F("glow", "glow", 0.3, 0, 2),
+                           F("brightness", "brightness", 1, 0, 10), Col4("color", "color", json::array({1, 1, 1, 1}))}),
+                 "A star-shaped sparkle added over the background."});
+    d.push_back({"Glint", "Draw",
+                 withMask({F("tolerance", "highlights above", 0.9, 0, 4), I("no_of_rays", "rays", 4, 1, 16), F("length", "length", 30, 1, 500),
+                           F("odd_ray_length", "odd ray length", 1, 0, 2), F("rotation", "rotation", 0, -180, 180), I("steps", "steps", 12, 2, 64),
+                           F("gain", "gain", 1, 0, 10)}),
+                 "Star streaks from the image's highlights."});
+    d.push_back({"Grain", "Draw",
+                 withMask({Comps(XYZ("size", "size", json::array({3.3, 3.5, 6}), 0.3, 50), {"R", "G", "B"}),
+                           Comps(XYZ("irregularity", "irregularity", json::array({0.6, 0.6, 0.6}), 0, 1), {"R", "G", "B"}),
+                           Comps(XYZ("intensity", "intensity", json::array({0.1, 0.1, 0.18}), 0, 1), {"R", "G", "B"}),
+                           F("black", "black", 0, 0, 1), F("minimum", "minimum", 0, 0, 1), I("seed", "seed", 134, 0, 10000),
+                           B("static", "static (the same every frame)", false)}),
+                 "Synthetic film grain per channel, strongest in the mid tones."});
+    d.push_back({"ScannedGrain", "Draw",
+                 withMask({Comps(XYZ("amount", "amount", json::array({1, 1, 1}), 0, 4), {"R", "G", "B"}), F("response", "follow brightness", 0.5, 0, 1)}),
+                 "Adds real grain from a scanned grain plate (connect it to the grain input; its average is removed)."});
+    d.push_back({"Dither", "Draw", {Ch("channels", "channels", "rgb"), F("amount", "amount", 1.0 / 255, 0, 0.05), I("seed", "seed", 0, 0, 1000),
+                                    B("static", "static", false)},
+                 "A little noise to break banding before writing 8 / 10 bit files."});
+    d.push_back({"MarkerRemoval", "Draw", {Ch("channels", "channels", "rgba"), {"area", "area", Knob::Box, "$small", 0, 4096, {}, "The marker"}},
+                 "Paints out what's inside the rectangle (a tracking marker) from the pixels around it."});
+
     {
         KnobDef thumb = F("thumb_frame", "thumbnail frame", 1, -100000, 100000, "The frame of the input shown on the slate");
         thumb.def = "$first";
@@ -795,6 +866,56 @@ std::vector<NodeDef> build() {
     // ---------------------------------------------------------------- Time
     d.push_back({"FrameHold", "Time", {I("first_frame", "first frame", 1, 0, 10000), I("increment", "increment", 0, 0, 100)}, ""});
     d.push_back({"TimeOffset", "Time", {I("offset", "time offset (frames)", 0, -1000, 1000)}, ""});
+    {
+        const std::vector<std::string> edge = {"hold", "loop", "bounce", "black"};
+        d.push_back({"Retime", "Time",
+                     {Field(F("input.first", "input range", 1, -100000, 100000), 70), Same(Field(F("input.last", "", 100, -100000, 100000), 70), true),
+                      Field(F("output.first", "output range", 1, -100000, 100000), 70), Same(Field(F("output.last", "", 100, -100000, 100000), 70), true),
+                      F("speed", "speed", 1, -4, 4, "Used when there's no output end"), B("reverse", "reverse", false),
+                      C("filter", "filter", "box", {"none", "box"}), Width(C("before", "before", "hold", edge), 90),
+                      Same(Width(C("after", "after", "hold", edge), 90))},
+                     "Stretches the input range over the output range (or plays it at a speed); between frames: nearest or blended."});
+        d.push_back({"TimeWarp", "Time",
+                     {F("lookup", "input frame", 1, -100000, 100000, "Animate it: the input frame shown at each frame"), C("filter", "filter", "none", {"none", "box"})},
+                     "Shows the input frame given by the (animated) lookup at each frame: speed ramps, freezes, reverses."});
+        d.push_back({"FrameRange", "Time",
+                     {Field(I("first_frame", "frame range", 1, -100000, 100000), 70), Same(Field(I("last_frame", "", 100, -100000, 100000), 70), true),
+                      C("outside", "outside", "pass through", {"pass through", "black"})},
+                     "Sets the clip's frame range (timeline, Writes, AppendClip)."});
+        d.push_back({"TimeClip", "Time",
+                     {Field(I("first", "clip range", 1, -100000, 100000), 70), Same(Field(I("last", "", 100, -100000, 100000), 70), true),
+                      Field(I("frame", "start at", 1, -100000, 100000), 70), Width(C("before", "before", "hold", edge), 90),
+                      Same(Width(C("after", "after", "hold", edge), 90)), I("fadeIn", "fade in", 0, 0, 100), I("fadeOut", "fade out", 0, 0, 100),
+                      B("reverse", "reverse", false)},
+                     "Trims the clip to a range and places it at a start frame, with fades."});
+        d.push_back({"AppendClip", "Time",
+                     {Field(I("firstFrame", "first frame", 1, -100000, 100000), 70), I("fadeIn", "fade in", 0, 0, 100), I("fadeOut", "fade out", 0, 0, 100),
+                      I("dissolve", "cross dissolve", 0, 0, 100), Width(C("before", "before", "black", {"black", "hold"}), 90),
+                      Same(Width(C("after", "after", "black", {"black", "hold"}), 90))},
+                     "Plays its inputs one after another, each over its own frame range."});
+        d.push_back({"FrameBlend", "Time",
+                     {I("numframes", "frames", 5, 1, 64), B("userange", "use a fixed range", false),
+                      When(Field(I("startframe", "from", 1, -100000, 100000), 70), "userange=true"),
+                      When(Same(Field(I("endframe", "to", 10, -100000, 100000), 70)), "userange=true")},
+                     "Averages neighbouring frames (or a fixed range): smooths noise on still shots, clean plates."});
+        d.push_back({"TimeBlur", "Time",
+                     {I("divisions", "divisions", 8, 1, 128), F("shutter", "shutter", 0.5, 0, 2),
+                      Width(C("shutteroffset", "shutter offset", "start", {"centred", "start", "end", "custom"}), 100),
+                      Same(EnableIf(F("shuttercustomoffset", "", 0, -1, 1), "shutteroffset=custom"), true)},
+                     "Motion blur for anything animated upstream: the tree rendered at several moments across the shutter."});
+        d.push_back({"TemporalMedian", "Time", {I("radius", "frames each side", 1, 1, 5), F("core", "keep differences below", 0, 0, 1)},
+                     "The median of the frames around each frame: removes flashes, dust and specks that last a frame."});
+        d.push_back({"NoTimeBlur", "Time", {C("rounding", "rounding", "floor", {"floor", "round", "ceil"})},
+                     "Whole frames only: the input at the frame rounded (sub-frame renders from motion blur upstream)."});
+        d.push_back({"Add32Pulldown", "Time",
+                     {Field(I("start_frame", "start frame", 1, -100000, 100000), 70), I("phase", "phase", 0, 0, 4),
+                      C("field_order", "field order", "upper first", {"upper first", "lower first"})},
+                     "24 to 30 fps: every 4 frames become 5, two of them made of fields."});
+        d.push_back({"Remove32Pulldown", "Time",
+                     {Field(I("start_frame", "start frame", 1, -100000, 100000), 70), I("phase", "phase", 0, 0, 3),
+                      C("field_order", "field order", "upper first", {"upper first", "lower first"})},
+                     "30 to 24 fps: the 3:2 pulldown taken out, the split frame rebuilt from its fields."});
+    }
     d.push_back({"OFlow", "Time", retimeKnobs(false),
                  "Retimes with optical flow: slow motion, speed ramps, frame-rate changes, motion blur."});
     d.push_back({"RIFE", "Time", retimeKnobs(true),
@@ -844,6 +965,99 @@ std::vector<NodeDef> build() {
     d.push_back({"Gamma", "Color", colorMask({Ch("channels", "channels", "rgb"), Col("value", "value", 1, 0.2, 5)}), ""});
     d.push_back({"Invert", "Color", colorMask({Ch("channels", "channels", "rgb")}), ""});
     d.push_back({"Clamp", "Color", colorMask({Ch("channels", "channels", "rgba"), Col("minimum", "minimum", 0, -1, 1), Col("maximum", "maximum", 1)}), ""});
+    d.push_back({"Exposure", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), C("mode", "adjust in", "stops", {"stops", "densities", "cineon"}),
+                            Col("value", "exposure", 0, -4, 4)}),
+                 "Brightens or darkens in photographic stops (or printing densities / Cineon code values): x 2^stops."});
+    d.push_back({"ColorLookup", "Color",
+                 colorMask({Ch("channels", "channels", "rgba"),
+                            {"lut", "curves", Knob::Curves,
+                             json::object({{"master", json::array({json::array({0, 0}), json::array({1, 1})})}, {"red", json::array({json::array({0, 0}), json::array({1, 1})})}, {"green", json::array({json::array({0, 0}), json::array({1, 1})})}, {"blue", json::array({json::array({0, 0}), json::array({1, 1})})}, {"alpha", json::array({json::array({0, 0}), json::array({1, 1})})}}),
+                             0, 1, {"master", "red", "green", "blue", "alpha"}, ""}}),
+                 "Curves: each channel through its curve, after the master curve."});
+    d.push_back({"HueCorrect", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"),
+                            {"hue", "hue curves", Knob::Curves,
+                             json::object({{"sat", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"lum", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"red", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"green", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"blue", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})},
+                                           {"r_sup", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"g_sup", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"b_sup", json::array({json::array({0, 1}), json::array({1, 1}), json::array({2, 1}), json::array({3, 1}), json::array({4, 1}), json::array({5, 1})})}, {"sat_thrsh", json::array({json::array({0, 0}), json::array({1, 0}), json::array({2, 0}), json::array({3, 0}), json::array({4, 0}), json::array({5, 0})})}}),
+                             0, 6, {"sat", "lum", "red", "green", "blue", "r_sup", "g_sup", "b_sup", "sat_thrsh"},
+                             "Along the bottom: the hue (red 0, yellow 1, green 2, cyan 3, blue 4, magenta 5)"}}),
+                 "Changes saturation, brightness and each channel by hue; the _sup curves suppress a channel (spill) at "
+                 "chosen hues; sat_thrsh leaves pixels below that saturation alone."});
+    d.push_back({"HSVTool", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), Div("Hue"), F("hue_rotation", "rotation", 0, -180, 180),
+                            XY("hue_range", "range", json::array({0, 360}), 0, 360), F("hue_range_rolloff", "range rolloff", 0, 0, 180),
+                            Div("Saturation"), F("saturation_adjust", "adjust", 1, 0, 4), XY("saturation_range", "range", json::array({0, 1}), 0, 1),
+                            F("saturation_range_rolloff", "range rolloff", 0, 0, 1), Div("Brightness"), F("brightness_adjust", "adjust", 1, 0, 4),
+                            XY("brightness_range", "range", json::array({0, 1}), 0, 4), F("brightness_range_rolloff", "range rolloff", 0, 0, 1)}),
+                 "Rotates hue and scales saturation / brightness, only for pixels inside the hue, saturation and brightness ranges."});
+    d.push_back({"SoftClip", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), C("conversion", "conversion", "per channel", {"per channel", "preserve hue"}),
+                            F("softclip_min", "softclip min", 0.5, 0, 2), F("softclip_max", "softclip max", 1, 0, 4)}),
+                 "Rolls the highlights off above softclip min so nothing passes softclip max."});
+    d.push_back({"ColorMatrix", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), Comps(XYZ("matrix_r", "red", json::array({1, 0, 0}), -2, 2), {"R", "G", "B"}),
+                            Comps(XYZ("matrix_g", "green", json::array({0, 1, 0}), -2, 2), {"R", "G", "B"}),
+                            Comps(XYZ("matrix_b", "blue", json::array({0, 0, 1}), -2, 2), {"R", "G", "B"}), B("invert", "invert", false)}),
+                 "Each output channel is a mix of the input's red, green and blue (a 3 x 3 matrix)."});
+    d.push_back({"Posterize", "Color", colorMask({Ch("channels", "channels", "rgb"), F("Colors", "colors", 10, 2, 64)}),
+                 "Reduces each channel to that many levels."});
+    d.push_back({"Toe", "Color", colorMask({Ch("channels", "channels", "rgb"), F("lift", "lift", 0, -0.5, 0.5)}),
+                 "Lifts (or crushes) the blacks with a soft toe, leaving white where it is."});
+    d.push_back({"RollOffContrast", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), F("contrast", "contrast", 1, 0, 4), F("center", "center", 0.18, 0, 1),
+                            F("soft_clip", "soft clip", 0, 0, 1, "How far below 1 the highlights start rolling off into 1"),
+                            B("soft_lo", "keep blacks positive", true)}),
+                 "Contrast about a centre (mid grey) with the highlights rolled off softly instead of clipping."});
+    d.push_back({"CrossTalk", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"),
+                            {"curves", "cross talk", Knob::Curves,
+                             json::object({{"r_to_g", json::array({json::array({0, 0}), json::array({1, 0})})}, {"r_to_b", json::array({json::array({0, 0}), json::array({1, 0})})}, {"g_to_r", json::array({json::array({0, 0}), json::array({1, 0})})}, {"g_to_b", json::array({json::array({0, 0}), json::array({1, 0})})}, {"b_to_r", json::array({json::array({0, 0}), json::array({1, 0})})}, {"b_to_g", json::array({json::array({0, 0}), json::array({1, 0})})}}),
+                             0, 1, {"r_to_g", "r_to_b", "g_to_r", "g_to_b", "b_to_r", "b_to_g"}, ""}}),
+                 "Adds curves of each channel to the others (r += g_to_r(g) + b_to_r(b) ...): film-style channel cross talk."});
+    d.push_back({"Histogram", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), XY("input_range", "input range", json::array({0, 1}), 0, 1),
+                            F("gamma", "gamma", 1, 0.2, 5), XY("output_range", "output range", json::array({0, 1}), 0, 1)}),
+                 "Levels: the input range is stretched to the output range, with a gamma between."});
+    d.push_back({"ClipTest", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), F("lower", "lower", 0, -1, 1), F("upper", "upper", 1, 0, 4),
+                            F("zebra_size", "stripe width", 8, 1, 50), B("animate", "animate the stripes", true)}),
+                 "Zebra stripes where any channel is above upper (dark) or below lower (light)."});
+    d.push_back({"PLogLin", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), C("operation", "operation", "log2lin", {"log2lin", "lin2log"}),
+                            F("linref", "linear reference", 0.18, 0, 1), F("logref", "log reference", 445, 0, 1023),
+                            F("negativegamma", "negative gamma", 0.6, 0.1, 2), F("density", "density per code value", 0.002, 0.0001, 0.01)}),
+                 "Josh Pines' log / linear conversion (mid grey 0.18 at code value 445)."});
+    d.push_back({"OCIOLogConvert", "Color",
+                 {C("operation", "operation", "lin to log", {"lin to log", "log to lin"}), CS("log_space", "log space", "compositing_log"),
+                  B("unpremult", "unpremult", false), F("mix", "mix", 1, 0, 1)},
+                 "Working space to the config's compositing log space (the compositing_log role) or back."});
+    {
+        std::vector<KnobDef> m = {Ch("channels", "channels", "rgb"), B("per_frame", "analyse every frame", false),
+                                  When(Field(I("analysis_frame", "analysis frame", 1, -100000, 100000), 70), "per_frame=false"),
+                                  When(Field(I("target_frame", "target frame", 1, -100000, 100000), 70), "per_frame=false")};
+        auto mg = m;
+        mg.push_back(C("method", "method", "histogram", {"histogram", "mean / deviation"}));
+        d.push_back({"MatchGrade", "Color", colorMask(mg),
+                     "Grades Source to match Target: each channel's histogram mapped onto the target's (the Reference input, "
+                     "when connected, is analysed instead of Source)."});
+        auto ct = m;
+        ct.push_back(F("amount", "amount", 1, 0, 1));
+        d.push_back({"ColorTransfer", "Color", colorMask(ct),
+                     "Transfers Target's colour statistics (mean and spread in a perceptual space) onto Source."});
+    }
+    d.push_back({"MinColor", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), C("mode", "mode", "offset", {"offset", "scale"}), Col("target", "target", 0, -1, 1),
+                            B("per_frame", "analyse every frame", true),
+                            When(Field(I("analysis_frame", "analysis frame", 1, -100000, 100000), 70), "per_frame=false")}),
+                 "Moves the darkest value of each channel in the frame onto the target (black level)."});
+    d.push_back({"HistEQ", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), C("mode", "mode", "luminance", {"luminance", "per channel"}),
+                            F("amount", "amount", 1, 0, 1), B("per_frame", "analyse every frame", true),
+                            When(Field(I("analysis_frame", "analysis frame", 1, -100000, 100000), 70), "per_frame=false")}),
+                 "Histogram equalisation: spreads the frame's values evenly over 0 - 1."});
+    d.push_back({"CMSTestPattern", "Color", {I("rgbcubesize", "cube size", 17, 2, 64), I("patch_size", "patch size", 8, 1, 64)},
+                 "Every colour of an RGB cube as patches, for building and checking LUTs."});
     // ---------------------------------------------------------------- Filter
     {
         auto bokeh = [&](std::vector<KnobDef> k) {
@@ -878,6 +1092,73 @@ std::vector<NodeDef> build() {
                      "Motion blur from motion vectors (pixels per frame, e.g. forward.u / forward.v from BlenderRender or "
                      "ScanlineRender). Objects smear over a still background; with depth, foreground edges stay correct."});
     }
+    d.push_back({"Median", "Filter", withMask({Ch("channels", "channels", "rgba"), F("size", "size", 3, 0, 25, "Radius in pixels")}),
+                 "Each pixel becomes the median of its neighbourhood: removes specks and dust, keeps edges."});
+    d.push_back({"DirBlur", "Filter",
+                 withMask({Ch("channels", "channels", "all"), C("BlurType", "type", "linear", {"linear", "zoom", "radial"}),
+                           PickXY(XY("BlurCenter", "center", "$center", 0, 4096)), F("BlurLength", "length", 20, 0, 500, "Pixels (linear, zoom) or degrees (radial)"),
+                           When(F("BlurAngle", "angle", 0, -180, 180), "BlurType=linear"), I("BlurQuality", "samples", 32, 2, 256)}),
+                 "Directional blur: along an angle, zooming towards a centre, or spinning around it."});
+    d.push_back({"MotionBlur", "Filter",
+                 withMask({Ch("channels", "channels", "all"), F("shutter", "shutter (frames)", 0.5, 0, 4), I("shutter_samples", "samples", 12, 2, 128),
+                           F("vector_detail", "vector detail", 0.3, 0.05, 1), F("max_length", "max length (px)", 100, 1, 1000)}),
+                 "Motion blur from the footage's own motion (optical flow to the frames before and after)."});
+    d.push_back({"Convolve", "Filter",
+                 {Ch("channels", "channels", "rgba"), S("filter_channel", "filter channel", "A"), B("normalize", "normalize", true),
+                  F("mix", "mix", 1, 0, 1)},
+                 "Convolves the image with the filter input's picture (its bbox is the kernel): custom bokeh, streaks."});
+    d.push_back({"Matrix", "Filter",
+                 withMask({Ch("channels", "channels", "rgba"),
+                           J("matrix", "matrix", json::array({json::array({0, -1, 0}), json::array({-1, 5, -1}), json::array({0, -1, 0})}),
+                             "Rows of the kernel, top row first: [[0, -1, 0], [-1, 5, -1], [0, -1, 0]]"),
+                           B("normalize", "normalize", false)}),
+                 "Convolves with a small typed kernel (3 x 3, 5 x 5 ...): sharpen, emboss, edge filters."});
+    d.push_back({"EdgeExtend", "Filter",
+                 {S("matte_channel", "matte channel", "A"), B("premultiplied", "input is premultiplied", true), F("size", "size", 50, 1, 500),
+                  B("premultiply_output", "premultiply the result", false)},
+                 "Carries the colour at a matte's edge outwards into the transparent area (clean edges for defocus, blur, despill)."});
+    d.push_back({"Inpaint", "Filter",
+                 {Ch("channels", "channels", "rgba"), S("matte_channel", "matte channel", "A"), F("search", "reach", 64, 4, 500)},
+                 "Fills the holes (the matte input's alpha, or the input's transparency) from the pixels around them."});
+    d.push_back({"DropShadow", "Filter",
+                 {Col4("color", "color", json::array({0, 0, 0, 1})), F("opacity", "opacity", 0.75, 0, 1), F("angle", "angle", -45, -180, 180),
+                  F("distance", "distance", 10, 0, 200), F("size", "softness", 10, 0, 200), B("shadow_only", "shadow only", false)},
+                 "A soft shadow of the alpha, offset, under the image."});
+    d.push_back({"Soften", "Filter",
+                 withMask({Ch("channels", "channels", "rgb"), F("size", "size", 10, 0, 100), F("amount", "amount", 0.5, 0, 1),
+                           F("minimum", "luminance from", 0, 0, 1), F("maximum", "luminance to", 1, 0, 2)}),
+                 "Mixes a blur into the image, more in the brights: a diffusion / pro-mist softening."});
+    d.push_back({"Laplacian", "Filter", withMask({Ch("channels", "channels", "rgb"), F("size", "size", 3, 0.5, 50)}),
+                 "The image minus its blur: the edges and fine detail (a high pass)."});
+    d.push_back({"Bilateral", "Filter",
+                 withMask({Ch("channels", "channels", "rgb"), F("size", "size", 5, 1, 20), F("colour_tolerance", "colour tolerance", 0.1, 0.001, 1),
+                           B("use_luminance", "compare luminance", false)}),
+                 "An edge-preserving blur: smooths only between pixels of similar colour."});
+    d.push_back({"DegrainSimple", "Filter",
+                 withMask({F("red_blur", "red", 2, 0, 15), F("green_blur", "green", 2, 0, 15), F("blue_blur", "blue", 4, 0, 15),
+                           F("tolerance", "tolerance", 0.05, 0.001, 0.5)}),
+                 "Smooths the grain of each channel by its own amount, keeping edges."});
+    d.push_back({"DegrainBlue", "Filter", withMask({F("size", "size", 3, 0, 15), F("tolerance", "tolerance", 0.05, 0.001, 0.5)}),
+                 "Smooths the (noisiest) blue channel, keeping edges."});
+    for (const char* rays : {"GodRays", "VolumeRays"}) {
+        const bool vol = std::string(rays) == "VolumeRays";
+        std::vector<KnobDef> k = {Ch("channels", "channels", "rgba"), PickXY(XY("center", "center", "$center", 0, 4096)),
+                                  F("scale", "length (scale)", vol ? 1.5 : 1.2, 0.2, 4), I("steps", "steps", 32, 2, 256),
+                                  F("decay", "decay", 1, 0.8, 1), F("intensity", "intensity", 1, 0, 10),
+                                  Col4("from_color", "from color", json::array({1, 1, 1, 1})), Col4("to_color", "to color", json::array({1, 1, 1, 1})),
+                                  B("add_to_input", "add to the input", vol)};
+        if (vol) k.insert(k.begin() + 2, F("threshold", "threshold", 0.8, 0, 4));
+        d.push_back({rays, "Filter", withMask(k),
+                     vol ? "Light streaks from the bright parts of the image, out from a centre." : "Streaks of the image towards or away from a centre (a zoom smear)."});
+    }
+    d.push_back({"BumpBoss", "Filter",
+                 withMask({Ch("channels", "channels", "rgb"), F("depth", "depth", 5, 0, 50), F("light_angle", "light angle", 135, -180, 180),
+                           F("light_elevation", "light elevation", 45, 0, 90), F("ambient", "ambient", 0.3, 0, 1)}),
+                 "Lights the image as if its brightness (or the bump input's) were a relief."});
+    d.push_back({"ZSlice", "Filter",
+                 {S("depth", "depth channel", "depth.Z"), C("math", "depth math", "1/z", {"1/z", "z"}), F("center", "centre (distance)", 5, 0, 1000),
+                  F("field_width", "width", 2, 0, 1000), F("softness", "softness", 0.5, 0, 100), C("output", "output", "multiply", {"multiply", "alpha"})},
+                 "Keeps only what lies within a range of distances (from a depth channel)."});
     d.push_back({"Blur", "Filter",
                  withMask({Ch("channels", "channels", "all"), Split(XY("size", "size", json::array({0, 0}), 0, 100)),
                            Width(C("filter", "filter", "gaussian", {"box", "triangle", "quadratic", "gaussian"}), 100),
@@ -1036,6 +1317,59 @@ std::vector<NodeDef> build() {
                   Width(C("shutteroffset", "Shutter Offset", "start", {"centred", "start", "end", "custom"}), 100),
                   Same(EnableIf(F("shuttercustomoffset", "", 0, -1, 1), "shutteroffset=custom"), true)},
                  ""});
+    {
+        // TransformMasked: Transform's knobs plus the mask row
+        const NodeDef* t = nullptr;
+        for (auto& x : d)
+            if (x.type == "Transform") t = &x;
+        std::vector<KnobDef> k = t ? t->knobs : std::vector<KnobDef>{};
+        k.push_back(Div(""));
+        k.push_back(Width(S("mask_channel", "mask", "A"), 110));
+        k.push_back(Same(B("invert_mask", "invert", false)));
+        d.push_back({"TransformMasked", "Transform", k, "A Transform applied only where the mask input is (mixed back over the input elsewhere)."});
+    }
+    d.push_back({"CameraShake", "Transform",
+                 {F("amplitude", "amplitude (px)", 10, 0, 200), F("rotation", "rotation (deg)", 0, 0, 20), F("scale", "scale (%)", 0, 0, 20),
+                  F("frequency", "frequency", 2, 0, 20, "Shakes per second"), I("octaves", "octaves", 3, 1, 8), I("seed", "seed", 0, 0, 1000),
+                  Div(""), Width(C("filter", "filter", "cubic", {"impulse", "cubic", "keys", "simon", "rifman", "mitchell", "parzen", "notch",
+                                                                 "lanczos4", "lanczos6", "sinc4", "bilinear"}), 110),
+                  Same(B("black_outside", "black outside", true)), Log(F("motionblur", "motionblur", 0, 0, 4)), F("shutter", "shutter", 0.5, 0, 2),
+                  Width(C("shutteroffset", "shutter offset", "centred", {"centred", "start", "end"}), 100)},
+                 "Hand-held or impact camera shake: noise-driven movement, rotation and scale (with motion blur)."});
+    d.push_back({"MotionBlur2D", "Transform",
+                 {F("shutter", "shutter (frames)", 0.5, 0, 4), Width(C("shutteroffset", "shutter offset", "centred", {"centred", "start", "end"}), 100),
+                  I("samples", "samples", 16, 2, 128), F("max_length", "max length (px)", 200, 1, 2000),
+                  B("output_vectors", "output motion vectors (forward.u / v) instead", false)},
+                 "Motion blur from a transform: connect the Transform (Tracker, CornerPin...) to the transform input."});
+    d.push_back({"AdjustBBox", "Transform", {Split(XY("numpixels", "add pixels", json::array({25, 25}), -500, 500))},
+                 "Grows (or with negative values, crops) the bounding box."});
+    d.push_back({"BlackOutside", "Transform", {}, "A black pixel around the bounding box, so edges that extend show black."});
+    d.push_back({"Tile", "Transform",
+                 {I("rows", "rows", 2, 1, 64), Same(B("mirror_rows", "mirror", false)), I("columns", "columns", 2, 1, 64),
+                  Same(B("mirror_columns", "mirror", false)),
+                  Width(C("filter", "filter", "cubic", {"impulse", "cubic", "keys", "simon", "rifman", "mitchell", "parzen", "notch",
+                                                         "lanczos4", "lanczos6", "sinc4", "bilinear"}), 110)},
+                 "Repeats the image, shrunk, in a grid filling the frame."});
+    {
+        const std::vector<std::string> pr = {"latlong", "cube", "angular map", "mirror ball", "fisheye"};
+        d.push_back({"SphericalTransform", "Transform",
+                     {C("input_type", "input", "latlong", pr), C("output_type", "output", "latlong", pr), Fmt("format", "output format"),
+                      XYZ("rotate", "rotate (tilt, pan, roll)", json::array({0, 0, 0}), -180, 180),
+                      Width(C("filter", "filter", "cubic", {"impulse", "cubic", "keys", "lanczos4", "lanczos6", "bilinear"}), 110)},
+                     "Converts between panoramic projections (latlong, cube cross, angular map, mirror ball, fisheye) and rotates the panorama."});
+    }
+    d.push_back({"TVIScale", "Transform", {C("scale", "scale", "2x", {"2x", "4x"}), F("detail", "detail", 0.3, 0, 1)},
+                 "Upscales 2x or 4x with a sharp filter and some detail recovery."});
+    d.push_back({"GridWarp", "Transform",
+                 withMask({Comps(XY("grid_size", "grid size", json::array({5, 5}), 2, 32), {"columns", "rows"}),
+                           C("edit", "edit in the viewer", "destination", {"destination", "source"}), F("amount", "distortion", 1, 0, 1),
+                           Width(C("filter", "filter", "cubic", {"impulse", "cubic", "keys", "simon", "rifman", "mitchell", "lanczos4", "lanczos6", "bilinear"}), 110),
+                           Btn("gridwarp_reset", "reset grids", "Both grids back to a regular grid over the format"),
+                           Same(Btn("gridwarp_copy", "copy source to destination")),
+                           J("source", "source points", json::array(), "Filled in by the viewer: [[x, y], ...] row by row"),
+                           J("destination", "destination points", json::array(), "")}),
+                 "Warps the picture so the source grid lands on the destination grid. Drag the grid points in the viewer "
+                 "(the grid chosen in 'edit in the viewer'; shift-drag moves a point of the other one)."});
     const std::vector<std::string> rotOrders = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"};
     d.push_back({"Camera", "3D",
                  {XYZ("translate", "translate", json::array({0, 0, 0}), -100, 100), XYZ("rotate", "rotate", json::array({0, 0, 0}), -180, 180),

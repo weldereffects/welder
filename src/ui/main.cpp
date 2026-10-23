@@ -46,6 +46,7 @@ struct Options {
     std::string file, view, select, props, screenshot, ofxPath, level;
     double frame = -1;
     int width = 1600, height = 960;
+    bool resetWorkspace = false;  // --reset-workspace: start with the default layout (forgets the saved one)
     int idScan = 0;  // --idscan <step px>: sweep the mouse over the window and report ImGui ID conflicts
 };
 
@@ -60,6 +61,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--props") o.props = next();
         else if (a == "--graph-level") o.level = next();
         else if (a == "--screenshot") o.screenshot = next();
+        else if (a == "--reset-workspace" || a == "--reset-layout") o.resetWorkspace = true;
         else if (a == "--ofx-path") o.ofxPath = next();
         else if (a == "--idscan") {
             o.idScan = std::max(2, std::atoi(next().c_str()));
@@ -158,6 +160,73 @@ void buildLayout(ImGuiID dock, ImVec2 size) {
     ImGui::DockBuilderFinish(dock);
 }
 
+const char* const kPanelNames[] = {"Nodes", "Viewer", "Timeline", "Node Graph", "Properties", "Messages", "Curve Editor", "Dope Sheet"};
+
+// Reset Workspace: forget every dock node (floating ones too) and where each panel was, then
+// build the default layout.
+void resetLayout(ImGuiID dock, ImVec2 size) {
+    ImGuiContext& g = *GImGui;
+    ImGui::DockContextClearNodes(&g, 0, true);  // every node, and the panels' references to them
+    for (const char* w : kPanelNames) {
+        for (std::string name : {std::string(w), std::string(w) + "###max"})
+            if (ImGuiWindow* win = ImGui::FindWindowByName(name.c_str())) {
+                win->Collapsed = false;
+                win->Hidden = false;
+            }
+        if (ImGuiWindowSettings* ws = ImGui::FindWindowSettingsByID(ImHashStr(w))) ws->Collapsed = false;
+    }
+    buildLayout(dock, size);
+}
+
+bool g_activeMoving(ImGuiWindow* w) {
+    ImGuiContext& g = *GImGui;
+    return g.MovingWindow == w || (g.ActiveIdWindow == w && g.ActiveId != 0);
+}
+
+// Every frame, so a workspace can't get stuck:
+//  - the toolbar and timeline areas take no other panels (a panel docked there before shows its
+//    tab again so it can be dragged out);
+//  - a floating panel stays on screen, big enough to grab and resize;
+//  - every splitter can be dragged (keepDockResizable).
+void guardLayout() {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    for (const char* w : {"Nodes", "Timeline"}) {
+        ImGuiWindow* win = ImGui::FindWindowByName(w);
+        if (!win || !win->DockNode) continue;
+        ImGuiDockNode* n = win->DockNode;
+        const bool alone = n->Windows.Size <= 1;
+        ImGuiDockNodeFlags want = n->LocalFlags | ImGuiDockNodeFlags_NoDockingOverMe;
+        if (alone) want |= ImGuiDockNodeFlags_NoTabBar;
+        else want = (want & ~ImGuiDockNodeFlags_NoTabBar) & ~ImGuiDockNodeFlags_NoDockingOverMe;
+        if (want != n->LocalFlags) {
+            n->LocalFlags = want;
+            n->UpdateMergedFlags();
+        }
+    }
+    const float minW = 160, minH = 90;
+    for (const char* w : kPanelNames) {
+        ImGuiWindow* win = ImGui::FindWindowByName(w);
+        if (!win || win->DockIsActive || win->DockNode || !win->WasActive) continue;
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && (g_activeMoving(win))) continue;  // while it's being moved or resized
+        ImVec2 pos = win->Pos, size = win->Size;
+        bool fix = false;
+        if (size.x < minW || size.y < minH) {
+            size = ImVec2(std::max(size.x, minW), std::max(size.y, minH));
+            fix = true;
+        }
+        size.x = std::min(size.x, vp->WorkSize.x);
+        size.y = std::min(size.y, vp->WorkSize.y);
+        // all of it on screen (so every edge can be grabbed)
+        const float x = std::clamp(pos.x, vp->WorkPos.x, vp->WorkPos.x + vp->WorkSize.x - size.x);
+        const float y = std::clamp(pos.y, vp->WorkPos.y, vp->WorkPos.y + vp->WorkSize.y - size.y);
+        if (x != pos.x || y != pos.y) fix = true;
+        if (fix) {
+            ImGui::SetWindowPos(win, ImVec2(x, y), ImGuiCond_Always);
+            ImGui::SetWindowSize(win, size, ImGuiCond_Always);
+        }
+    }
+}
+
 bool savePng(const std::string& path, int w, int h) {
     std::vector<unsigned char> px((size_t)w * h * 4), flipped((size_t)w * h * 4);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
@@ -236,6 +305,10 @@ int main(int argc, char** argv) {
     static std::string iniPath = (fs::path(configDir()) / "layout.ini").string();
     io.ConfigDragClickToInputText = true;  // a click on a number field types into it; a drag scrubs it (classic)
     io.IniFilename = opt.screenshot.empty() ? iniPath.c_str() : nullptr;  // screenshots use the default layout
+    if (opt.resetWorkspace || envFlag("WELDER_RESET_WORKSPACE") || envFlag("STRATA_RESET_WORKSPACE")) {
+        std::error_code ec;
+        fs::rename(iniPath, iniPath + ".bak", ec);  // kept beside it, just in case
+    }
     applyTheme();
 
     App app;
@@ -358,17 +431,13 @@ int main(int argc, char** argv) {
             ui.resetWorkspace = false;
             ui.maximized.clear();
             resetTimelineHeight();
-            for (const char* w : {"Nodes", "Viewer", "Timeline", "Node Graph", "Properties", "Messages", "Curve Editor", "Dope Sheet"})
-                if (ImGuiWindow* win = ImGui::FindWindowByName(w)) {
-                    win->Collapsed = false;
-                    win->Hidden = false;
-                }
-            buildLayout(dock, ImVec2(vp->WorkSize.x, vp->WorkSize.y));
+            resetLayout(dock, ImVec2(vp->WorkSize.x, vp->WorkSize.y));
             ImGui::MarkIniSettingsDirty();
             focusGraph = true;
             app.message("workspace reset to the default layout");
         }
         keepDockResizable();
+        guardLayout();
         // While a panel is maximized the dockspace is only kept alive (not drawn): the
         // docked panels keep their places and come back untouched on restore.
         lockTimelineHeight();  // only the viewer and node graph resize; the timeline keeps its height
@@ -759,6 +828,33 @@ int main(int argc, char** argv) {
                     if (ImGuiWindow* win = ImGui::FindWindowByName(w))
                         std::fprintf(stderr, "PANEL %s pos %.0f,%.0f size %.0fx%.0f\n", w, win->Pos.x, win->Pos.y, win->Size.x, win->Size.y);
         }
+        // STRATA_TEST_MESS=1: wreck the workspace (Properties dropped into the toolbar, Messages
+        // floating tiny and off screen), then report; STRATA_TEST_RESET_AT resets it and reports again.
+        bool messTest = false;
+        if (envFlag("STRATA_TEST_MESS") && !opt.screenshot.empty()) {
+            const int resetAt = std::getenv("STRATA_TEST_RESET_AT") ? std::atoi(std::getenv("STRATA_TEST_RESET_AT")) : -1;
+            messTest = frameCount < std::max(40, resetAt + 12);
+            auto report = [&](const char* when) {
+                for (const char* w : {"Nodes", "Viewer", "Timeline", "Node Graph", "Properties", "Messages"})
+                    if (ImGuiWindow* win = ImGui::FindWindowByName(w))
+                        std::fprintf(stderr, "MESS %s %s docked %d pos %.0f,%.0f size %.0fx%.0f tabbar %d\n", when, w, win->DockNode ? 1 : 0,
+                                     win->Pos.x, win->Pos.y, win->Size.x, win->Size.y,
+                                     win->DockNode ? !(win->DockNode->MergedFlags & ImGuiDockNodeFlags_NoTabBar) : -1);
+            };
+            if (frameCount == 10) {
+                ImGuiWindow* nodes = ImGui::FindWindowByName("Nodes");
+                if (nodes && nodes->DockNode) ImGui::DockBuilderDockWindow("Properties", nodes->DockNode->ID);
+                if (ImGuiWindow* m = ImGui::FindWindowByName("Messages")) ImGui::DockContextQueueUndockWindow(GImGui, m);
+            }
+            if (frameCount == 14)
+                if (ImGuiWindow* m = ImGui::FindWindowByName("Messages")) {
+                    ImGui::SetWindowPos(m, ImVec2(-3000, -3000), ImGuiCond_Always);
+                    ImGui::SetWindowSize(m, ImVec2(10, 10), ImGuiCond_Always);
+                }
+            if (frameCount == 30) report("wrecked");
+            if (resetAt > 0 && frameCount == resetAt) ui.resetWorkspace = true;
+            if (resetAt > 0 && frameCount == resetAt + 10) report("reset");
+        }
         // STRATA_TEST_ALTDRAG=x0,y0,x1,y1: Alt+drag between two window positions, then list the nodes
         bool altDragTest = false;
         if (const char* ta = std::getenv("STRATA_TEST_ALTDRAG"); ta && *ta && !opt.screenshot.empty()) {
@@ -1082,7 +1178,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !panelDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

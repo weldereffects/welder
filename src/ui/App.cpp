@@ -1744,6 +1744,107 @@ void App::startStabilizing(const std::string& name) {
     track_ = std::thread([this, name, first, last] { stabLoop(name, first, last); });
 }
 
+void App::startCurveTool(const std::string& name) {
+    if (trackStatus().running) return;
+    if (track_.joinable()) track_.join();
+    Node* n = node(name);
+    if (!n || n->type != "CurveTool") return;
+    if (!n->input(0)) {
+        message(name + ": connect something to analyse");
+        return;
+    }
+    auto r = nodeFrameRange(n->input(0));
+    auto vr = visibleRange();
+    int first = (int)std::lround(r ? r->first : vr.first), last = (int)std::lround(r ? r->second : vr.second);
+    if (n->params.flag("use_range", false)) {
+        first = (int)n->params.num("first", 0, first);
+        last = (int)n->params.num("last", 0, last);
+    }
+    if (last < first) std::swap(first, last);
+    checkpoint();
+    {
+        std::lock_guard<std::mutex> l(trackM_);
+        trackStatus_ = {true, name, (double)first, 0, last - first + 1, "analysing"};
+        curveResult_.reset();
+    }
+    trackCancel_ = false;
+    track_ = std::thread([this, name, first, last] { curveToolLoop(name, first, last); });
+}
+
+void App::curveToolLoop(std::string name, int first, int last) {
+    if (!trackEngine_) {
+        EngineOptions o;
+        o.cacheBytes = size_t(512) << 20;
+        trackEngine_ = std::make_unique<Engine>(o);
+    }
+    Engine& e = *trackEngine_;
+    std::string op;
+    // per frame results, then curves
+    std::vector<std::pair<int, json>> res;
+    try {
+        for (int f = first; f <= last && !trackCancel_; ++f) {
+            json fr;
+            {
+                std::shared_lock<std::shared_timed_mutex> cl(compM);
+                Node* n = comp ? comp->find(name) : nullptr;
+                if (!n) throw std::runtime_error("the node is gone");
+                op = n->params.str("operation", "Avg Intensities");
+                e.clearMemo();
+                e.setScale(1.0);
+                fr = curveToolFrame(e, n, f);
+            }
+            res.emplace_back(f, fr);
+            {
+                std::lock_guard<std::mutex> l(trackM_);
+                trackStatus_.frame = f;
+                ++trackStatus_.done;
+            }
+            if (onResult) onResult();
+        }
+        if (!trackCancel_ && !res.empty()) {
+            auto curves = [&](const char* key, int n, int offset) {
+                json arr = json::array();
+                for (int k = 0; k < n; ++k) {
+                    json keys = json::array();
+                    for (auto& [f, fr] : res)
+                        if (fr.contains(key) && fr[key].is_array() && (int)fr[key].size() > k + offset) keys.push_back(json::array({f, fr[key][k + offset]}));
+                    arr.push_back(json{{"keys", keys}});
+                }
+                return arr;
+            };
+            auto patch = std::make_shared<json>(json::object());
+            (*patch)["intensitydata"] = curves("intensity", 4, 0);
+            (*patch)["autocropdata"] = curves("crop", 4, 0);
+            (*patch)["maxlumapixdata"] = curves("max", 2, 0);
+            (*patch)["maxlumapixvalue"] = curves("max", 3, 2);
+            (*patch)["minlumapixdata"] = curves("min", 2, 0);
+            (*patch)["minlumapixvalue"] = curves("min", 3, 2);
+            // exposure difference: stops relative to the first frame's average
+            json ex = json::array();
+            const json& i0 = res.front().second.value("intensity", json::array({1, 1, 1, 1}));
+            for (int k = 0; k < 4; ++k) {
+                json keys = json::array();
+                for (auto& [f, fr] : res) {
+                    const double a = i0.size() > (size_t)k ? i0[k].get<double>() : 1, b = fr.contains("intensity") ? fr["intensity"][k].get<double>() : 1;
+                    keys.push_back(json::array({f, a > 1e-9 && b > 1e-9 ? std::log2(b / a) : 0.0}));
+                }
+                ex.push_back(json{{"keys", keys}});
+            }
+            (*patch)["exposure"] = ex;
+            std::lock_guard<std::mutex> l(trackM_);
+            curveResult_ = patch;
+        }
+    } catch (const std::exception& ex) {
+        std::lock_guard<std::mutex> l(trackM_);
+        trackMessages_.push_back(std::string("error: ") + name + ": " + ex.what());
+    }
+    {
+        std::lock_guard<std::mutex> l(trackM_);
+        trackStatus_.running = false;
+    }
+    if (onResult) onResult();
+}
+
 void App::stabLoop(std::string name, int first, int last) {
     if (!trackEngine_) {
         EngineOptions o;
@@ -2028,13 +2129,24 @@ void App::camSolveLoop(std::string name, json tracksJ, json opts, int w, int h) 
 
 void App::pollTracking() {
     std::vector<PlanarResult> pres;
-    std::shared_ptr<json> ctr, csol, smo;
+    std::shared_ptr<json> ctr, csol, smo, cvr;
     {
         std::lock_guard<std::mutex> l(trackM_);
         pres.swap(planarResults_);
         ctr.swap(camTracks_);
         csol.swap(camSolve_);
         smo.swap(stabMotion_);
+        cvr.swap(curveResult_);
+    }
+    if (cvr) {
+        std::string cname = trackStatus().node;
+        edit([cname, cvr](Comp& c) {
+            Node* n = c.find(cname);
+            if (!n) return;
+            for (auto& [k, v] : cvr->items()) n->params.data[k] = v;
+            n->paramsChanged();
+        });
+        message(cname + ": analysis done");
     }
     if (smo) {
         std::string sname = trackStatus().node;

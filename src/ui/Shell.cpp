@@ -349,7 +349,7 @@ void drawToolbar(App& app, UiState& ui) {
         ui.ofxPlugins = listOfxPluginsForUi();
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 6));
-    ImGui::Begin(ui.win("Nodes").c_str(), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar);
+    ImGui::Begin(ui.win("Nodes").c_str(), nullptr, ImGuiWindowFlags_NoScrollbar);  // floating, it keeps a title bar to move it by
     ui.noteHover("Nodes");
     ImGui::PopStyleVar();
     float w = ImGui::GetContentRegionAvail().x;

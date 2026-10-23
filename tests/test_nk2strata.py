@@ -1360,6 +1360,53 @@ Write {
 }
 """
 
+class NewClasses(unittest.TestCase):
+    def test_table_driven_classes(self):
+        _, report, n = convert("""
+Constant { inputs 0 name B_side }
+Constant { inputs 0 name A_side }
+Constant { inputs 0 name Matte }
+KeyMix { inputs 3 maskChannel rgba.alpha mix 0.5 name KM }
+push $cut_paste_input
+ColorLookup { lut {master {curve C 0 x0.5 0.7 x1 1}
+  red {}
+  green {curve 0 1}
+  blue {}
+  alpha {}} name CL }
+Exposure { mode Stops red 1 green 1 blue 1 name EX }
+ColorMatrix { matrix {{0 1 0} {1 0 0} {0 0 1}} name CM }
+Expression { temp_name0 k temp_expr0 2 expr0 "r * k" channel0 {rgba.red -rgba.green -rgba.blue none} name E }
+Retime { input.first 1 input.last 10 output.first 1 output.last 20 filter none name RT }
+TimeWarp { lookup {{curve x1 1 x10 5}} name TW }
+Text2 { message "shot [frame]" global_font_scale 0.5 font_size 100 name T }
+DirBlurWrapper { BlurType zoom BlurLength 40 name DB }
+FrameRange { first_frame 5 last_frame 15 name FR }
+AdjBBox { numpixels {10 10} name AB }
+""")
+        self.assertEqual(n["KM"]["type"], "KeyMix")
+        self.assertEqual(len(n["KM"]["inputs"]), 3)
+        self.assertEqual(n["KM"]["params"]["mask_channel"], "A")
+        self.assertEqual(n["CL"]["params"]["lut"]["master"], [[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]])
+        self.assertEqual(n["CL"]["params"]["lut"]["green"], [[0.0, 0.0], [1.0, 1.0]])
+        self.assertEqual(n["EX"]["params"]["value"][:3], [1, 1, 1])
+        self.assertEqual(n["EX"]["params"]["mode"], "stops")
+        self.assertEqual(n["CM"]["params"]["matrix_r"], [0.0, 1.0, 0.0])
+        self.assertEqual(n["E"]["params"]["expr0"], "r * k")
+        self.assertEqual(n["E"]["params"]["temp_name0"], "k")
+        self.assertEqual(n["RT"]["params"]["filter"], "none")
+        self.assertEqual(n["RT"]["params"]["output.last"], 20)
+        self.assertIn("keys", n["TW"]["params"]["lookup"])
+        self.assertEqual(n["T"]["type"], "Text")
+        self.assertEqual(n["T"]["params"]["size"], 50)
+        self.assertEqual(n["T"]["params"]["message"], "shot [frame]")
+        self.assertEqual(n["DB"]["type"], "DirBlur")
+        self.assertEqual(n["DB"]["params"]["BlurType"], "zoom")
+        self.assertEqual(n["FR"]["params"]["first_frame"], 5)
+        self.assertEqual(n["AB"]["type"], "AdjustBBox")
+        self.assertNotIn("KeyMix", report["unsupported_classes"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
 

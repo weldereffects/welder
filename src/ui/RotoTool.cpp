@@ -432,7 +432,8 @@ Node* activeToolNode(App& app) {
     for (auto& p : app.panels)
         if (Node* n = app.node(p))
             if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "Tracker" || n->type == "PlanarTracker" ||
-                n->type == "CameraTracker" || n->type == "FlowField" || n->type == "TrackMask" || n->type == "Transform" || n->type == "Position" || n->type == "CornerPin2D")
+                n->type == "CameraTracker" || n->type == "FlowField" || n->type == "TrackMask" || n->type == "Transform" || n->type == "Position" || n->type == "CornerPin2D" ||
+                n->type == "TransformMasked" || n->type == "GridWarp")
                 return n;
     return nullptr;
 }

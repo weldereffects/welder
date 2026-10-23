@@ -28,6 +28,10 @@ ChannelSet parseChannels(const Params& p, const std::string& key, const std::str
 std::string resolveChannelName(const std::string& in);
 ChannelSet channelsToCreate(const std::string& text);
 
+// One frame of a CurveTool analysis over its region of interest (nodes/DrawExtraNodes.cpp):
+// {"intensity": [r, g, b, a], "crop": [x1, y1, x2, y2], "max": [x, y, r, g, b], "min": [...]}.
+json curveToolFrame(Engine& e, Node* curveTool, double frame);
+
 // Mix/mask: blend `out` back towards `src` by (1 - mix * mask) per pixel for
 // the channels in `affected`. Mask input is optional.
 struct MaskMix {

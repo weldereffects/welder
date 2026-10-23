@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <set>
@@ -227,6 +228,93 @@ struct Block {
     std::vector<std::string> main;                           // input names ("" = none), main inputs
     std::string mask;                                        // "" = none
 };
+
+// Welder types whose .nk class shares the knob names: (param, (kind, nk knob ("" = the same))).
+// kinds: "" (a value), ch (channel set), chname (one channel), lut (lookup curves), rows (a matrix),
+// comp<i> (one component of a vector param).
+struct SimpleExport {
+    std::string cls;
+    int nMain = 1, maskAt = -1;
+    std::vector<std::pair<std::string, std::pair<std::string, std::string>>> knobs;
+    bool hasMix = true;
+    std::string note;
+};
+const SimpleExport* simpleExport(const std::string& type) {
+    using K = std::vector<std::pair<std::string, std::pair<std::string, std::string>>>;
+    auto rows = [] {
+        K k;
+        for (int i = 0; i < 4; ++i) {
+            const std::string n = std::to_string(i);
+            k.push_back({"temp_name" + n, {"", ""}});
+            k.push_back({"temp_expr" + n, {"", ""}});
+            k.push_back({"channel" + n, {"ch", ""}});
+            k.push_back({"expr" + n, {"", ""}});
+        }
+        return k;
+    };
+    static const std::map<std::string, SimpleExport> m = {
+        {"KeyMix", {"KeyMix", 3, -1, {{"channels", {"ch", ""}}, {"mask_channel", {"chname", "maskChannel"}}, {"invert_mask", {"", "invertMask"}}}, false, ""}},
+        {"AddMix", {"AddMix", 2, 2, {{"channels", {"ch", ""}}}, true, "AddMix's alpha curves were not written"}},
+        {"MergeExpression", {"MergeExpression", 2, 2, rows(), true, ""}},
+        {"Expression", {"Expression", 1, 1, rows(), true, ""}},
+        {"CopyBBox", {"CopyBBox", 2, -1, {}, false, ""}},
+        {"CopyRectangle", {"CopyRectangle", 2, 2, {{"channels", {"ch", ""}}, {"area", {"", ""}}, {"softness", {"", ""}}}, true, ""}},
+        {"TimeDissolve", {"TimeDissolve", 2, -1, {{"in", {"", ""}}, {"out", {"", ""}}}, false, ""}},
+        {"ContactSheet", {"ContactSheet", 2, -1, {{"size", {"comp0", "width"}}, {"size", {"comp1", "height"}}, {"rows", {"", ""}}, {"columns", {"", ""}},
+                                                   {"gap", {"", ""}}, {"roworder", {"", ""}}, {"colorder", {"", ""}}, {"center", {"", ""}},
+                                                   {"splitinputs", {"", ""}}, {"startframe", {"", ""}}, {"endframe", {"", ""}}}, false, ""}},
+        {"AddChannels", {"AddChannels", 1, -1, {{"channels", {"", ""}}, {"color", {"", ""}}}, false, ""}},
+        {"ChannelMerge", {"ChannelMerge", 2, 2, {{"A", {"chname", ""}}, {"B", {"chname", ""}}, {"operation", {"", ""}}, {"output", {"chname", ""}}}, true, ""}},
+        {"Exposure", {"Exposure", 1, 1, {{"channels", {"ch", ""}}, {"value", {"comp0", "red"}}, {"value", {"comp1", "green"}}, {"value", {"comp2", "blue"}}}, true, ""}},
+        {"ColorLookup", {"ColorLookup", 1, 1, {{"channels", {"ch", ""}}, {"lut", {"lut", ""}}}, true, ""}},
+        {"HueCorrect", {"HueCorrect", 1, 1, {{"channels", {"ch", ""}}, {"hue", {"lut", ""}}}, true, ""}},
+        {"HSVTool", {"HSVTool", 1, 1, {{"hue_rotation", {"", ""}}, {"hue_range", {"", ""}}, {"saturation_adjust", {"", ""}}, {"brightness_adjust", {"", ""}}}, true, ""}},
+        {"SoftClip", {"SoftClip", 1, 1, {{"channels", {"ch", ""}}, {"softclip_min", {"", ""}}, {"softclip_max", {"", ""}}}, true, ""}},
+        {"ColorMatrix", {"ColorMatrix", 1, 1, {{"channels", {"ch", ""}}, {"invert", {"", ""}}}, true, ""}},
+        {"Posterize", {"Posterize", 1, 1, {{"channels", {"ch", ""}}, {"Colors", {"", ""}}}, true, ""}},
+        {"Toe", {"Toe", 1, 1, {{"channels", {"ch", ""}}, {"lift", {"", ""}}}, true, ""}},
+        {"RollOffContrast", {"RollOffContrast", 1, 1, {{"channels", {"ch", ""}}, {"contrast", {"", ""}}, {"center", {"", ""}}, {"soft_clip", {"", ""}}}, true, ""}},
+        {"PLogLin", {"PLogLin", 1, -1, {{"operation", {"", ""}}, {"linref", {"", ""}}, {"logref", {"", ""}}, {"negativegamma", {"", ""}}, {"density", {"", ""}}}, false, ""}},
+        {"ClipTest", {"ClipTest", 1, 1, {{"channels", {"ch", ""}}, {"lower", {"", ""}}, {"upper", {"", ""}}}, true, ""}},
+        {"CMSTestPattern", {"CMSTestPattern", 0, -1, {{"rgbcubesize", {"", ""}}}, false, ""}},
+        {"Median", {"Median", 1, 1, {{"channels", {"ch", ""}}, {"size", {"", ""}}}, true, ""}},
+        {"DirBlur", {"DirBlurWrapper", 1, 1, {{"channels", {"ch", ""}}, {"BlurType", {"", ""}}, {"BlurCenter", {"", ""}}, {"BlurLength", {"", ""}},
+                                               {"BlurAngle", {"", ""}}, {"BlurQuality", {"", ""}}}, true, ""}},
+        {"MotionBlur", {"MotionBlur", 1, 1, {{"shutter", {"", "shutterTime"}}, {"shutter_samples", {"", "shutterSamples"}}, {"vector_detail", {"", "vectorDetail"}}}, true, ""}},
+        {"MotionBlur2D", {"MotionBlur2D", 2, -1, {{"shutter", {"", ""}}, {"shutteroffset", {"", ""}}}, false, ""}},
+        {"Convolve", {"Convolve2", 2, 2, {{"channels", {"ch", ""}}, {"normalize", {"", ""}}}, true, ""}},
+        {"Matrix", {"Matrix", 1, 1, {{"channels", {"ch", ""}}, {"matrix", {"rows", ""}}, {"normalize", {"", ""}}}, true, ""}},
+        {"Soften", {"Soften", 1, 1, {{"channels", {"ch", ""}}, {"size", {"", ""}}, {"amount", {"", ""}}, {"minimum", {"", ""}}, {"maximum", {"", ""}}}, true, ""}},
+        {"Laplacian", {"Laplacian", 1, 1, {{"channels", {"ch", ""}}, {"size", {"", ""}}}, true, ""}},
+        {"GodRays", {"GodRays", 1, 1, {{"channels", {"ch", ""}}, {"center", {"", ""}}, {"scale", {"", ""}}, {"steps", {"", ""}}, {"from_color", {"", ""}}, {"to_color", {"", ""}}}, true, ""}},
+        {"CameraShake", {"CameraShake3", 1, -1, {{"amplitude", {"", ""}}, {"rotation", {"", ""}}, {"scale", {"", ""}}, {"frequency", {"", ""}}, {"octaves", {"", ""}}, {"seed", {"", ""}}}, false, ""}},
+        {"AdjustBBox", {"AdjBBox", 1, -1, {{"numpixels", {"", ""}}}, false, ""}},
+        {"BlackOutside", {"BlackOutside", 1, -1, {}, false, ""}},
+        {"Tile", {"Tile", 1, -1, {{"rows", {"", ""}}, {"columns", {"", ""}}, {"mirror_rows", {"", ""}}, {"mirror_columns", {"", ""}}}, false, ""}},
+        {"Retime", {"Retime", 1, -1, {{"input.first", {"", ""}}, {"input.last", {"", ""}}, {"output.first", {"", ""}}, {"output.last", {"", ""}},
+                                       {"speed", {"", ""}}, {"reverse", {"", ""}}, {"filter", {"", ""}}, {"before", {"", ""}}, {"after", {"", ""}}}, false, ""}},
+        {"TimeWarp", {"TimeWarp", 1, -1, {{"lookup", {"", ""}}, {"filter", {"", ""}}}, false, ""}},
+        {"FrameRange", {"FrameRange", 1, -1, {{"first_frame", {"", ""}}, {"last_frame", {"", ""}}}, false, ""}},
+        {"AppendClip", {"AppendClip", 2, -1, {{"firstFrame", {"", ""}}, {"fadeIn", {"", ""}}, {"fadeOut", {"", ""}}, {"dissolve", {"", ""}}}, false, ""}},
+        {"TimeClip", {"TimeClip", 1, -1, {{"first", {"", ""}}, {"last", {"", ""}}, {"frame", {"", ""}}, {"before", {"", ""}}, {"after", {"", ""}},
+                                           {"fadeIn", {"", ""}}, {"fadeOut", {"", ""}}, {"reverse", {"", ""}}}, false, ""}},
+        {"FrameBlend", {"FrameBlend", 1, -1, {{"numframes", {"", ""}}, {"userange", {"", ""}}, {"startframe", {"", ""}}, {"endframe", {"", ""}}}, false, ""}},
+        {"TimeBlur", {"TimeBlur", 1, -1, {{"divisions", {"", ""}}, {"shutter", {"", ""}}, {"shutteroffset", {"", ""}}, {"shuttercustomoffset", {"", ""}}}, false, ""}},
+        {"NoTimeBlur", {"NoTimeBlur", 1, -1, {{"rounding", {"", ""}}}, false, ""}},
+        {"Text", {"Text2", 1, 1, {{"message", {"", ""}}, {"box", {"", ""}}, {"xjustify", {"", ""}}, {"yjustify", {"", ""}}, {"size", {"", "font_size"}},
+                                   {"tracking", {"", "kerning"}}, {"leading", {"", ""}}, {"color", {"", ""}}, {"translate", {"", ""}}, {"rotate", {"", ""}},
+                                   {"scale", {"", ""}}, {"center", {"", ""}}}, true, "the font became the default"}},
+        {"Rectangle", {"Rectangle", 1, 1, {{"area", {"", ""}}, {"softness", {"", ""}}, {"color", {"", ""}}, {"invert", {"", ""}}}, true, ""}},
+        {"Grid", {"Grid", 1, 1, {{"number", {"", ""}}, {"size", {"", ""}}, {"translate", {"", ""}}, {"color", {"", ""}}}, true, ""}},
+        {"Dither", {"Dither", 1, -1, {{"amount", {"", ""}}, {"seed", {"", ""}}}, false, ""}},
+        {"ColorBars", {"ColorBars", 0, -1, {{"barintensity", {"", ""}}}, false, ""}},
+        {"ColorWheel", {"ColorWheel", 0, -1, {{"rotate", {"", ""}}, {"gamma", {"", ""}}}, false, ""}},
+        {"CurveTool", {"CurveTool", 1, -1, {{"operation", {"", ""}}, {"ROI", {"", ""}}, {"intensitydata", {"", ""}}, {"autocropdata", {"", ""}}}, false, ""}},
+        {"Glint", {"Glint", 1, 1, {{"no_of_rays", {"", ""}}, {"length", {"", ""}}, {"odd_ray_length", {"", ""}}, {"rotation", {"", ""}}, {"steps", {"", ""}}, {"tolerance", {"", ""}}}, true, ""}},
+    };
+    auto it = m.find(type);
+    return it == m.end() ? nullptr : &it->second;
+}
 
 struct Writer {
     const Names& names;
@@ -570,9 +658,10 @@ struct Writer {
                 if (p.value("invert_unpremult", false)) raw("invert_unpremult", "true");
             }
             mixMask();
-        } else if (type == "Transform") {
-            b.cls = "Transform";
-            mainMask(1, -1);
+        } else if (type == "Transform" || type == "TransformMasked") {
+            b.cls = type;
+            mainMask(1, type == "TransformMasked" ? 1 : -1);
+            if (type == "TransformMasked") mixMask();
             copy("translate");
             copy("rotate");
             copy("scale");
@@ -745,6 +834,55 @@ struct Writer {
             b.cls = "StickyNote";
             if (has("label")) raw("label", word(p["label"].get<std::string>()));
             copy("note_font_size");
+        } else if (const auto* sx = simpleExport(type)) {
+            // the classes that share their knob names (nk2strata's table)
+            b.cls = sx->cls;
+            for (int i = 0; i < sx->nMain; ++i) b.main.push_back(in(n, i));
+            if (sx->maskAt >= 0) b.mask = in(n, sx->maskAt);
+            for (auto& [pk, kind] : sx->knobs) {
+                if (!has(pk.c_str())) continue;
+                const json& v = p[pk];
+                const std::string nk = kind.second.empty() ? pk : kind.second;
+                if (kind.first == "ch") raw(nk, nkChannels(v));
+                else if (kind.first == "chname" && v.is_string()) raw(nk, nkChannel(v.get<std::string>()));
+                else if (kind.first == "lut" && v.is_object()) {
+                    std::string t = "{";
+                    for (auto& [cn, pts] : v.items()) {
+                        t += cn + " {curve";
+                        if (pts.is_array())
+                            for (auto& q : pts)
+                                if (q.is_array() && q.size() >= 2) t += " x" + fmt(q[0].get<double>()) + " " + fmt(q[1].get<double>());
+                        t += "}\n ";
+                    }
+                    raw(nk, t + "}");
+                } else if (kind.first == "rows" && v.is_array()) {
+                    std::string t = "{";
+                    for (auto& r : v) {
+                        t += "{";
+                        if (r.is_array())
+                            for (size_t i = 0; i < r.size(); ++i) t += (i ? " " : "") + fmt(r[i].is_number() ? r[i].get<double>() : 0);
+                        t += "} ";
+                    }
+                    raw(nk, t + "}");
+                } else if (kind.first.rfind("comp", 0) == 0 && v.is_array()) {
+                    const size_t i = (size_t)std::atoi(kind.first.c_str() + 4);
+                    if (i < v.size()) put(nk, v[i]);
+                } else
+                    put(nk, v);
+            }
+            if (type == "ColorMatrix") {
+                auto row = [&](const char* k, json d) { return has(k) ? p[k] : d; };
+                json r = row("matrix_r", json::array({1, 0, 0})), g = row("matrix_g", json::array({0, 1, 0})), bl = row("matrix_b", json::array({0, 0, 1}));
+                std::string t = "{";
+                for (const json* q : {&r, &g, &bl}) {
+                    t += "{";
+                    for (size_t i = 0; i < 3 && i < q->size(); ++i) t += (i ? " " : "") + fmt((*q)[i].is_number() ? (*q)[i].get<double>() : 0);
+                    t += "} ";
+                }
+                raw("matrix", t + "}");
+            }
+            if (sx->hasMix) mixMask();
+            if (!sx->note.empty()) warn(sx->note);
         } else
             return placeholder(n, "");
         if (p.value("disable", false)) raw("disable", "true");

@@ -98,8 +98,9 @@ python3 "$ROOT/tools/nk2strata.py" "$STAGE/examples/nk/shot010_comp_v003.nk" -q 
 cp "$ROOT/tools/windows/README-WINDOWS.txt" "$STAGE/"
 cp "$ROOT/tools/windows/try-it.bat" "$STAGE/"
 cp "$ROOT/tools/windows/Welder.bat" "$STAGE/"
+cp "$ROOT/tools/windows/Welder-reset-workspace.bat" "$STAGE/"
 # Windows text files: CRLF line endings.
-python3 - "$STAGE/try-it.bat" "$STAGE/Welder.bat" "$STAGE/README-WINDOWS.txt" "$STAGE/bin/ml/setup-ml.bat" <<'PY'
+python3 - "$STAGE/try-it.bat" "$STAGE/Welder.bat" "$STAGE/Welder-reset-workspace.bat" "$STAGE/README-WINDOWS.txt" "$STAGE/bin/ml/setup-ml.bat" <<'PY'
 import sys
 for p in sys.argv[1:]:
     t = open(p, newline="").read().replace("\r\n", "\n").replace("\n", "\r\n")

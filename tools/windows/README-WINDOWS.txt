@@ -819,7 +819,8 @@ THE EDITOR
   Keys Welder doesn't have features for yet (clones, the second viewer
   input...) print a note in Messages instead of doing nothing.
 
-  Layout is saved to %APPDATA%\Welder\layout.ini (delete it to reset).
+  Layout is saved to %APPDATA%\Welder\layout.ini. Workspace > Reset Workspace (Shift+F12) puts
+  every panel back; Welder-reset-workspace.bat starts Welder with the default layout.
 
 QUICK TOUR (command line)
   Double-click try-it.bat. It runs the self-tests, renders the demo comps,

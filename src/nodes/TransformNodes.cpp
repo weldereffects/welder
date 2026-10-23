@@ -8,6 +8,8 @@
 #include "CameraTrackerNode.h"
 #include "Lens.h"
 #include "NodeUtils.h"
+#include "NoiseLib.h"
+#include <array>
 #include "Sample.h"
 #include "Planar.h"
 #include "Track.h"
@@ -1138,6 +1140,570 @@ public:
             }
     }
 };
+
+// ------------------------------------------------------------------ TransformMasked
+// A Transform whose result is mixed back over the untransformed input through the mask input.
+class TransformMaskedNode : public TransformNode {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 1 ? "mask" : ""; }
+    bool concatenates() const override { return false; }
+    Box dod(Engine& e, double f) override { return TransformNode::dod(e, f).unite(e.dod(input(0), f)); }
+    Box roi(Engine& e, int idx, const Box& req, double f) override {
+        if (idx == 1) return req;
+        return TransformNode::roi(e, idx, req, f).unite(req);
+    }
+    int identityInput(double f) override { return input(1) ? TransformNode::identityInput(f) : TransformNode::identityInput(f); }
+    void render(RenderArgs& a, Image& out) override {
+        TransformNode::render(a, out);
+        if (!input(1)) return;
+        ImagePtr src = a.fetch(input(0), a.region);
+        ImagePtr m = a.fetch(input(1), a.region);
+        const int mc = m->ch(resolveChannelName(params.str("mask_channel", "A")));
+        const bool inv = params.flag("invert_mask", false);
+        std::vector<int> map(out.nch());
+        for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                float w = mc >= 0 ? m->at(x, y, mc) : 0.0f;
+                if (inv) w = 1 - w;
+                float* o = out.px(x, y);
+                for (int c = 0; c < out.nch(); ++c) {
+                    const float s = map[c] >= 0 ? src->at(x, y, map[c]) : 0.0f;
+                    o[c] = s + (o[c] - s) * w;
+                }
+            }
+    }
+};
+
+// ------------------------------------------------------------------ CameraShake
+// Hand-held / impact shake: noise-driven translation, rotation and scale (amplitude in pixels,
+// degrees and percent), `frequency` cycles per second-ish, several octaves, a seed.
+class CameraShakeNode : public TransformNode {
+public:
+    bool timeDependent() const override { return true; }
+    static double fbm(double t, int oct, uint32_t seed, int axis) {
+        double s = 0, amp = 1, fr = 1, norm = 0;
+        for (int o = 0; o < oct; ++o) {
+            s += amp * noise::perlin3((float)(t * fr), (float)(axis * 17.31 + o * 3.7), 0.5f, seed);
+            norm += amp;
+            amp *= 0.5;
+            fr *= 2;
+        }
+        return s / std::max(1e-9, norm) * 1.6;  // about -1..1
+    }
+    Mat3 matrixAt(Engine& e, double f) override {
+        const double sc = e.scale();
+        Format fmt = nodeFormat(e, this, input(0), f);
+        const double fps = comp && comp->fps > 0 ? comp->fps : 24;
+        const double t = f / fps * params.num("frequency", f, 2);
+        const int oct = std::clamp((int)params.num("octaves", f, 3), 1, 8);
+        const uint32_t seed = (uint32_t)params.num("seed", f, 0);
+        const double amp = params.num("amplitude", f, 10) * sc, rot = params.num("rotation", f, 0), scl = params.num("scale", f, 0) / 100;
+        const double tx = amp * fbm(t, oct, seed, 0), ty = amp * fbm(t, oct, seed, 1);
+        const double r = rot * fbm(t, oct, seed, 2), s = 1 + scl * fbm(t, oct, seed, 3);
+        const double cx = fmt.width / 2.0, cy = fmt.height / 2.0;
+        return Mat3::translate(tx, ty) * Mat3::translate(cx, cy) * Mat3::rotate(r) * Mat3::scale(s, s) * Mat3::translate(-cx, -cy);
+    }
+    int identityInput(double f) override {
+        return params.num("amplitude", f, 10) == 0 && params.num("rotation", f, 0) == 0 && params.num("scale", f, 0) == 0 ? 0 : -1;
+    }
+};
+
+// ------------------------------------------------------------------ MotionBlur2D
+// Motion blur from the transforms upstream of the second input (connect the Transform /
+// Tracker / CornerPin itself): each pixel smeared along where that transform moves it over the
+// shutter. "output vectors" writes the motion into forward.u / forward.v instead.
+class MotionBlur2DNode : public Node {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 1 ? "transform" : ""; }
+    bool timeDependent() const override { return true; }
+    MatrixNode* xform() const {
+        Node* n = input(1);
+        for (int g = 0; n && g < 64; ++g, n = n->input(0))
+            if (auto* m = dynamic_cast<MatrixNode*>(n)) return m;
+        return nullptr;
+    }
+    int reach(Engine& e, double f) const { return (int)std::ceil(params.num("max_length", f, 200) * e.scale()); }
+    Box dod(Engine& e, double f) override {
+        const int p = params.flag("output_vectors", false) ? 0 : reach(e, f);
+        return e.dod(input(0), f).pad(p, p);
+    }
+    Box roi(Engine& e, int idx, const Box& req, double f) override {
+        if (idx != 0) return req;
+        const int p = reach(e, f) + 2;
+        return req.pad(p, p);
+    }
+    ChannelSet channels(Engine& e, double f) override {
+        ChannelSet c = e.channels(input(0), f);
+        if (params.flag("output_vectors", false)) c = unionChannels(c, {"forward.u", "forward.v"});
+        return c;
+    }
+    uint64_t pastHash(Engine& e, double f) override {
+        const double sh = params.num("shutter", f, 0.5);
+        return hashCombine(e.hash(input(1), f - sh), e.hash(input(1), f + sh));
+    }
+    void render(RenderArgs& a, Image& out) override {
+        Engine& e = a.engine;
+        const double f = a.frame, sh = params.num("shutter", f, 0.5);
+        const std::string off = params.str("shutteroffset", "centred");
+        const double t0 = off == "start" ? 0 : off == "end" ? -sh : -sh / 2, t1 = t0 + sh;
+        const int p = reach(e, f) + 2;
+        ImagePtr src = a.fetch(input(0), a.region.pad(p, p));
+        out.copyFrom(*src);
+        MatrixNode* m = xform();
+        if (!m) return;
+        // where a pixel of this frame was at the shutter's start and end
+        const Mat3 now = m->matrix(e, f), inv = now.inverse();
+        const Mat3 A = m->matrix(e, f + t0) * inv, B = m->matrix(e, f + t1) * inv;
+        const double maxL = reach(e, f);
+        if (params.flag("output_vectors", false)) {
+            const int cu = out.ch("forward.u"), cv = out.ch("forward.v");
+            for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+                for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                    double ax, ay, bx, by;
+                    A.apply(x + 0.5, y + 0.5, ax, ay);
+                    B.apply(x + 0.5, y + 0.5, bx, by);
+                    out.px(x, y)[cu] = (float)((bx - ax) / std::max(1e-9, sh));
+                    out.px(x, y)[cv] = (float)((by - ay) / std::max(1e-9, sh));
+                }
+            return;
+        }
+        const int samples = std::clamp((int)params.num("samples", f, 16), 2, 128);
+        std::vector<int> map(out.nch());
+        for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
+        const Filter flt = Filter::bilinear();
+        std::vector<float> tmp(out.nch());
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                double ax, ay, bx, by;
+                A.apply(x + 0.5, y + 0.5, ax, ay);
+                B.apply(x + 0.5, y + 0.5, bx, by);
+                // gather: the pixel saw what was at x - (motion) over the shutter
+                double ux = bx - ax, uy = by - ay;
+                const double l = std::hypot(ux, uy);
+                if (l < 0.25) continue;
+                if (l > maxL) ux *= maxL / l, uy *= maxL / l;
+                float* o = out.px(x, y);
+                std::vector<double> acc(out.nch(), 0.0);
+                for (int s = 0; s < samples; ++s) {
+                    const double t = (s + 0.5) / samples - 0.5;
+                    sample(*src, x + 0.5 + ux * t, y + 0.5 + uy * t, flt, tmp.data(), map);
+                    for (int c = 0; c < out.nch(); ++c) acc[c] += tmp[c];
+                }
+                for (int c = 0; c < out.nch(); ++c) o[c] = (float)(acc[c] / samples);
+            }
+    }
+};
+
+// ------------------------------------------------------------------ AdjustBBox / BlackOutside
+class AdjustBBoxNode : public Node {
+public:
+    Box dod(Engine& e, double f) override {
+        auto n = params.vec<2>("numpixels", f, {25, 25});
+        const int px = (int)std::lround(n[0] * e.scale()), py = (int)std::lround(n[1] * e.scale());
+        Box b = e.dod(input(0), f);
+        if (b.empty()) return b;
+        Box r(b.x1 - px, b.y1 - py, b.x2 + px, b.y2 + py);
+        return r.empty() ? Box() : r;
+    }
+    void render(RenderArgs& a, Image& out) override {
+        std::fill(out.data.begin(), out.data.end(), 0.0f);
+        out.copyFrom(*a.fetch(input(0), a.region));
+    }
+};
+
+// One black pixel around the bbox, so anything that extends the edge (a Transform without black
+// outside, a blur) sees black instead of the edge pixels.
+class BlackOutsideNode : public Node {
+public:
+    Box dod(Engine& e, double f) override {
+        Box b = e.dod(input(0), f);
+        return b.empty() ? b : b.pad(1, 1);
+    }
+    void render(RenderArgs& a, Image& out) override {
+        std::fill(out.data.begin(), out.data.end(), 0.0f);
+        out.copyFrom(*a.fetch(input(0), a.region));
+    }
+};
+
+// ------------------------------------------------------------------ Tile
+// The image shrunk into rows x columns copies (mirrored alternately if asked), filling the format.
+class TileNode : public Node {
+public:
+    Box dod(Engine& e, double f) override { return nodeFormat(e, this, input(0), f).box(); }
+    Box roi(Engine& e, int, const Box&, double f) override { return nodeFormat(e, this, input(0), f).box().intersect(e.dod(input(0), f)); }
+    void render(RenderArgs& a, Image& out) override {
+        std::fill(out.data.begin(), out.data.end(), 0.0f);
+        Format fm = nodeFormat(a.engine, this, input(0), a.frame);
+        const int rows = std::max(1, (int)params.num("rows", a.frame, 2)), cols = std::max(1, (int)params.num("columns", a.frame, 2));
+        const bool mr = params.flag("mirror_rows", false), mc = params.flag("mirror_columns", false);
+        Box need = fm.box().intersect(a.engine.dod(input(0), a.frame));
+        if (need.empty()) return;
+        ImagePtr src = a.fetch(input(0), need);
+        std::vector<int> map(out.nch());
+        for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
+        const Filter flt = parseFilter(params.str("filter", "cubic"));
+        SampleOpts so;
+        so.footX = (float)cols;
+        so.footY = (float)rows;
+        const double W = fm.width, H = fm.height;
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                double u = (x + 0.5) / W * cols, v = (y + 0.5) / H * rows;
+                const int ci = (int)std::floor(u), ri = (int)std::floor(v);
+                u -= ci;
+                v -= ri;
+                if (mc && (ci & 1)) u = 1 - u;
+                if (mr && (ri & 1)) v = 1 - v;
+                sample(*src, u * W, v * H, flt, out.px(x, y), map, so);
+            }
+    }
+};
+
+// ------------------------------------------------------------------ SphericalTransform
+// Between panoramic projections: latlong (equirectangular), cube (a horizontal cross), angular
+// map (a light probe), mirror ball and fisheye 180, with a rotation.
+enum class Proj { LatLong, Cube, Angular, Ball, Fisheye };
+Proj parseProj(const std::string& s) {
+    if (s == "cube") return Proj::Cube;
+    if (s == "angular map") return Proj::Angular;
+    if (s == "mirror ball") return Proj::Ball;
+    if (s == "fisheye") return Proj::Fisheye;
+    return Proj::LatLong;
+}
+// (u, v) in 0..1 (v up) -> direction; false where the projection has no picture
+bool toDir(Proj p, double u, double v, double d[3]) {
+    switch (p) {
+        case Proj::LatLong: {
+            const double lon = (u - 0.5) * 2 * M_PI, lat = (v - 0.5) * M_PI;
+            d[0] = std::cos(lat) * std::sin(lon);
+            d[1] = std::sin(lat);
+            d[2] = -std::cos(lat) * std::cos(lon);
+            return true;
+        }
+        case Proj::Angular:
+        case Proj::Ball:
+        case Proj::Fisheye: {
+            const double x = u * 2 - 1, y = v * 2 - 1, r = std::hypot(x, y);
+            if (r > 1) return false;
+            double theta;  // angle from the forward axis
+            if (p == Proj::Angular) theta = r * M_PI;
+            else if (p == Proj::Fisheye) theta = r * M_PI / 2;
+            else theta = 2 * std::asin(r);  // a mirror ball's reflection
+            const double phi = std::atan2(y, x);
+            d[0] = std::sin(theta) * std::cos(phi);
+            d[1] = std::sin(theta) * std::sin(phi);
+            d[2] = -std::cos(theta);
+            return true;
+        }
+        case Proj::Cube: {  // horizontal cross: 4 x 3 faces, +Y on top of -Z (front), -Y below
+            const double fx = u * 4, fy = v * 3;
+            const int col = (int)std::floor(fx), row = (int)std::floor(fy);
+            const double a = (fx - col) * 2 - 1, b = (fy - row) * 2 - 1;
+            if (row == 1) {
+                if (col == 0) { d[0] = -1, d[1] = b, d[2] = a; }        // left (-X)
+                else if (col == 1) { d[0] = a, d[1] = b, d[2] = -1; }   // front (-Z)
+                else if (col == 2) { d[0] = 1, d[1] = b, d[2] = -a; }   // right (+X)
+                else { d[0] = -a, d[1] = b, d[2] = 1; }                // back (+Z)
+            } else if (col == 1 && row == 2) { d[0] = a, d[1] = 1, d[2] = b; }   // up
+            else if (col == 1 && row == 0) { d[0] = a, d[1] = -1, d[2] = -b; }   // down
+            else return false;
+            const double l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+            for (int k = 0; k < 3; ++k) d[k] /= l;
+            return true;
+        }
+    }
+    return false;
+}
+bool fromDir(Proj p, const double d[3], double& u, double& v) {
+    switch (p) {
+        case Proj::LatLong:
+            u = std::atan2(d[0], -d[2]) / (2 * M_PI) + 0.5;
+            v = std::asin(std::clamp(d[1], -1.0, 1.0)) / M_PI + 0.5;
+            return true;
+        case Proj::Angular:
+        case Proj::Ball:
+        case Proj::Fisheye: {
+            const double theta = std::acos(std::clamp(-d[2], -1.0, 1.0)), phi = std::atan2(d[1], d[0]);
+            double r = p == Proj::Angular ? theta / M_PI : p == Proj::Fisheye ? theta / (M_PI / 2) : std::sin(theta / 2);
+            if (r > 1) return false;
+            u = (r * std::cos(phi) + 1) / 2;
+            v = (r * std::sin(phi) + 1) / 2;
+            return true;
+        }
+        case Proj::Cube: {
+            const double ax = std::fabs(d[0]), ay = std::fabs(d[1]), az = std::fabs(d[2]);
+            int col, row;
+            double a, b;
+            if (ax >= ay && ax >= az) {
+                row = 1;
+                if (d[0] < 0) col = 0, a = d[2] / ax, b = d[1] / ax;
+                else col = 2, a = -d[2] / ax, b = d[1] / ax;
+            } else if (ay >= az) {
+                col = 1;
+                if (d[1] > 0) row = 2, a = d[0] / ay, b = d[2] / ay;
+                else row = 0, a = d[0] / ay, b = -d[2] / ay;
+            } else {
+                row = 1;
+                if (d[2] < 0) col = 1, a = d[0] / az, b = d[1] / az;
+                else col = 3, a = -d[0] / az, b = d[1] / az;
+            }
+            u = (col + (a + 1) / 2) / 4;
+            v = (row + (b + 1) / 2) / 3;
+            return true;
+        }
+    }
+    return false;
+}
+
+class SphericalTransformNode : public Node {
+public:
+    Format format(Engine& e, double f) override {
+        Format in = nodeFormat(e, this, input(0), f);
+        if (!params.has("format")) {
+            // a sensible size for the output projection from the input's width
+            Format r = in;
+            const Proj po = parseProj(params.str("output_type", "latlong"));
+            const int w = in.width;
+            if (po == Proj::LatLong) r.height = std::max(1, w / 2);
+            else if (po == Proj::Cube) r.height = std::max(1, w * 3 / 4);
+            else r.height = w;
+            r.width = w;
+            return r;
+        }
+        auto wh = params.vec<2>("format", f, {(double)in.width, (double)in.height});
+        Format r = in;
+        r.width = std::max(1, (int)std::ceil(wh[0] * e.scale() - 1e-9));
+        r.height = std::max(1, (int)std::ceil(wh[1] * e.scale() - 1e-9));
+        return r;
+    }
+    Box dod(Engine& e, double f) override { return format(e, f).box(); }
+    Box roi(Engine& e, int, const Box&, double f) override { return nodeFormat(e, this, input(0), f).box(); }
+    void render(RenderArgs& a, Image& out) override {
+        std::fill(out.data.begin(), out.data.end(), 0.0f);
+        const double f = a.frame;
+        Format fo = format(a.engine, f), fi = nodeFormat(a.engine, this, input(0), f);
+        ImagePtr src = a.fetch(input(0), fi.box());
+        const Proj pi = parseProj(params.str("input_type", "latlong")), po = parseProj(params.str("output_type", "latlong"));
+        auto r = params.vec<3>("rotate", f, {0, 0, 0});
+        // rotation (degrees about X, Y, Z), applied to the output directions to find the input's
+        const double rx = r[0] * M_PI / 180, ry = r[1] * M_PI / 180, rz = r[2] * M_PI / 180;
+        const double cx = std::cos(rx), sx = std::sin(rx), cy = std::cos(ry), sy = std::sin(ry), cz = std::cos(rz), sz = std::sin(rz);
+        std::vector<int> map(out.nch());
+        for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
+        const Filter flt = parseFilter(params.str("filter", "cubic"));
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                double d[3];
+                if (!toDir(po, (x + 0.5) / fo.width, (y + 0.5) / fo.height, d)) continue;
+                // Y (pan), then X (tilt), then Z (roll)
+                double x1 = cy * d[0] + sy * d[2], z1 = -sy * d[0] + cy * d[2], y1 = d[1];
+                double y2 = cx * y1 - sx * z1, z2 = sx * y1 + cx * z1;
+                double x3 = cz * x1 - sz * y2, y3 = sz * x1 + cz * y2;
+                const double q[3] = {x3, y3, z2};
+                double u, v;
+                if (!fromDir(pi, q, u, v)) continue;
+                double sxp = u * fi.width, syp = v * fi.height;
+                if (pi == Proj::LatLong) sxp = std::fmod(std::fmod(sxp, (double)fi.width) + fi.width, (double)fi.width);
+                SampleOpts so;
+                so.blackOutside = pi != Proj::LatLong;
+                sample(*src, sxp, syp, flt, out.px(x, y), map, so);
+            }
+    }
+};
+
+// ------------------------------------------------------------------ TVIScale
+// Upscales by 2 or 4 with a sharp (lanczos) filter and a touch of detail recovery.
+class TVIScaleNode : public Node {
+public:
+    int factor() const { return params.str("scale", "2x") == "4x" ? 4 : 2; }
+    Format format(Engine& e, double f) override {
+        Format in = nodeFormat(e, this, input(0), f);
+        in.width *= factor();
+        in.height *= factor();
+        return in;
+    }
+    Box dod(Engine& e, double f) override {
+        Box b = e.dod(input(0), f);
+        const int k = factor();
+        return Box(b.x1 * k, b.y1 * k, b.x2 * k, b.y2 * k);
+    }
+    Box roi(Engine&, int, const Box& req, double) override {
+        const int k = factor();
+        return Box((int)std::floor(req.x1 / (double)k) - 4, (int)std::floor(req.y1 / (double)k) - 4, (int)std::ceil(req.x2 / (double)k) + 4,
+                   (int)std::ceil(req.y2 / (double)k) + 4);
+    }
+    void render(RenderArgs& a, Image& out) override {
+        const int k = factor();
+        ImagePtr src = a.fetch(input(0), roi(a.engine, 0, a.region, a.frame));
+        std::vector<int> map(out.nch());
+        for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
+        const Filter flt = Filter::lanczos(3);
+        SampleOpts so;
+        so.clamp = true;
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) sample(*src, (x + 0.5) / k, (y + 0.5) / k, flt, out.px(x, y), map, so);
+        const float sharp = (float)params.num("detail", a.frame, 0.3);
+        if (sharp <= 0) return;
+        // unsharp against a light blur of the result
+        Image bl(out.bounds, out.channels);
+        std::vector<int> idx;
+        for (int c = 0; c < out.nch(); ++c) idx.push_back(c);
+        blurSum(out, bl, {{(double)k, (double)k, 1}}, idx);
+        for (size_t i = 0; i < out.data.size(); ++i) out.data[i] += sharp * (out.data[i] - bl.data[i]);
+    }
+};
+
+// ------------------------------------------------------------------ GridWarp
+// A grid of points (columns x rows, row by row from the bottom left): the picture at the source
+// grid moves to the destination grid, smoothly between points (outside the grid: untouched).
+// "amount" blends the destination grid back towards the source.
+struct Grid {
+    int cols = 5, rows = 5;
+    std::vector<std::array<double, 2>> p;
+    const std::array<double, 2>& at(int i, int j) const { return p[(size_t)std::clamp(j, 0, rows - 1) * cols + std::clamp(i, 0, cols - 1)]; }
+};
+Grid gridOf(const Params& prm, const char* key, double f, int cols, int rows, double W, double H) {
+    Grid g;
+    g.cols = cols;
+    g.rows = rows;
+    g.p.resize((size_t)cols * rows);
+    for (int j = 0; j < rows; ++j)
+        for (int i = 0; i < cols; ++i) g.p[(size_t)j * cols + i] = {W * i / (cols - 1), H * j / (rows - 1)};
+    if (prm.has(key) && prm.data[key].is_array() && prm.data[key].size() == g.p.size())
+        for (size_t k = 0; k < g.p.size(); ++k) {
+            const json& q = prm.data[key][k];
+            if (q.is_array() && q.size() >= 2)
+                for (int c = 0; c < 2; ++c) g.p[k][c] = q[c].is_number() ? q[c].get<double>() : params::evalScalar(q[c], f, g.p[k][c], nullptr);
+        }
+    return g;
+}
+// Catmull-Rom across the grid at (gx, gy) in grid units
+std::array<double, 2> gridEval(const Grid& g, double gx, double gy) {
+    const int i = std::clamp((int)std::floor(gx), 0, g.cols - 2), j = std::clamp((int)std::floor(gy), 0, g.rows - 2);
+    const double u = gx - i, v = gy - j;
+    auto cr = [](double t, double a, double b, double c, double d) {
+        return b + 0.5 * t * (c - a + t * (2 * a - 5 * b + 4 * c - d + t * (3 * (b - c) + d - a)));
+    };
+    std::array<double, 2> r{};
+    for (int c = 0; c < 2; ++c) {
+        double row[4];
+        for (int k = -1; k <= 2; ++k) {
+            // past the edge: carry on linearly
+            auto P = [&](int ii, int jj) {
+                const int ci = std::clamp(ii, 0, g.cols - 1), cj = std::clamp(jj, 0, g.rows - 1);
+                double val = g.at(ci, cj)[c];
+                if (ii != ci) val += (ii - ci) * (g.at(ci, cj)[c] - g.at(ci - (ii > ci ? 1 : -1), cj)[c]);
+                if (jj != cj) val += (jj - cj) * (g.at(ci, cj)[c] - g.at(ci, cj - (jj > cj ? 1 : -1))[c]);
+                return val;
+            };
+            row[k + 1] = cr(u, P(i - 1, j + k), P(i, j + k), P(i + 1, j + k), P(i + 2, j + k));
+        }
+        r[c] = cr(v, row[0], row[1], row[2], row[3]);
+    }
+    return r;
+}
+
+class GridWarpNode : public Node {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 1 ? "mask" : ""; }
+    void grids(Engine& e, double f, Grid& src, Grid& dst) const {
+        const double sc = e.scale();
+        Format fm = nodeFormat(e, const_cast<GridWarpNode*>(this), input(0), f);
+        const double W = fm.width / sc, H = fm.height / sc;
+        auto n = params.vec<2>("grid_size", f, {5, 5});
+        const int cols = std::clamp((int)n[0], 2, 64), rows = std::clamp((int)n[1], 2, 64);
+        src = gridOf(params, "source", f, cols, rows, W, H);
+        dst = gridOf(params, "destination", f, cols, rows, W, H);
+        const double amt = params.num("amount", f, 1);
+        for (size_t k = 0; k < dst.p.size(); ++k)
+            for (int c = 0; c < 2; ++c) {
+                dst.p[k][c] = (src.p[k][c] + (dst.p[k][c] - src.p[k][c]) * amt) * sc;
+                src.p[k][c] *= sc;
+            }
+    }
+    Box dod(Engine& e, double f) override {
+        Grid s, d;
+        grids(e, f, s, d);
+        Box b = e.dod(input(0), f);
+        double x1 = b.x1, y1 = b.y1, x2 = b.x2, y2 = b.y2;
+        for (auto& q : d.p) x1 = std::min(x1, q[0]), y1 = std::min(y1, q[1]), x2 = std::max(x2, q[0]), y2 = std::max(y2, q[1]);
+        return Box((int)std::floor(x1), (int)std::floor(y1), (int)std::ceil(x2), (int)std::ceil(y2));
+    }
+    Box roi(Engine& e, int idx, const Box& req, double f) override { return idx == 1 ? req : e.dod(input(0), f); }
+    void render(RenderArgs& a, Image& out) override {
+        std::fill(out.data.begin(), out.data.end(), 0.0f);
+        Grid S, D;
+        grids(a.engine, a.frame, S, D);
+        Box need = a.engine.dod(input(0), a.frame);
+        ImagePtr src = a.fetch(input(0), need.empty() ? a.region : need);
+        std::vector<int> map(out.nch());
+        for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
+        // start from the untouched picture; the grid's cells are drawn over it
+        out.copyFrom(*src);
+        const Filter flt = parseFilter(params.str("filter", "cubic"));
+        std::vector<char> done((size_t)out.bounds.area(), 0);
+        for (int j = 0; j + 1 < D.rows; ++j)
+            for (int i = 0; i + 1 < D.cols; ++i) {
+                const auto &p00 = D.at(i, j), &p10 = D.at(i + 1, j), &p01 = D.at(i, j + 1), &p11 = D.at(i + 1, j + 1);
+                Box cb((int)std::floor(std::min({p00[0], p10[0], p01[0], p11[0]})), (int)std::floor(std::min({p00[1], p10[1], p01[1], p11[1]})),
+                       (int)std::ceil(std::max({p00[0], p10[0], p01[0], p11[0]})) + 1, (int)std::ceil(std::max({p00[1], p10[1], p01[1], p11[1]})) + 1);
+                cb = cb.intersect(out.bounds);
+                for (int y = cb.y1; y < cb.y2; ++y)
+                    for (int x = cb.x1; x < cb.x2; ++x) {
+                        const size_t di = (size_t)(y - out.bounds.y1) * out.bounds.width() + (x - out.bounds.x1);
+                        if (done[di]) continue;
+                        // inverse bilinear: (u, v) with P = lerp(lerp(p00, p10, u), lerp(p01, p11, u), v)
+                        const double px = x + 0.5, py = y + 0.5;
+                        double u = 0.5, v = 0.5;
+                        bool ok = false;
+                        for (int it = 0; it < 12; ++it) {
+                            const double ex = (1 - u) * (1 - v) * p00[0] + u * (1 - v) * p10[0] + (1 - u) * v * p01[0] + u * v * p11[0] - px;
+                            const double ey = (1 - u) * (1 - v) * p00[1] + u * (1 - v) * p10[1] + (1 - u) * v * p01[1] + u * v * p11[1] - py;
+                            const double dxu = (1 - v) * (p10[0] - p00[0]) + v * (p11[0] - p01[0]), dxv = (1 - u) * (p01[0] - p00[0]) + u * (p11[0] - p10[0]);
+                            const double dyu = (1 - v) * (p10[1] - p00[1]) + v * (p11[1] - p01[1]), dyv = (1 - u) * (p01[1] - p00[1]) + u * (p11[1] - p10[1]);
+                            const double det = dxu * dyv - dxv * dyu;
+                            if (std::fabs(det) < 1e-12) break;
+                            const double du = (ex * dyv - ey * dxv) / det, dv = (dxu * ey - dyu * ex) / det;
+                            u -= du;
+                            v -= dv;
+                            if (std::fabs(du) < 1e-6 && std::fabs(dv) < 1e-6) {
+                                ok = true;
+                                break;
+                            }
+                        }
+                        if (!ok || u < -1e-6 || u > 1 + 1e-6 || v < -1e-6 || v > 1 + 1e-6) continue;
+                        done[di] = 1;
+                        // the matching place on the source grid, smooth across cells
+                        // (a regular destination grid makes this the destination's own smooth surface)
+                        auto sp = gridEval(S, i + u, j + v);
+                        auto dp = gridEval(D, i + u, j + v);
+                        // correct for the destination's own curvature: what the smooth destination surface puts here
+                        sp[0] += px - dp[0] - 0 * 0;
+                        sp[1] += py - dp[1];
+                        sample(*src, sp[0], sp[1], flt, out.px(x, y), map);
+                    }
+            }
+        if (input(1)) {  // mask: back towards the input
+            ImagePtr m = a.fetch(input(1), a.region);
+            const int mc = m->ch(resolveChannelName(params.str("mask_channel", "A")));
+            std::vector<int> smap(out.nch());
+            for (int c = 0; c < out.nch(); ++c) smap[c] = src->ch(out.channels[c]);
+            for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+                for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                    const float w = mc >= 0 ? m->at(x, y, mc) : 0.0f;
+                    float* o = out.px(x, y);
+                    for (int c = 0; c < out.nch(); ++c) {
+                        const float s = smap[c] >= 0 ? src->at(x, y, smap[c]) : 0.0f;
+                        o[c] = s + (o[c] - s) * w;
+                    }
+                }
+        }
+    }
+};
 }  // namespace
 
 void registerTransformNodes() {
@@ -1147,6 +1713,15 @@ void registerTransformNodes() {
     NodeRegistry::instance().add("CornerPin2D", [] { return std::make_unique<CornerPin2DNode>(); });
     auto& r = NodeRegistry::instance();
     r.add("Transform", [] { return std::make_unique<TransformNode>(); });
+    r.add("TransformMasked", [] { return std::make_unique<TransformMaskedNode>(); });
+    r.add("CameraShake", [] { return std::make_unique<CameraShakeNode>(); });
+    r.add("MotionBlur2D", [] { return std::make_unique<MotionBlur2DNode>(); });
+    r.add("AdjustBBox", [] { return std::make_unique<AdjustBBoxNode>(); });
+    r.add("BlackOutside", [] { return std::make_unique<BlackOutsideNode>(); });
+    r.add("Tile", [] { return std::make_unique<TileNode>(); });
+    r.add("SphericalTransform", [] { return std::make_unique<SphericalTransformNode>(); });
+    r.add("TVIScale", [] { return std::make_unique<TVIScaleNode>(); });
+    r.add("GridWarp", [] { return std::make_unique<GridWarpNode>(); });
     r.add("ReferenceLink", [] { return std::make_unique<ReferenceLinkNode>(); });
     r.add("Position", [] { return std::make_unique<PositionNode>(); });
     r.add("Reformat", [] { return std::make_unique<ReformatNode>(); });

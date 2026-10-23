@@ -450,6 +450,9 @@ double knobValue(const Node* n, const std::string& knob, const std::string& comp
                         if (s == "$center") defv = json::array({f.width / 2.0, f.height / 2.0});
                         else if (s == "$format") defv = json::array({f.width, f.height});
                         else if (s == "$box") defv = json::array({0, 0, f.width, f.height});
+                        else if (s == "$inner") defv = json::array({f.width * 0.25, f.height * 0.25, f.width * 0.75, f.height * 0.75});
+                        else if (s == "$margin") defv = json::array({f.width * 0.1, f.height * 0.1, f.width * 0.9, f.height * 0.9});
+                        else if (s == "$small") defv = json::array({f.width * 0.45, f.height * 0.45, f.width * 0.55, f.height * 0.55});
                         else if (s == "$midleft") defv = json::array({f.width * 0.2, f.height * 0.5});
                         else if (s == "$midright") defv = json::array({f.width * 0.8, f.height * 0.5});
                         else if (s == "$first") defv = n->comp ? n->comp->firstFrame : 1.0;
