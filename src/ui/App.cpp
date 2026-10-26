@@ -64,6 +64,11 @@ App::App() {
     xo.threads = std::max(2, hw / 2);
     auxEngine_ = std::make_unique<Engine>(xo);
     aux_ = std::thread([this] { auxLoop(); });
+    EngineOptions dso;  // the disk-cache line's scanner: hashes only, one thread
+    dso.cacheBytes = size_t(16) << 20;
+    dso.threads = 1;
+    diskEngine_ = std::make_unique<Engine>(dso);
+    diskScan_ = std::thread([this] { diskScanLoop(); });
 }
 
 App::~App() {
@@ -83,6 +88,12 @@ App::~App() {
         std::lock_guard<std::mutex> l(reqM_);
         quit_ = true;
     }
+    {
+        std::lock_guard<std::mutex> l(diskM_);
+        diskQuit_ = true;
+    }
+    diskCv_.notify_all();
+    if (diskScan_.joinable()) diskScan_.join();
     {
         std::lock_guard<std::mutex> l(auxM_);
         auxQuit_ = true;
@@ -542,8 +553,8 @@ void App::applyEdits() {
         if (auxEngine_) auxEngine_->clearMemo();
         if (cleanAfterApply_) dirty = false;
         cleanAfterApply_ = false;
-        syncViewer();
         l.unlock();
+        syncViewer();  // (outside the comp lock: it may ask for a render)
         requestView();
         return;
     }
@@ -552,6 +563,7 @@ void App::applyEdits() {
     if (infoEngine_) infoEngine_->clearMemo();
     for (auto& e : aheadEngines_) e->clearMemo();
     if (auxEngine_) auxEngine_->clearMemo();
+    if (diskEngine_) diskEngine_->clearMemo();
     ++editGen_;  // cached viewer frames are stale now
     {
         std::lock_guard<std::mutex> il(infoM_);
@@ -560,8 +572,8 @@ void App::applyEdits() {
     }
     dirty = !cleanAfterApply_;
     cleanAfterApply_ = false;
-    syncViewer();
     l.unlock();
+    syncViewer();
     requestView();
 }
 
@@ -1103,39 +1115,68 @@ std::vector<int> App::cachedFrames() {
 
 std::vector<int> App::diskCachedFrames(int first, int last) {
     if (!disk_ || viewed.empty() || last < first) return {};
-    Box region;
-    double scale;
+    DiskScan w;
     {
         std::lock_guard<std::mutex> l(reqM_);
-        region = viewRegion_;
-        scale = viewScale_;
+        w.region = viewRegion_;
+        w.scale = viewScale_;
     }
+    w.node = viewed, w.first = first, w.last = std::min(last, first + 5000);
     char k[256];
-    std::snprintf(k, sizeof k, "%s|%llu|%g|%d %d %d %d|%d-%d", viewed.c_str(), (unsigned long long)editGen_.load(), scale, region.x1,
-                  region.y1, region.x2, region.y2, first, last);
-    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (k == diskMemoKey_ && now - diskMemoT_ < 0.5) return diskMemo_;
-    std::shared_lock<std::shared_timed_mutex> cl(compM, std::try_to_lock);
-    if (!cl.owns_lock()) return diskMemo_;
-    std::vector<int> v;
-    Node* n = comp ? comp->find(viewed) : nullptr;
-    if (n) {
-        Engine& e = uiEngine();
-        try {
-            e.setScale(scale);
-            for (int f = first; f <= last && f < first + 3000; ++f) {
-                const Format fmt = n->format(e, f);
-                const Box show = viewBox(fmt, e.dod(n, f), scale, region);
-                if (!show.empty() && disk_->has(DiskCache::key(e.hash(n, f), show))) v.push_back(f);
-            }
-        } catch (...) {
-        }
-        e.setScale(1.0);
+    std::snprintf(k, sizeof k, "%s|%llu|%g|%d %d %d %d|%d-%d", viewed.c_str(), (unsigned long long)editGen_.load(), w.scale, w.region.x1,
+                  w.region.y1, w.region.x2, w.region.y2, w.first, w.last);
+    w.key = k;
+    std::lock_guard<std::mutex> l(diskM_);
+    if (diskWant_.key != w.key) {  // something else to scan: ask the scanner (it never blocks the UI)
+        diskWant_ = w;
+        diskCv_.notify_all();
     }
-    diskMemo_ = v;
-    diskMemoKey_ = k;
-    diskMemoT_ = now;
-    return v;
+    return diskMemoKey_ == w.key ? diskMemo_ : std::vector<int>();
+}
+
+void App::diskScanLoop() {
+    std::string done;
+    double doneAt = 0;
+    auto now = [] { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    for (;;) {
+        DiskScan w;
+        {
+            std::unique_lock<std::mutex> l(diskM_);
+            // a new request, or the same one again every 2 s (frames reach the disk while you work)
+            diskCv_.wait_for(l, std::chrono::milliseconds(500), [&] { return diskQuit_ || (!diskWant_.key.empty() && diskWant_.key != done); });
+            if (diskQuit_) return;
+            if (diskWant_.key.empty() || (diskWant_.key == done && now() - doneAt < 2.0)) continue;
+            w = diskWant_;
+        }
+        std::vector<int> v;
+        bool stale = false;
+        for (int f = w.first; f <= w.last; ++f) {
+            {
+                std::lock_guard<std::mutex> l(diskM_);
+                if (diskQuit_) return;
+                if (diskWant_.key != w.key) { stale = true; break; }  // asked for something else: start over
+            }
+            // one frame at a time under the comp lock, never waiting for it: an edit always gets in
+            if (editsWaiting_) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); --f; continue; }
+            std::shared_lock<std::shared_timed_mutex> cl(compM, std::try_to_lock);
+            if (!cl.owns_lock()) { std::this_thread::sleep_for(std::chrono::milliseconds(5)); --f; continue; }
+            Node* n = comp ? comp->find(w.node) : nullptr;
+            if (!n) { stale = true; break; }
+            try {
+                diskEngine_->setScale(w.scale);
+                const Format fmt = n->format(*diskEngine_, f);
+                const Box show = viewBox(fmt, diskEngine_->dod(n, f), w.scale, w.region);
+                if (!show.empty() && disk_ && disk_->has(DiskCache::key(diskEngine_->hash(n, f), show))) v.push_back(f);
+            } catch (...) {
+            }
+        }
+        if (stale) continue;
+        std::lock_guard<std::mutex> l(diskM_);
+        diskMemo_ = v;
+        diskMemoKey_ = w.key;
+        done = w.key;
+        doneAt = now();
+    }
 }
 
 void App::setPrecache(bool on) {

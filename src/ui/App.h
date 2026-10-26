@@ -355,9 +355,24 @@ private:
     static Box viewBox(const Format& fmt, const Box& dod, double sc, const Box& region);
     bool diskHasView(const std::string& node, double f, double sc, const Box& region);
     bool cleanAfterApply_ = false;  // set by open/new so loading doesn't mark the comp modified
+    // the timeline's disk-cache line: scanned on a thread of its own (it reads every frame's
+    // hash, which for a Read means its files), never on the UI thread
+    struct DiskScan {
+        std::string key, node;
+        double scale = 1;
+        Box region;
+        int first = 0, last = -1;
+    };
+    DiskScan diskWant_;
     std::vector<int> diskMemo_;
     std::string diskMemoKey_;
     double diskMemoT_ = -1;
+    std::mutex diskM_;
+    std::condition_variable diskCv_;
+    bool diskQuit_ = false;
+    std::thread diskScan_;
+    std::unique_ptr<Engine> diskEngine_;
+    void diskScanLoop();
     size_t viewEdits_ = 0;          // pending edits that only change what's viewed (don't mark modified)
     void viewEdit(std::function<void(Comp&)> fn);
     void ensureViewer(Comp& c, const std::string& view);  // a Viewer node, connected to `view` (inside an edit)

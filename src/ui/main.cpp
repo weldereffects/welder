@@ -130,6 +130,58 @@ void applyTheme() {
     c[ImGuiCol_TextSelectedBg] = ImVec4(accent.x, accent.y, accent.z, 0.35f);
     c[ImGuiCol_NavHighlight] = accent;
     c[ImGuiCol_ResizeGripActive] = accent;
+
+    // Look-development previews of other themes (STRATA_PREVIEW_THEME=graphite|midnight|forge|neutral);
+    // the default above is unchanged without it.
+    const char* pv = std::getenv("STRATA_PREVIEW_THEME");
+    if (!pv || !*pv) return;
+    const std::string t = pv;
+    struct P {
+        ImVec4 bg, panel, frame, frameHi, button, buttonHi, header, title, border, text, textDim, accent;
+        unsigned int canvas, viewerBg;
+        float round;
+    } p{};
+    auto u = [](int r, int g, int b) { return (unsigned int)IM_COL32(r, g, b, 255); };
+    if (t == "graphite") {  // the current look, refined: more contrast between layers, softer corners
+        p = {rgb(38, 38, 40), rgb(46, 46, 49), rgb(30, 30, 32), rgb(40, 40, 43), rgb(62, 62, 66), rgb(78, 78, 83), rgb(64, 64, 68),
+             rgb(34, 34, 36), rgb(24, 24, 26), rgb(222, 222, 224), rgb(128, 128, 134), rgb(240, 172, 60), u(27, 27, 29), u(20, 20, 21), 4};
+    } else if (t == "midnight") {  // cool blue-black, teal accent
+        p = {rgb(20, 25, 36), rgb(26, 33, 47), rgb(15, 19, 28), rgb(28, 36, 52), rgb(40, 52, 74), rgb(54, 70, 98), rgb(42, 54, 78),
+             rgb(17, 22, 32), rgb(9, 12, 18), rgb(212, 224, 242), rgb(118, 134, 162), rgb(61, 219, 217), u(13, 18, 27), u(9, 12, 19), 5};
+    } else if (t == "forge") {  // warm charcoal, molten orange: the welding brand
+        p = {rgb(32, 26, 22), rgb(42, 34, 28), rgb(24, 19, 16), rgb(38, 30, 25), rgb(66, 50, 38), rgb(92, 66, 46), rgb(74, 54, 40),
+             rgb(27, 21, 18), rgb(12, 9, 8), rgb(240, 228, 214), rgb(156, 136, 116), rgb(255, 122, 26), u(24, 19, 16), u(16, 12, 10), 4};
+    } else if (t == "neutral") {  // colour-critical mid grey, no tinted chrome, a quiet blue accent
+        p = {rgb(64, 64, 64), rgb(72, 72, 72), rgb(52, 52, 52), rgb(60, 60, 60), rgb(90, 90, 90), rgb(104, 104, 104), rgb(88, 88, 88),
+             rgb(58, 58, 58), rgb(44, 44, 44), rgb(230, 230, 230), rgb(150, 150, 150), rgb(110, 170, 230), u(56, 56, 56), u(64, 64, 64), 2};
+    } else {
+        return;
+    }
+    c[ImGuiCol_WindowBg] = c[ImGuiCol_ChildBg] = p.panel;
+    c[ImGuiCol_PopupBg] = ImVec4(p.bg.x, p.bg.y, p.bg.z, 0.98f);
+    c[ImGuiCol_MenuBarBg] = c[ImGuiCol_TitleBg] = c[ImGuiCol_Tab] = c[ImGuiCol_TabDimmed] = c[ImGuiCol_ScrollbarBg] = p.title;
+    c[ImGuiCol_TitleBgActive] = c[ImGuiCol_TabDimmedSelected] = p.bg;
+    c[ImGuiCol_TabSelected] = p.panel;
+    c[ImGuiCol_Border] = c[ImGuiCol_Separator] = p.border;
+    c[ImGuiCol_FrameBg] = p.frame;
+    c[ImGuiCol_FrameBgHovered] = c[ImGuiCol_FrameBgActive] = p.frameHi;
+    c[ImGuiCol_Button] = p.button;
+    c[ImGuiCol_ButtonHovered] = c[ImGuiCol_ButtonActive] = p.buttonHi;
+    c[ImGuiCol_Header] = p.header;
+    c[ImGuiCol_HeaderHovered] = c[ImGuiCol_HeaderActive] = p.buttonHi;
+    c[ImGuiCol_Text] = p.text;
+    c[ImGuiCol_TextDisabled] = p.textDim;
+    c[ImGuiCol_ScrollbarGrab] = p.button;
+    for (ImGuiCol k : {ImGuiCol_CheckMark, ImGuiCol_SliderGrabActive, ImGuiCol_TabSelectedOverline, ImGuiCol_NavHighlight, ImGuiCol_ResizeGripActive})
+        c[k] = p.accent;
+    c[ImGuiCol_SliderGrab] = p.textDim;
+    c[ImGuiCol_DockingPreview] = ImVec4(p.accent.x, p.accent.y, p.accent.z, 0.5f);
+    c[ImGuiCol_TextSelectedBg] = ImVec4(p.accent.x, p.accent.y, p.accent.z, 0.35f);
+    s.FrameRounding = s.GrabRounding = s.TabRounding = s.PopupRounding = s.ScrollbarRounding = p.round;
+    s.FramePadding = ImVec2(7, 4);
+    theme().canvas = p.canvas;
+    theme().viewerBg = p.viewerBg;
+    theme().accent = ImGui::ColorConvertFloat4ToU32(p.accent);
 }
 
 // classic default: viewer top-left with the timeline under it, node graph
@@ -400,6 +452,7 @@ int main(int argc, char** argv) {
         // polling while any are queued so a burst of hotkeys is never held back.
         if (app.playing || app.editsPending() || !opt.screenshot.empty() || GImGui->InputEventsQueue.Size > 0) glfwPollEvents();
         else glfwWaitEventsTimeout(app.rendering() ? 0.05 : 0.5);
+        const auto frameWorkStart = std::chrono::steady_clock::now();  // (WELDER_DEBUG_FRAMES)
         auto frameStart = std::chrono::steady_clock::now();
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -1284,6 +1337,21 @@ int main(int argc, char** argv) {
             }
         }
         if (!scanning) glfwSwapBuffers(win);
+        // WELDER_DEBUG_FRAMES: the slowest UI frame each second (a stall shows as a long frame)
+        if (static const bool dbgFrames = std::getenv("WELDER_DEBUG_FRAMES") != nullptr; dbgFrames) {
+            using clk = std::chrono::steady_clock;
+            static clk::time_point last = clk::now(), second = clk::now();
+            static double worst = 0;
+            static int frames = 0;
+            const auto t = clk::now();
+            worst = std::max(worst, std::chrono::duration<double, std::milli>(t - frameWorkStart).count());  // the frame's own work
+            last = t;
+            ++frames;
+            if (t - second > std::chrono::seconds(1)) {
+                std::fprintf(stderr, "FRAMES %d/s, slowest frame's work %.0f ms\n", frames, worst);
+                second = t, worst = 0, frames = 0;
+            }
+        }
         if (profileUi) {  // STRATA_UI_PROFILE=1: UI-thread work per frame (excludes waiting for events)
             double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
             profMax = std::max(profMax, ms);

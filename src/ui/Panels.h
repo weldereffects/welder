@@ -14,6 +14,15 @@
 
 namespace strata::ui {
 
+// Theme colours drawn by hand (outside ImGui's style): the node graph canvas, the viewer's
+// surround, and the selection / highlight accent. Set by applyTheme().
+struct ThemeColors {
+    unsigned int canvas = 0xFF1F1E1E;   // IM_COL32(30, 30, 31, 255)
+    unsigned int viewerBg = 0xFF1A1A1A; // IM_COL32(26, 26, 26, 255)
+    unsigned int accent = 0xFF46C4FF;   // IM_COL32(255, 196, 70, 255)
+};
+ThemeColors& theme();
+
 struct ViewerState {
     unsigned int tex = 0;
     int texW = 0, texH = 0;

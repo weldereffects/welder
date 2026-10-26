@@ -1701,7 +1701,7 @@ void drawNodeGraph(App& app, UiState& ui) {
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->PushClipRect(o, ImVec2(o.x + sz.x, o.y + sz.y), true);
-    dl->AddRectFilled(o, ImVec2(o.x + sz.x, o.y + sz.y), IM_COL32(30, 30, 31, 255));
+    dl->AddRectFilled(o, ImVec2(o.x + sz.x, o.y + sz.y), theme().canvas);
 
     auto S = [&](ImVec2 p) { return ImVec2(o.x + (p.x - g.pan.x) * g.zoom, o.y + (p.y - g.pan.y) * g.zoom); };
     auto G = [&](ImVec2 s) { return ImVec2(g.pan.x + (s.x - o.x) / g.zoom, g.pan.y + (s.y - o.y) / g.zoom); };
@@ -1841,11 +1841,11 @@ void drawNodeGraph(App& app, UiState& ui) {
             bool sel = app.selection.count(n->name) > 0;
             dl->AddRectFilled(p0, p1, body, 3);
             dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + bdTitle * g.zoom), head, 3, ImDrawFlags_RoundCornersTop);
-            dl->AddRect(p0, p1, sel ? IM_COL32(255, 196, 70, 255) : IM_COL32(20, 20, 20, 160), 3, 0, sel ? 2.0f : 1.0f);
+            dl->AddRect(p0, p1, sel ? theme().accent : IM_COL32(20, 20, 20, 160), 3, 0, sel ? 2.0f : 1.0f);
             const bool collapsed = n->ui.value("collapsed", false);
             if (collapsed) {  // a node-sized box: opaque, with how many nodes it holds
                 dl->AddRectFilled(p0, p1, head, 3);
-                dl->AddRect(p0, p1, sel ? IM_COL32(255, 196, 70, 255) : IM_COL32(20, 20, 20, 200), 3, 0, sel ? 2.0f : 1.0f);
+                dl->AddRect(p0, p1, sel ? theme().accent : IM_COL32(20, 20, 20, 200), 3, 0, sel ? 2.0f : 1.0f);
                 if (drawText) {
                     const int k = (int)n->ui.value("members", json::array()).size();
                     const std::string t = "(" + std::to_string(k) + " node" + (k == 1 ? "" : "s") + ")";
@@ -1889,7 +1889,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 ImVec2 t0, t1, q0, q1;
                 precompTabs(n, t0, t1, q0, q1);
                 const ImU32 tab = ImGui::ColorConvertFloat4ToU32(ImVec4(std::min(1.f, (float)c[0] * 1.08f), std::min(1.f, (float)c[1] * 1.08f), std::min(1.f, (float)c[2] * 1.08f), 1));
-                const ImU32 edge = sel ? IM_COL32(255, 196, 70, 255) : IM_COL32(20, 20, 20, 200);
+                const ImU32 edge = sel ? theme().accent : IM_COL32(20, 20, 20, 200);
                 dl->AddRectFilled(S(t0), S(t1), tab, 6 * g.zoom, ImDrawFlags_RoundCornersTop);
                 dl->AddRect(S(t0), S(t1), edge, 6 * g.zoom, ImDrawFlags_RoundCornersTop, sel ? 2.0f : 1.0f);
                 dl->AddRectFilled(S(q0), S(q1), tab, 6 * g.zoom, ImDrawFlags_RoundCornersBottom);
@@ -1941,7 +1941,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 col = ImGui::ColorConvertFloat4ToU32(c);
             }
             if (n->type == "Viewer" && src) {  // the A pipe (shown) in the viewer orange, B in blue
-                if (i == App::pipeIndex((int)n->params.num("a_pipe", 0, 1))) col = IM_COL32(255, 196, 70, 255);
+                if (i == App::pipeIndex((int)n->params.num("a_pipe", 0, 1))) col = theme().accent;
                 else if (n->params.str("compare", "off") != "off" && i == App::pipeIndex((int)n->params.num("b_pipe", 0, -1)))
                     col = IM_COL32(90, 170, 255, 255);
                 else col = IM_COL32(160, 160, 160, 200);
@@ -2103,21 +2103,21 @@ void drawNodeGraph(App& app, UiState& ui) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             Node* en = hoverEdge.node;
             if (hoverEdge.bottom) {
-                dl->AddCircleFilled(outPort(en), 5.0f, IM_COL32(255, 196, 70, 255));
+                dl->AddCircleFilled(outPort(en), 5.0f, theme().accent);
             } else {
                 ImVec2 dir;
                 const ImVec2 ip = S(inputPoint(en, hoverEdge.input, &dir));
-                dl->AddCircleFilled(ImVec2(ip.x, ip.y - 4), 5.0f, IM_COL32(255, 196, 70, 255));
+                dl->AddCircleFilled(ImVec2(ip.x, ip.y - 4), 5.0f, theme().accent);
             }
         }
     }
     for (auto& h : tails)  // a pipe's source end lights up under the mouse
-        if (&h == hoverHandle) dl->AddCircleFilled(h.at, 5.0f, IM_COL32(255, 196, 70, 255));
+        if (&h == hoverHandle) dl->AddCircleFilled(h.at, 5.0f, theme().accent);
     // Input pipe ends: small rings; the one under the mouse lights up.
     for (auto& h : handles) {
         bool hot = &h == hoverHandle;
         float r = hot ? 6.0f : 3.5f * std::max(0.7f, g.zoom);
-        if (hot) dl->AddCircleFilled(h.at, r, IM_COL32(255, 196, 70, 255));
+        if (hot) dl->AddCircleFilled(h.at, r, theme().accent);
         else if (!h.node->input(h.input) && h.node->inputLabel(h.input) != "mask")
             dl->AddCircle(h.at, r, IM_COL32(170, 170, 170, 200), 0, 1.2f);
     }
@@ -2132,7 +2132,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         ImU32 base = nodeColor(n);
         if (isNote(n)) {
             dl->AddRectFilled(p0, p1, IM_COL32(236, 222, 140, 255), 2);
-            dl->AddRect(p0, p1, sel ? IM_COL32(255, 196, 70, 255) : IM_COL32(120, 110, 60, 255), 2, 0, sel ? 2.0f : 1.0f);
+            dl->AddRect(p0, p1, sel ? theme().accent : IM_COL32(120, 110, 60, 255), 2, 0, sel ? 2.0f : 1.0f);
             if (drawText) {
                 float y = p0.y + 5 * g.zoom;
                 for (auto& l : noteLines(n)) {
@@ -2145,7 +2145,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         if (n->type == "Dot") {
             ImVec2 c((p0.x + p1.x) / 2, (p0.y + p1.y) / 2);
             dl->AddCircleFilled(c, s.x * 0.5f * g.zoom, base);
-            dl->AddCircle(c, s.x * 0.5f * g.zoom, sel ? IM_COL32(255, 196, 70, 255) : IM_COL32(20, 20, 20, 255), 0, sel ? 2.0f : 1.0f);
+            dl->AddCircle(c, s.x * 0.5f * g.zoom, sel ? theme().accent : IM_COL32(20, 20, 20, 255), 0, sel ? 2.0f : 1.0f);
             continue;
         }
         // The modern look in our colours: the category colour deepened for the body, its own
@@ -2168,12 +2168,12 @@ void drawNodeGraph(App& app, UiState& ui) {
             ImVec2 pts[6] = {ImVec2(p0.x, (p0.y + p1.y) * 0.5f), ImVec2(p0.x + in, p0.y), ImVec2(p1.x - in, p0.y),
                              ImVec2(p1.x, (p0.y + p1.y) * 0.5f), ImVec2(p1.x - in, p1.y), ImVec2(p0.x + in, p1.y)};
             dl->AddConvexPolyFilled(pts, 6, fill);
-            dl->AddPolyline(pts, 6, sel ? IM_COL32(255, 196, 70, 255) : edge, ImDrawFlags_Closed, sel ? 2.5f : 1.2f);
+            dl->AddPolyline(pts, 6, sel ? theme().accent : edge, ImDrawFlags_Closed, sel ? 2.5f : 1.2f);
         } else {
             dl->AddRectFilled(p0, p1, fill, rad);
             dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p0.y + (p1.y - p0.y) * 0.45f), fillTop, rad, ImDrawFlags_RoundCornersTop);
             if (sel) dl->AddRect(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), IM_COL32(255, 196, 70, 90), rad + 2, 0, 3.0f);
-            dl->AddRect(p0, p1, sel ? IM_COL32(255, 196, 70, 255) : edge, rad, 0, sel ? 2.0f : 1.2f);
+            dl->AddRect(p0, p1, sel ? theme().accent : edge, rad, 0, sel ? 2.0f : 1.2f);
         }
         if (n->type == "Group")  // a container: a second frame inside
             dl->AddRect(ImVec2(p0.x + 3 * g.zoom, p0.y + 3 * g.zoom), ImVec2(p1.x - 3 * g.zoom, p1.y - 3 * g.zoom), IM_COL32(255, 255, 255, 60), rad, 0, 1.0f);
@@ -2259,13 +2259,13 @@ void drawNodeGraph(App& app, UiState& ui) {
             bool hot = n == hoverOut || (g.drag == GraphState::Drag::FromOutput && g.dragNode == n->name);
             const float t = (hot ? 6.5f : 4.5f) * std::max(0.6f, g.zoom);
             const float top = p1.y + 1.5f * g.zoom;
-            const ImU32 oc = hot ? IM_COL32(255, 196, 70, 255) : edge;
+            const ImU32 oc = hot ? theme().accent : edge;
             dl->AddTriangleFilled(ImVec2(o.x - t, top), ImVec2(o.x + t, top), ImVec2(o.x, top + t * 1.1f), oc);
         }
         // The viewed marker (the active viewer's A pipe comes from here).
         if (app.viewed == n->name) {
             const float tx = p1.x + 4 * g.zoom;
-            dl->AddRectFilled(ImVec2(tx, p0.y), ImVec2(tx + 5 * g.zoom, p1.y), IM_COL32(255, 196, 70, 255), 1);
+            dl->AddRectFilled(ImVec2(tx, p0.y), ImVec2(tx + 5 * g.zoom, p1.y), theme().accent, 1);
         }
         // Animated (keyframes, shape keys, baked tracks or transforms): a little curve-and-key badge
         // on the node's top-left corner.
@@ -2277,7 +2277,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             // an S-curve through two keys
             const float x0 = c0.x + b * 0.18f, x1 = c1.x - b * 0.18f, y0 = c1.y - b * 0.22f, y1 = c0.y + b * 0.22f;
             dl->AddBezierCubic(ImVec2(x0, y0), ImVec2(x0 + (x1 - x0) * 0.55f, y0), ImVec2(x1 - (x1 - x0) * 0.55f, y1), ImVec2(x1, y1),
-                               IM_COL32(255, 196, 70, 255), std::max(1.0f, b * 0.1f));
+                               theme().accent, std::max(1.0f, b * 0.1f));
             const float k = b * 0.13f;
             for (ImVec2 q : {ImVec2(x0, y0), ImVec2(x1, y1)})
                 dl->AddQuadFilled(ImVec2(q.x, q.y - k), ImVec2(q.x + k, q.y), ImVec2(q.x, q.y + k), ImVec2(q.x - k, q.y), IM_COL32(255, 220, 140, 255));
@@ -2295,7 +2295,7 @@ void drawNodeGraph(App& app, UiState& ui) {
     if (dotPipe) {
         const float r = 5.5f;
         dl->AddQuadFilled(ImVec2(dotAt.x, dotAt.y - r), ImVec2(dotAt.x + r, dotAt.y), ImVec2(dotAt.x, dotAt.y + r),
-                          ImVec2(dotAt.x - r, dotAt.y), IM_COL32(255, 196, 70, 255));
+                          ImVec2(dotAt.x - r, dotAt.y), theme().accent);
         ImGui::SetTooltip("Ctrl+drag: a Dot in this pipe");
     }
     if (hovered && io.MouseWheel != 0 && !popupOpen) {
@@ -2558,7 +2558,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                     ImVec2 at;
                     into = pipeAt(centre, std::max(10.0f, sz2.y * g.zoom * 0.6f), mover, &at);
                     if (into) {
-                        dl->AddLine(into->a, into->b, IM_COL32(255, 196, 70, 255), 3.0f);
+                        dl->AddLine(into->a, into->b, theme().accent, 3.0f);
                         ImGui::SetTooltip("drop into %s -> %s", into->src->name.c_str(), into->dst->name.c_str());
                     }
                 }
@@ -2640,12 +2640,12 @@ void drawNodeGraph(App& app, UiState& ui) {
             if (g.drag == GraphState::Drag::FromInput) {
                 ImVec2 dir;
                 from = S(inputPoint(n, g.dragInput, &dir));
-                dl->AddLine(io.MousePos, from, IM_COL32(255, 196, 70, 255), 2);
-                arrow(from, io.MousePos, IM_COL32(255, 196, 70, 255));
+                dl->AddLine(io.MousePos, from, theme().accent, 2);
+                arrow(from, io.MousePos, theme().accent);
             } else {
                 from = S(outputPoint(n));
-                dl->AddLine(from, io.MousePos, IM_COL32(255, 196, 70, 255), 2);
-                arrow(io.MousePos, from, IM_COL32(255, 196, 70, 255));
+                dl->AddLine(from, io.MousePos, theme().accent, 2);
+                arrow(io.MousePos, from, theme().accent);
             }
             Node* target = nodeAt(mouseG);
             int snapInput = -1;  // dragging out of an output: a specific input arrow under the mouse
@@ -2658,14 +2658,14 @@ void drawNodeGraph(App& app, UiState& ui) {
                 }
                 if (snapInput >= 0)
                     for (auto& h : handles)
-                        if (h.node == target && h.input == snapInput) dl->AddCircleFilled(h.at, 7, IM_COL32(255, 196, 70, 255));
+                        if (h.node == target && h.input == snapInput) dl->AddCircleFilled(h.at, 7, theme().accent);
             } else if (!target) {
                 // dragging an input end: dropping on a node's output port counts as the node
                 target = outPortAt(io.MousePos);
             }
             if (target && target != n) {
                 ImVec2 tp = S(pos(target)), ts = size(target);
-                dl->AddRect(tp, ImVec2(tp.x + ts.x * g.zoom, tp.y + ts.y * g.zoom), IM_COL32(255, 196, 70, 255), 2.0f, 0, 2.0f);
+                dl->AddRect(tp, ImVec2(tp.x + ts.x * g.zoom, tp.y + ts.y * g.zoom), theme().accent, 2.0f, 0, 2.0f);
             }
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 std::string nn = n->name, tn = target && target != n ? target->name : "";

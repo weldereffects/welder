@@ -72,6 +72,11 @@ double pickScale(float zoom, bool fullRes) {
 
 }  // namespace
 
+ThemeColors& theme() {
+    static ThemeColors t;
+    return t;
+}
+
 void viewerUpload(ViewerState& v) {
     v.dirtyTexture = false;
     v.hasB = false;
@@ -542,7 +547,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     v.hovered = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 p1(p0.x + size.x, p0.y + size.y);
-    dl->AddRectFilled(p0, p1, IM_COL32(26, 26, 26, 255));
+    dl->AddRectFilled(p0, p1, theme().viewerBg);
     dl->PushClipRect(p0, p1, true);
 
     if (v.checkOnScreen && !v.fitPending && v.res.format.width > 0) {
