@@ -367,8 +367,19 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
     <!-- ============================================================ -->
     <section id="viewer">
       <div class="sec-head"><span class="eyebrow">Look closer</span><h2>The Viewer</h2></div>
-      <p>Select a node and press <kbd>1</kbd>–<kbd>9</kbd> to view it in that slot; with nothing selected the number switches slots, keeping zoom and position so you can flip plate and comp on the same edge.</p>
-      <p>The toolbar holds the <strong>layer</strong> and <strong>channel</strong> menus, the display transform, <strong>A/B compare</strong> (a wipe or a difference against another slot or node), <strong>Fit</strong>, <strong>1:1</strong>, <strong>3D</strong>, and <strong>full res</strong> (off renders lighter when zoomed out).</p>
+      <p>A viewer looks through a <strong>Viewer node</strong> in the node graph. It has ten pipes, numbered <kbd>1</kbd>–<kbd>9</kbd> and <kbd>0</kbd> like the keys. Select a node and press a number: that pipe connects to it and the viewer shows it. With nothing selected the number switches pipes, keeping zoom and position so you can flip plate and comp on the same edge; <kbd>Backspace</kbd> steps back through the connected pipes. The shown pipe (A) is orange in the graph.</p>
+      <p>The toolbar holds the <strong>A</strong> and <strong>B</strong> pipe menus and the <strong>compare</strong> mode, the <strong>layer</strong> and <strong>channel</strong> menus, the display transform, <strong>Fit</strong>, <strong>1:1</strong>, <strong>3D</strong>, and <strong>full res</strong> (off renders lighter when zoomed out).</p>
+      <h3>Comparing A and B</h3>
+      <div class="table-wrap"><table>
+        <tr><th>Mode</th><th>What you see</th><th>For</th></tr>
+        <tr><td>wipe (<kbd>W</kbd>)</td><td>A on one side of a line, B on the other: drag the centre to move it, the handle to turn it (<kbd>Shift</kbd>: 15° steps); <strong>mix</strong> fades B in</td><td>Edges, matte lines, grain match</td></tr>
+        <tr><td>over / under</td><td>A over B, or B over A, in the viewer only</td><td>How an element sits on a plate without a Merge</td></tr>
+        <tr><td>minus / difference</td><td>A − B, or |A − B|: black where they match</td><td>Neutral grades, render parity, QC</td></tr>
+        <tr><td>side by side / above / below</td><td>A and B next to each other</td><td>Colour balance and motion between shots</td></tr>
+      </table></div>
+      <p><kbd>Shift</kbd>+number sets the B buffer (the selected node goes into that pipe); pressing it again turns the compare off. <strong>A&lt;&gt;B</strong> swaps them.</p>
+      <h3>More than one viewer</h3>
+      <p><kbd>Ctrl</kbd><kbd>I</kbd> makes another Viewer node with its own panel, as a tab beside the first; drag the tab to split the screen, or use <strong>Viewer › Split Viewers</strong>. Each viewer keeps its own pipes, zoom, channels and compare. Clicking in a viewer makes it the active one: number keys route into it, it plays from the RAM cache and shows the tools' handles. <kbd>Space</kbd> or <kbd>`</kbd> maximises the viewer under the mouse.</p>
       <div class="grid">
         <div class="card"><h4><kbd>R</kbd><kbd>G</kbd><kbd>B</kbd><kbd>A</kbd> <kbd>Y</kbd></h4><p>One channel at a time (again for RGB); Y shows luminance.</p></div>
         <div class="card"><h4><kbd>M</kbd> <kbd>Q</kbd></h4><p>Matte as a red overlay; show or hide every overlay: roto shapes, handles, trackers, format and bbox.</p></div>

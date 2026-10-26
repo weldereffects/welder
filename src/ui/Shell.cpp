@@ -201,6 +201,34 @@ void drawMenuBar(App& app, UiState& ui) {
         bool paused = app.viewPaused;
         if (ImGui::MenuItem("Pause", "P", paused)) app.viewPaused = !paused;
         ImGui::Separator();
+        if (ImGui::BeginMenu("Compare (A / B)")) {
+            Node* vn = app.viewerNode();
+            const std::string cur = vn ? vn->params.str("compare", "off") : "off";
+            for (const char* m : {"off", "wipe", "over", "under", "minus", "difference", "side by side", "above / below"})
+                if (ImGui::MenuItem(m, std::string(m) == "wipe" ? "W" : "", cur == m, vn != nullptr)) {
+                    app.setViewerParam(vn->name, "compare", m);
+                    if (std::string(m) != "off" && (int)vn->params.num("b_pipe", 0, -1) < 0) {
+                        const int a = App::pipeIndex((int)vn->params.num("a_pipe", 0, 1));
+                        for (int step = 1; step < 10; ++step)
+                            if (vn->input((a + step) % 10)) { app.setViewerParam(vn->name, "b_pipe", ((a + step) % 10 + 1) % 10); break; }
+                    }
+                    ui.viewer.fitPending = std::string(m) == "side by side" || std::string(m) == "above / below";
+                }
+            ImGui::Separator();
+            ImGui::TextDisabled("Shift+1-9, 0: set B");
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("New Viewer", "Ctrl+I")) ui.newViewer = app.newViewer();
+        auto viewers = app.viewerNodes();
+        if (ImGui::MenuItem("Split Viewers Side by Side", nullptr, false, viewers.size() > 1)) ui.splitViewers = 1;
+        if (ImGui::MenuItem("Split Viewers Stacked", nullptr, false, viewers.size() > 1)) ui.splitViewers = 2;
+        if (viewers.size() > 1) {
+            ImGui::SeparatorText("active viewer");
+            for (Node* v : viewers)
+                if (ImGui::MenuItem(v->name.c_str(), nullptr, v->name == app.activeViewer)) ui.activateNext = v->name;
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Go to Frame...", "Alt+G")) ui.openGotoFrame = true;
         ImGui::EndMenu();
     }

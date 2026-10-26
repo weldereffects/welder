@@ -105,6 +105,7 @@ add_library(strata_core STATIC
   src/nodes/KeyingExtraNodes.cpp
   src/nodes/SplineFlow.cpp
   src/nodes/ToolkitNodes.cpp
+  src/nodes/ViewerNode.cpp
   src/nodes/ColorExtraNodes.cpp
   src/nodes/FilterExtraNodes.cpp
   src/nodes/TimeExtraNodes.cpp

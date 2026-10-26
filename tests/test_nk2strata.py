@@ -193,7 +193,7 @@ StickyNote { inputs 0 name Note label "fix the edge" }
 Constant { inputs 0 name C }
 Viewer { name Viewer1 }
 """)
-        self.assertEqual(sorted(n), ["BD", "C", "Note"])
+        self.assertEqual(sorted(n), ["BD", "C", "Note", "Viewer1"])  # the Viewer comes across (its pipes)
         bd = n["BD"]
         self.assertEqual(bd["type"], "Backdrop")
         self.assertEqual(bd["params"]["label"], "plates")
@@ -202,6 +202,19 @@ Viewer { name Viewer1 }
         self.assertEqual((bd["ui"]["w"], bd["ui"]["h"]), (400, 250))
         self.assertEqual(n["Note"]["type"], "StickyNote")
         self.assertEqual(n["Note"]["params"]["label"], "fix the edge")
+
+
+class ViewerPipes(unittest.TestCase):
+    def test_viewer_keeps_its_pipes(self):
+        comp, _, n = convert("""
+Constant { inputs 0 name A }
+Constant { inputs 0 name B }
+Viewer { inputs 2 input_number 1 name Viewer1 }
+""")
+        v = n["Viewer1"]
+        self.assertEqual(v["type"], "Viewer")
+        self.assertEqual(sorted(v["inputs"]), ["A", "B"])
+        self.assertEqual(v["params"]["a_pipe"], 2)  # .nk input 1 is pipe 2
 
 
 class Knobs(unittest.TestCase):
@@ -387,7 +400,7 @@ class EndToEnd(unittest.TestCase):
         exe = os.path.join(ROOT, "build", "strata")
         nk = os.path.join(ROOT, "examples", "nk", "shot010_comp_v003.nk")
         comp, report = nk2strata.convert(nk)
-        self.assertEqual(report["nodes_total"], 23)  # with the backdrop and the group's Input / Output
+        self.assertEqual(report["nodes_total"], 24)  # with the backdrop, the group's Input / Output and the Viewer
         if not os.path.exists(exe):
             self.skipTest("strata not built")
         with tempfile.NamedTemporaryFile("w", suffix=".weld", delete=False, dir=os.path.dirname(nk)) as f:

@@ -59,6 +59,11 @@ App::App() {
         aheadEngines_.push_back(std::make_unique<Engine>(ao));
     }
     for (int i = 0; i < k; ++i) ahead_.emplace_back([this, i] { aheadLoop(i); });
+    EngineOptions xo;  // the other viewers
+    xo.cacheBytes = size_t(512) << 20;
+    xo.threads = std::max(2, hw / 2);
+    auxEngine_ = std::make_unique<Engine>(xo);
+    aux_ = std::thread([this] { auxLoop(); });
 }
 
 App::~App() {
@@ -78,6 +83,13 @@ App::~App() {
         std::lock_guard<std::mutex> l(reqM_);
         quit_ = true;
     }
+    {
+        std::lock_guard<std::mutex> l(auxM_);
+        auxQuit_ = true;
+    }
+    auxCv_.notify_all();
+    if (auxEngine_) auxEngine_->cancel();
+    if (aux_.joinable()) aux_.join();
     engine_->cancel();
     for (auto& e : aheadEngines_) e->cancel();
     reqCv_.notify_all();
@@ -418,7 +430,37 @@ std::string App::snapshot() const { return comp ? comp->toJson().dump() : "{}"; 
 void App::restore(const std::string& snap) {
     std::string keepView = viewed;
     edit([this, snap, keepView](Comp&) {
+        // Undo / redo don't re-route the viewers (as in the classic apps): their pipes, A / B and
+        // wipe come back as they are now, and a viewer made since stays.
+        struct Kept {
+            json params, ui;
+            std::vector<std::string> ins;
+        };
+        std::map<std::string, Kept> keep;
+        if (comp)
+            for (auto& n : comp->nodes)
+                if (n->type == "Viewer" && n->group.empty()) {
+                    Kept k{n->params.data, n->ui, {}};
+                    for (Node* in : n->inputs) k.ins.push_back(in ? in->name : "");
+                    keep[n->name] = k;
+                }
         auto c = Comp::fromJson(json::parse(snap), comp ? comp->baseDir : fs::path());
+        for (auto& [name, k] : keep) {
+            Node* v = c->find(name);
+            if (v && v->type != "Viewer") continue;
+            if (!v) {
+                try {
+                    v = c->addNode("Viewer", name, k.params, k.ui);
+                } catch (...) {
+                    continue;
+                }
+            }
+            v->params.data = k.params;
+            for (int i = 0; i < 10; ++i) {
+                Node* src = i < (int)k.ins.size() && !k.ins[i].empty() ? c->find(k.ins[i]) : nullptr;
+                c->setInput(v, i, src);
+            }
+        }
         comp = std::move(c);
         std::set<std::string> sel;
         for (auto& s : selection)
@@ -479,11 +521,15 @@ void App::applyEdits() {
         editsWaiting_ = true;
         if (shouldCancelPass()) engine_->cancel();
         for (auto& e : aheadEngines_) e->cancel();  // speculative work always gives way to an edit
+        if (auxEngine_) auxEngine_->cancel();
         return;
     }
     editsWaiting_ = false;
     auto edits = std::move(pending_);
     pending_.clear();
+    // edits that only re-route the viewers change nothing that renders: caches stay, not modified
+    const bool onlyView = viewEdits_ == edits.size();
+    viewEdits_ = 0;
     for (auto& fn : edits) {
         try {
             if (comp) fn(*comp);
@@ -491,10 +537,21 @@ void App::applyEdits() {
             message(std::string("error: ") + e.what());
         }
     }
+    if (onlyView) {
+        engine_->clearMemo();  // (a Viewer's A pipe redirects; nothing else changed)
+        if (auxEngine_) auxEngine_->clearMemo();
+        if (cleanAfterApply_) dirty = false;
+        cleanAfterApply_ = false;
+        syncViewer();
+        l.unlock();
+        requestView();
+        return;
+    }
     Engine::graphChanged();  // every engine (viewer, read-ahead, textures, picking...) forgets the old graph
     engine_->clearMemo();
     if (infoEngine_) infoEngine_->clearMemo();
     for (auto& e : aheadEngines_) e->clearMemo();
+    if (auxEngine_) auxEngine_->clearMemo();
     ++editGen_;  // cached viewer frames are stale now
     {
         std::lock_guard<std::mutex> il(infoM_);
@@ -503,6 +560,7 @@ void App::applyEdits() {
     }
     dirty = !cleanAfterApply_;
     cleanAfterApply_ = false;
+    syncViewer();
     l.unlock();
     requestView();
 }
@@ -510,8 +568,212 @@ void App::applyEdits() {
 // ------------------------------------------------------------------ viewer rendering
 
 void App::setViewed(const std::string& name) {
+    // view it through the active viewer's current A pipe (as pressing that pipe's number would)
+    int pipe = 1;
+    if (Node* v = viewerNode()) pipe = (int)v->params.num("a_pipe", 0, 1);
+    viewPipe(pipe, name);
     viewed = name;
     requestView();
+}
+
+// ------------------------------------------------------------------ viewers
+
+void App::viewEdit(std::function<void(Comp&)> fn) {
+    // a view-only edit stays one only while everything pending is: count them
+    if (viewEdits_ == pending_.size()) ++viewEdits_;
+    pending_.push_back(std::move(fn));
+}
+
+Node* App::viewerNode(const std::string& name) const {
+    if (!comp) return nullptr;
+    Node* n = comp->find(name.empty() ? activeViewer : name);
+    return n && n->type == "Viewer" ? n : nullptr;
+}
+
+std::vector<Node*> App::viewerNodes() const {
+    std::vector<Node*> v;
+    if (comp)
+        for (auto& n : comp->nodes)
+            if (n->type == "Viewer" && n->group.empty()) v.push_back(n.get());
+    return v;
+}
+
+void App::ensureViewer(Comp& c, const std::string& view) {
+    Node* found = nullptr;
+    for (auto& n : c.nodes)
+        if (n->type == "Viewer" && n->group.empty()) {
+            if (n->name == activeViewer) found = n.get();
+            if (!found) found = n.get();
+        }
+    if (!found) {
+        Node* src = view.empty() ? nullptr : c.find(view);
+        json ui = json::object();
+        if (src) ui = {{"x", src->ui.value("x", 0.0) + 160}, {"y", src->ui.value("y", 0.0) + 110}};
+        else {
+            double x = 0, y = 0;
+            bool any = false;
+            for (auto& n : c.nodes) {
+                x = any ? std::max(x, n->ui.value("x", 0.0)) : n->ui.value("x", 0.0);
+                y = any ? std::max(y, n->ui.value("y", 0.0)) : n->ui.value("y", 0.0);
+                any = true;
+            }
+            ui = {{"x", any ? x + 160 : 0.0}, {"y", any ? y + 110 : 0.0}};
+        }
+        json params = {{"a_pipe", 1}, {"b_pipe", -1}, {"compare", "off"}, {"wipe_angle", 0.0}, {"wipe_mix", 1.0},
+                       {"wipe_center", {c.format.width / 2.0, c.format.height / 2.0}}};
+        try {
+            found = c.addNode("Viewer", "Viewer1", params, ui);
+        } catch (...) {
+            return;
+        }
+        if (src && found) c.setInput(found, 0, src);
+    }
+    if (found) activeViewer = found->name;
+}
+
+void App::viewPipe(int pipe, const std::string& node, bool asB) {
+    const int idx = pipeIndex(pipe);
+    viewEdit([this, idx, pipe, node, asB](Comp& c) {
+        Node* v = c.find(activeViewer);
+        if (!v || v->type != "Viewer") {
+            ensureViewer(c, "");
+            v = c.find(activeViewer);
+        }
+        if (!v) return;
+        if (!node.empty())
+            if (Node* src = c.find(node); src && src->type != "Viewer") c.setInput(v, idx, src);
+        if (!v->input(idx)) return;
+        if (asB) {
+            v->params.data["b_pipe"] = pipe;
+            if (v->params.str("compare", "off") == "off") v->params.data["compare"] = "wipe";
+        } else {
+            v->params.data["a_pipe"] = pipe;
+        }
+        v->paramsChanged();
+    });
+    if (!asB && !node.empty()) {
+        viewed = node;
+        requestView();
+    }
+}
+
+void App::setViewerParam(const std::string& viewer, const std::string& key, const json& v) {
+    if (key == "a_pipe") {  // the engine reads it (the Viewer's redirect): through an edit
+        viewEdit([viewer, key, v](Comp& c) {
+            if (Node* n = c.find(viewer)) n->params.data[key] = v;
+        });
+        return;
+    }
+    // only the UI reads the rest: set it now (the key exists from creation, so no reallocation)
+    if (Node* n = viewerNode(viewer)) {
+        if (n->params.data.contains(key)) n->params.data[key] = v;
+        else viewEdit([viewer, key, v](Comp& c) {
+            if (Node* m = c.find(viewer)) m->params.data[key] = v;
+        });
+    }
+}
+
+std::string App::newViewer() {
+    std::string name = comp ? comp->uniqueName("Viewer1") : "Viewer2";
+    const std::string src = viewed;
+    viewEdit([this, name, src](Comp& c) {
+        Node* old = c.find(activeViewer);
+        json ui = old ? json{{"x", old->ui.value("x", 0.0) + 220}, {"y", old->ui.value("y", 0.0)}} : json::object();
+        json params = {{"a_pipe", 1}, {"b_pipe", -1}, {"compare", "off"}, {"wipe_angle", 0.0}, {"wipe_mix", 1.0},
+                       {"wipe_center", {c.format.width / 2.0, c.format.height / 2.0}}};
+        Node* v = nullptr;
+        try {
+            v = c.addNode("Viewer", name, params, ui);
+        } catch (...) {
+            return;
+        }
+        if (Node* s = c.find(src); s && v) c.setInput(v, 0, s);
+        if (v) activeViewer = v->name;
+    });
+    return name;
+}
+
+void App::syncViewer() {
+    if (!comp || !pending_.empty()) return;
+    Node* v = viewerNode();
+    if (!v) {
+        auto all = viewerNodes();
+        if (all.empty()) return;
+        activeViewer = all.front()->name;
+        v = all.front();
+    }
+    const int a = pipeIndex((int)v->params.num("a_pipe", 0, 1));
+    const std::string A = v->input(a) ? v->input(a)->name : "";
+    std::string B;
+    const int bp = (int)v->params.num("b_pipe", 0, -1);
+    if (bp >= 0 && v->params.str("compare", "off") != "off")
+        if (Node* b = v->input(pipeIndex(bp))) B = b->name;
+    if (A != viewed) {
+        viewed = A;
+        requestView();
+    }
+    if (compareNode() != B) setCompareNode(B);
+}
+
+void App::requestAuxView(const std::string& viewer, const std::string& node, const std::string& compare, double f, const Box& region,
+                         double scale) {
+    AuxReq r;
+    r.node = node, r.compare = compare, r.frame = f, r.region = region, r.scale = scale, r.gen = editGen_;
+    {
+        std::lock_guard<std::mutex> l(auxM_);
+        auto it = auxWant_.find(viewer);
+        if (it != auxWant_.end() && it->second == r) return;
+        auxWant_[viewer] = r;
+    }
+    auxCv_.notify_all();
+}
+
+ViewResult App::auxResult(const std::string& viewer) {
+    std::lock_guard<std::mutex> l(auxM_);
+    auto it = auxRes_.find(viewer);
+    return it == auxRes_.end() ? ViewResult() : it->second;
+}
+
+void App::auxLoop() {
+    for (;;) {
+        std::string viewer;
+        AuxReq r;
+        {
+            std::unique_lock<std::mutex> l(auxM_);
+            auxCv_.wait(l, [&] {
+                if (auxQuit_) return true;
+                for (auto& [k, w] : auxWant_)
+                    if (!auxDone_.count(k) || !(auxDone_[k] == w)) return true;
+                return false;
+            });
+            if (auxQuit_) return;
+            for (auto& [k, w] : auxWant_)
+                if (!auxDone_.count(k) || !(auxDone_[k] == w)) {
+                    viewer = k;
+                    r = w;
+                    break;
+                }
+        }
+        if (editsWaiting_) {  // let the edit in first
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+        try {
+            ViewResult res = r.node.empty() ? ViewResult() : renderView(*auxEngine_, r.node, r.compare, r.frame, r.scale, r.region);
+            res.serial = ++resultSerial_;
+            {
+                std::lock_guard<std::mutex> l(auxM_);
+                auxRes_[viewer] = res;
+                auxDone_[viewer] = r;
+            }
+            if (onResult) onResult();
+        } catch (const RenderCancelled&) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));  // an edit: try again after it
+        } catch (...) {
+            std::lock_guard<std::mutex> l(auxM_);
+            auxDone_[viewer] = r;
+        }
+    }
 }
 
 void App::setViewWindow(const Box& region, double scale) {
@@ -836,6 +1098,43 @@ std::vector<int> App::cachedFrames() {
     for (auto& [k, c] : frameCache_)
         if (k.first == viewed && c.gen == editGen_ && c.scale == scale && c.region == region && c.compare == compare)
             v.push_back(k.second);
+    return v;
+}
+
+std::vector<int> App::diskCachedFrames(int first, int last) {
+    if (!disk_ || viewed.empty() || last < first) return {};
+    Box region;
+    double scale;
+    {
+        std::lock_guard<std::mutex> l(reqM_);
+        region = viewRegion_;
+        scale = viewScale_;
+    }
+    char k[256];
+    std::snprintf(k, sizeof k, "%s|%llu|%g|%d %d %d %d|%d-%d", viewed.c_str(), (unsigned long long)editGen_.load(), scale, region.x1,
+                  region.y1, region.x2, region.y2, first, last);
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (k == diskMemoKey_ && now - diskMemoT_ < 0.5) return diskMemo_;
+    std::shared_lock<std::shared_timed_mutex> cl(compM, std::try_to_lock);
+    if (!cl.owns_lock()) return diskMemo_;
+    std::vector<int> v;
+    Node* n = comp ? comp->find(viewed) : nullptr;
+    if (n) {
+        Engine& e = uiEngine();
+        try {
+            e.setScale(scale);
+            for (int f = first; f <= last && f < first + 3000; ++f) {
+                const Format fmt = n->format(e, f);
+                const Box show = viewBox(fmt, e.dod(n, f), scale, region);
+                if (!show.empty() && disk_->has(DiskCache::key(e.hash(n, f), show))) v.push_back(f);
+            }
+        } catch (...) {
+        }
+        e.setScale(1.0);
+    }
+    diskMemo_ = v;
+    diskMemoKey_ = k;
+    diskMemoT_ = now;
     return v;
 }
 
@@ -2655,7 +2954,8 @@ bool App::newComp() {
         selection.clear();
         panels.clear();
         viewed.clear();
-        viewerSlots = {};
+        activeViewer.clear();
+        ensureViewer(*comp, "");
         frame = 1;
         cleanAfterApply_ = true;
         matchArmed = true;
@@ -2663,7 +2963,9 @@ bool App::newComp() {
     if (!comp) {  // first call from the constructor: apply right away
         comp = Comp::fromJson(j, fs::current_path());
         pending_.clear();
+        viewEdits_ = 0;
         matchArmed = true;
+        ensureViewer(*comp, "");
     }
     compPath.clear();
     undo_.clear();
@@ -2723,14 +3025,20 @@ bool App::open(const std::string& path, std::string* err) {
             if (n->type == "Read" && !n->params.str("file", "").empty()) matchArmed = false;
         selection.clear();
         panels.clear();
-        viewerSlots = {};
         frame = comp->firstFrame;
         cleanAfterApply_ = true;
-        // View the last Write if any, otherwise the last node.
+        // The script's own viewer if it has one; else view the last Write, otherwise the last node.
         viewed.clear();
+        activeViewer.clear();
         for (auto& n : comp->nodes)
             if (n->type == "Write") viewed = n->inputs.empty() || !n->inputs[0] ? n->name : n->inputs[0]->name;
-        if (viewed.empty() && !comp->nodes.empty()) viewed = comp->nodes.back()->name;
+        if (viewed.empty())
+            for (auto it = comp->nodes.rbegin(); it != comp->nodes.rend(); ++it)
+                if ((*it)->type != "Viewer" && (*it)->type != "Backdrop" && (*it)->type != "StickyNote") {
+                    viewed = (*it)->name;
+                    break;
+                }
+        ensureViewer(*comp, viewed);
     });
     compPath = absolutePath(path);
     undo_.clear();
@@ -2948,8 +3256,7 @@ void App::renameRefs(const std::string& from, const std::string& to) {
     for (auto& p : panels)
         if (p == from) p = to;
     if (viewed == from) viewed = to;
-    for (auto& s : viewerSlots)
-        if (s == from) s = to;
+    if (activeViewer == from) activeViewer = to;
 }
 
 }  // namespace strata::ui

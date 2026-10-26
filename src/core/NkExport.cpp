@@ -785,6 +785,12 @@ struct Writer {
             b.cls = "CornerPin2D";
             mainMask(1, -1);
             for (const char* k : {"to1", "to2", "to3", "to4", "from1", "from2", "from3", "from4"}) copy(k);
+        } else if (type == "Viewer") {  // its pipes, and which one is shown
+            b.cls = "Viewer";
+            const json& ins = n.value("inputs", json::array());
+            for (size_t i = 0; i < ins.size(); ++i) b.main.push_back(in(n, i));
+            const int a = (int)std::lround(p.value("a_pipe", 1.0));
+            raw("input_number", std::to_string(((a % 10) + 9) % 10));
         } else if (type == "Dot" || type == "NoOp") {
             b.cls = type;
             mainMask(1, -1);

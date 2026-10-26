@@ -122,8 +122,7 @@ public:
     double frame = 1;
     std::atomic<bool> playing{false};
     int playDir = 1;                        // +1 forward (L), -1 backward (J)
-    std::string viewed;                     // node shown in the viewer
-    std::array<std::string, 10> viewerSlots;  // number keys 1..9 (0 unused)
+    std::string viewed;                     // node shown in the active viewer (its Viewer node's A pipe)
     std::set<std::string> selection;
     std::deque<std::string> panels;         // properties bin, most recent first
     int maxPanels = 6;
@@ -142,6 +141,26 @@ public:
     // Apply queued edits if the renderers allow it. Called once per UI frame.
     void applyEdits();
     bool editsPending() const { return !pending_.empty(); }
+
+    // ------------------------------------------------------------ viewers (Viewer nodes)
+    // Each viewer panel looks through a Viewer node: ten numbered pipes (keys 1-9, 0), the A pipe
+    // shown, a B pipe to compare against. The active one drives `viewed` and the playback cache.
+    std::string activeViewer;
+    static int pipeIndex(int pipe) { return ((pipe % 10) + 9) % 10; }  // key 1..9, 0 -> input 0..9
+    Node* viewerNode(const std::string& name = "") const;  // a Viewer node ("" = the active one), or null
+    std::vector<Node*> viewerNodes() const;                // all top-level ones, in comp order
+    // Connect pipe `pipe` of the active viewer (made if there is none) to `node` ("" = keep what's
+    // there) and make it the A (or B) buffer.
+    void viewPipe(int pipe, const std::string& node, bool asB = false);
+    // Change a Viewer node's param without marking the script modified or adding an undo step.
+    void setViewerParam(const std::string& viewer, const std::string& key, const json& v);
+    std::string newViewer();  // Ctrl+I: another Viewer node, made active; returns its name
+    void syncViewer();        // viewed / compare from the active Viewer node (called every UI frame)
+    // Viewers that aren't the active one render on their own thread (no playback cache): ask for
+    // a view and read the latest result.
+    void requestAuxView(const std::string& viewer, const std::string& node, const std::string& compare, double f,
+                        const Box& region, double scale);
+    ViewResult auxResult(const std::string& viewer);
 
     // ------------------------------------------------------------ viewer rendering
     void requestView(bool force = false);  // render `viewed` at `frame` (coalesced); ignored while paused unless forced
@@ -175,6 +194,8 @@ public:
     void setPlaybackCacheGB(double gb);
     bool cacheFrame(double frame) const;    // a fresh cached frame exists for what the viewer shows
     std::vector<int> cachedFrames();        // for the timeline
+    // Frames of what the viewer shows that the disk cache holds (first..last; refreshed twice a second).
+    std::vector<int> diskCachedFrames(int first, int last);
     void setPrecache(bool on);              // render the play range into the cache in the background
     bool precaching() const { return precache_; }
     void clearFrameCache();
@@ -334,6 +355,30 @@ private:
     static Box viewBox(const Format& fmt, const Box& dod, double sc, const Box& region);
     bool diskHasView(const std::string& node, double f, double sc, const Box& region);
     bool cleanAfterApply_ = false;  // set by open/new so loading doesn't mark the comp modified
+    std::vector<int> diskMemo_;
+    std::string diskMemoKey_;
+    double diskMemoT_ = -1;
+    size_t viewEdits_ = 0;          // pending edits that only change what's viewed (don't mark modified)
+    void viewEdit(std::function<void(Comp&)> fn);
+    void ensureViewer(Comp& c, const std::string& view);  // a Viewer node, connected to `view` (inside an edit)
+    // the secondary viewers' renderer
+    struct AuxReq {
+        std::string node, compare;
+        double frame = 1, scale = 1;
+        Box region;
+        uint64_t gen = 0;  // editGen_ when asked
+        bool operator==(const AuxReq& o) const {
+            return node == o.node && compare == o.compare && frame == o.frame && scale == o.scale && region == o.region && gen == o.gen;
+        }
+    };
+    std::map<std::string, AuxReq> auxWant_, auxDone_;  // by viewer, guarded by auxM_
+    std::map<std::string, ViewResult> auxRes_;
+    std::mutex auxM_;
+    std::condition_variable auxCv_;
+    bool auxQuit_ = false;
+    std::thread aux_;
+    std::unique_ptr<Engine> auxEngine_;
+    void auxLoop();
     std::vector<std::function<void(Comp&)>> pending_;
     std::vector<std::string> undo_, redo_;
 

@@ -93,8 +93,12 @@ const std::vector<Shortcut>& shortcuts() {
         {"Viewer", "S", "viewer settings", true},
         {"Viewer", "P", "pause updates", true},
         {"Viewer", "U", "update once while paused", true},
-        {"Viewer", "0-9", "view the selected node in that input (nothing selected: switch input)", true},
-        {"Viewer", "Backspace", "cycle viewer inputs", true},
+        {"Viewer", "0-9", "connect the selected node to that viewer pipe and view it (nothing selected: switch to that pipe)", true},
+        {"Viewer", "Shift+0-9", "the B buffer: compare against that pipe (the selected node goes into it)", true},
+        {"Viewer", "W", "wipe on / off (A against B)", true},
+        {"Viewer", "Backspace", "previous connected viewer pipe", true},
+        {"Viewer", "Ctrl+I", "a new viewer (its own Viewer node and panel)", true},
+        {"Viewer", "Space / `", "maximize the panel under the mouse", true},
         {"Viewer", "Left / Right", "previous / next frame", true},
         {"Viewer", "Shift+Left / Shift+Right", "back / forward 10 frames", true},
         {"Viewer", "Alt+Left / Alt+Right", "previous / next keyframe", true},
@@ -233,14 +237,24 @@ float zoomPreset(int d, bool in) {
     return d == 0 ? 0.1f : d == 1 ? 1.0f : 1.0f / d;  // Alt: 100%, 50%, 33% .. 10%
 }
 
-void viewSlot(App& app, int k) {
+// Number keys: the selected node goes into that pipe of the active viewer and is shown (A), or
+// with Shift becomes the B buffer; with nothing selected, switch to what that pipe already has.
+void viewSlot(App& app, int k, bool asB = false) {
+    std::string sel;
     if (app.selection.size() == 1) {
-        const std::string& s = *app.selection.begin();
-        app.viewerSlots[k] = s;
-        app.setViewed(s);
-    } else if (!app.viewerSlots[k].empty()) {
-        app.setViewed(app.viewerSlots[k]);
+        sel = *app.selection.begin();
+        if (Node* n = app.node(sel); !n || n->type == "Viewer") sel.clear();
     }
+    Node* v = app.viewerNode();
+    if (sel.empty() && v && !v->input(App::pipeIndex(k))) {
+        app.message("viewer pipe " + std::to_string(k) + " is empty: select a node and press " + (asB ? "Shift+" : "") + std::to_string(k));
+        return;
+    }
+    if (asB && v && sel.empty() && (int)v->params.num("b_pipe", 0, -1) == k) {  // the same B again: compare off
+        app.setViewerParam(v->name, "b_pipe", -1);
+        return;
+    }
+    app.viewPipe(k, sel, asB);
 }
 
 void openRender(App& app, UiState& ui, bool selectedOnly) { openRenderDialog(app, ui, selectedOnly); }
@@ -293,7 +307,8 @@ void handleHotkeys(App& app, UiState& ui) {
     if (key(ImGuiKey_F12)) { app.clearCaches(); return; }
     if (key(ImGuiKey_Space)) { ui.toggleMaximize = panel.empty() ? std::string("Viewer") : panel; return; }
     if (key(ImGuiKey_S, false, true)) { ui.showPrefs = true; return; }
-    if (key(ImGuiKey_I, true)) { unavailable(app, "A second viewer"); return; }
+    if (key(ImGuiKey_I, true)) { ui.newViewer = app.newViewer(); return; }
+    if (key(ImGuiKey_GraveAccent) && panel != "Node Graph") { ui.toggleMaximize = panel.empty() ? std::string("Viewer") : panel; return; }
 
     // ---- frame navigation and playback (viewer and timeline)
     if (panel == "Viewer" || panel == "Timeline") {
@@ -351,6 +366,8 @@ void handleHotkeys(App& app, UiState& ui) {
 
     // ---- viewer
     if (panel == "Viewer") {
+        // keys over a viewer that isn't the active one act on it: it becomes active
+        if (!ui.hoverViewer.empty() && ui.hoverViewer != app.activeViewer) activateViewer(app, ui, ui.hoverViewer);
         if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) && !io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
             bool on = viewer3DActive(app, ui);
             ui.v3d.on = !on;
@@ -397,19 +414,30 @@ void handleHotkeys(App& app, UiState& ui) {
         if (key(ImGuiKey_S)) { v.openSettings = true; return; }
         if (key(ImGuiKey_P)) { app.viewPaused = !app.viewPaused; if (!app.viewPaused) app.requestView(); return; }
         if (key(ImGuiKey_U)) { app.requestView(true); return; }
-        if (key(ImGuiKey_Backspace)) {
-            // previous assigned input
-            int cur = 0;
-            for (int k = 0; k <= 9; ++k)
-                if (app.viewerSlots[k] == app.viewed && !app.viewed.empty()) cur = k;
-            for (int step = 1; step <= 10; ++step) {
-                int k = (cur - step + 10) % 10;
-                if (!app.viewerSlots[k].empty()) { app.setViewed(app.viewerSlots[k]); break; }
+        if (key(ImGuiKey_Backspace)) {  // the previous connected pipe
+            if (Node* vn = app.viewerNode()) {
+                const int cur = App::pipeIndex((int)vn->params.num("a_pipe", 0, 1));
+                for (int step = 1; step <= 10; ++step) {
+                    const int i = (cur - step + 10) % 10;
+                    if (vn->input(i)) { app.viewPipe((i + 1) % 10, ""); break; }
+                }
             }
             return;
         }
         if ((d = digitPressed(false, false, false)) >= 0) { viewSlot(app, d); return; }
-        if (digitPressed(false, true, false) >= 0 || key(ImGuiKey_W)) { unavailable(app, "Wipe / reference inputs"); return; }
+        if ((d = digitPressed(false, true, false)) >= 0) { viewSlot(app, d, true); return; }
+        if (key(ImGuiKey_W)) {  // wipe on / off (B: the last one, else the next connected pipe)
+            if (Node* vn = app.viewerNode()) {
+                const bool on = vn->params.str("compare", "off") != "off";
+                if (!on && (int)vn->params.num("b_pipe", 0, -1) < 0) {
+                    const int a = App::pipeIndex((int)vn->params.num("a_pipe", 0, 1));
+                    for (int step = 1; step < 10; ++step)
+                        if (vn->input((a + step) % 10)) { app.setViewerParam(vn->name, "b_pipe", ((a + step) % 10 + 1) % 10); break; }
+                }
+                app.setViewerParam(vn->name, "compare", on ? "off" : "wipe");
+            }
+            return;
+        }
         if (key(ImGuiKey_W, false, false, true)) { unavailable(app, "Region of interest"); return; }
         return;
     }
@@ -500,7 +528,7 @@ void handleHotkeys(App& app, UiState& ui) {
         if (key(ImGuiKey_U) || key(ImGuiKey_U, false, true) || key(ImGuiKey_U, false, false, true)) { unavailable(app, "Splay"); return; }
         if (key(ImGuiKey_B, true)) { unavailable(app, "Node buffers"); return; }
         if ((d = digitPressed(false, false, false)) >= 0) { viewSlot(app, d); return; }
-        if (digitPressed(false, true, false) >= 0) { unavailable(app, "Reference viewer inputs"); return; }
+        if ((d = digitPressed(false, true, false)) >= 0) { viewSlot(app, d, true); return; }
     }
 }
 

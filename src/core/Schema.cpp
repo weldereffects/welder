@@ -864,6 +864,15 @@ std::vector<NodeDef> build() {
                  "Alpha from hue: 1 within width/2 degrees of the hue, falling off over the softness."});
     d.push_back({"Difference", "Keyer", {F("offset", "offset", 0, 0, 1), F("gain", "gain", 1, 0, 10)},
                  "Alpha = (|A - B| - offset) * gain. Inputs: B (clean plate or reference), A."});
+    d.push_back({"Viewer", "Other",
+                 {I("a_pipe", "A input", 1, 0, 9), I("b_pipe", "B input (-1: none)", -1, -1, 9),
+                  C("compare", "compare", "off", {"off", "wipe", "over", "under", "minus", "difference", "side by side", "above / below"}),
+                  When(PickXY(XY("wipe_center", "wipe centre", "$center", 0, 4096)), "compare=wipe"),
+                  When(F("wipe_angle", "wipe angle", 0, -180, 180), "compare=wipe"),
+                  When(F("wipe_mix", "wipe mix", 1, 0, 1, "How much of B shows on its side of the wipe"), "compare=wipe")},
+                 "What a viewer panel looks through. Its pipes are numbered 1-9 and 0 like the number keys: select a node and "
+                 "press a number to connect that pipe and view it; Shift+number sets the B buffer to compare against (wipe, over, "
+                 "under, minus, difference, side by side). Ctrl+I makes another viewer with its own panel."});
     // ---------------------------------------------------------------- finishing tools (flares, keying, everyday 2D)
     {
         d.push_back({"LensFlare", "Draw",

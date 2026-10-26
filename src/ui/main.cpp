@@ -353,7 +353,10 @@ int main(int argc, char** argv) {
     }
     app.applyEdits();
     if (opt.frame >= 0) app.frame = opt.frame;
-    if (!opt.view.empty()) app.viewed = opt.view;
+    if (!opt.view.empty()) {  // through the viewer's pipe 1
+        app.viewPipe(1, opt.view);
+        app.applyEdits();
+    }
     if (!opt.level.empty()) ui.graph.level = opt.level;  // the node graph inside this group
     if (!opt.select.empty()) app.selection = {opt.select};
     if (!opt.props.empty()) {
@@ -363,7 +366,6 @@ int main(int argc, char** argv) {
         while (std::getline(ss, p, ',')) list.push_back(p);
         for (auto it = list.rbegin(); it != list.rend(); ++it) app.openPanel(*it);
     }
-    if (!app.viewed.empty()) app.viewerSlots[1] = app.viewed;
     if (useSplash) {
         splash::close(win);
         glfwShowWindow(win);
@@ -912,6 +914,97 @@ int main(int argc, char** argv) {
             if (frameCount == 12 + 10 * (int)acts.size() + 15)
                 for (auto& m : app.log) std::printf("ACTION log: %s\n", m.c_str());
         }
+        // STRATA_TEST_KEYS=tok;tok;...: one step every 12 frames from frame 15, then the viewers' routing is
+        // printed. Tokens: "at=x,y" (move the mouse), "sel=Node" (select it), "key=[ctrl+][shift+]K"
+        // (K: a digit, a letter, "grave"), "click=x,y", "drag=x0,y0,x1,y1".
+        bool keysTest = false;
+        if (const char* tk = std::getenv("STRATA_TEST_KEYS"); tk && *tk && !opt.screenshot.empty()) {
+            std::vector<std::string> toks;
+            for (std::string t = tk; !t.empty();) {
+                size_t c = t.find(';');
+                toks.push_back(t.substr(0, c));
+                t = c == std::string::npos ? "" : t.substr(c + 1);
+            }
+            const int per = 12, start = 15, end = start + per * (int)toks.size();
+            keysTest = frameCount < end + 30;
+            ImGuiIO& tio = ImGui::GetIO();
+            static ImGuiKey held = ImGuiKey_None;
+            static bool heldShift = false, heldCtrl = false;
+            static float drag[4] = {0, 0, 0, 0};
+            static bool dragging = false;
+            if (frameCount >= start && frameCount < end) {
+                const int step = (frameCount - start) / per, k = (frameCount - start) % per;
+                const std::string& t = toks[step];
+                const size_t eq = t.find('=');
+                const std::string what = t.substr(0, eq), arg = eq == std::string::npos ? "" : t.substr(eq + 1);
+                if (k == 0) {
+                    if (what == "at") {
+                        float x = 0, y = 0;
+                        std::sscanf(arg.c_str(), "%f,%f", &x, &y);
+                        tio.AddMousePosEvent(x, y);
+                    } else if (what == "sel") {
+                        app.selection = {arg};
+                    } else if (what == "split") {
+                        ui.splitViewers = std::atoi(arg.c_str());
+                    } else if (what == "mode") {
+                        if (Node* vn = app.viewerNode()) app.setViewerParam(vn->name, "compare", arg);
+                    } else if (what == "fit") {
+                        ui.viewer.fitPending = true;
+                    } else if (what == "key") {
+                        std::string kk = arg;
+                        heldCtrl = kk.rfind("ctrl+", 0) == 0;
+                        if (heldCtrl) kk = kk.substr(5);
+                        heldShift = kk.rfind("shift+", 0) == 0;
+                        if (heldShift) kk = kk.substr(6);
+                        held = ImGuiKey_None;
+                        if (kk.size() == 1 && kk[0] >= '0' && kk[0] <= '9') held = (ImGuiKey)(ImGuiKey_0 + (kk[0] - '0'));
+                        else if (kk.size() == 1 && kk[0] >= 'a' && kk[0] <= 'z') held = (ImGuiKey)(ImGuiKey_A + (kk[0] - 'a'));
+                        else if (kk == "grave") held = ImGuiKey_GraveAccent;
+                        else if (kk == "backspace") held = ImGuiKey_Backspace;
+                        if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
+                        if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
+                    } else if (what == "click") {
+                        float x = 0, y = 0;
+                        std::sscanf(arg.c_str(), "%f,%f", &x, &y);
+                        tio.AddMousePosEvent(x, y);
+                    } else if (what == "drag") {
+                        std::sscanf(arg.c_str(), "%f,%f,%f,%f", &drag[0], &drag[1], &drag[2], &drag[3]);
+                        tio.AddMousePosEvent(drag[0], drag[1]);
+                        dragging = true;
+                    }
+                } else if (k == 1 && what == "key" && held != ImGuiKey_None) {
+                    tio.AddKeyEvent(held, true);
+                } else if (k == 2 && what == "key") {
+                    if (held != ImGuiKey_None) tio.AddKeyEvent(held, false);
+                    if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, false); tio.AddKeyEvent(ImGuiKey_LeftCtrl, false); }
+                    if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, false); tio.AddKeyEvent(ImGuiKey_LeftShift, false); }
+                    held = ImGuiKey_None;
+                } else if (what == "click" && k == 2) {
+                    tio.AddMouseButtonEvent(0, true);
+                } else if (what == "click" && k == 4) {
+                    tio.AddMouseButtonEvent(0, false);
+                } else if (what == "drag" && dragging) {
+                    if (k == 2) tio.AddMouseButtonEvent(0, true);
+                    else if (k > 2 && k < 10) {
+                        const float u = (k - 2) / 7.0f;
+                        tio.AddMousePosEvent(drag[0] + (drag[2] - drag[0]) * u, drag[1] + (drag[3] - drag[1]) * u);
+                    } else if (k == 10) {
+                        tio.AddMouseButtonEvent(0, false);
+                        dragging = false;
+                    }
+                }
+            }
+            if (frameCount == end + 25) {
+                std::printf("VIEWERS active %s viewed %s compare %s\n", app.activeViewer.c_str(), app.viewed.c_str(), app.compareNode().c_str());
+                for (Node* v : app.viewerNodes()) {
+                    std::string ins;
+                    for (int i = 0; i < 10; ++i)
+                        if (v->input(i)) ins += std::to_string((i + 1) % 10) + ":" + v->input(i)->name + " ";
+                    std::printf("VIEWER %s pipes [%s] params %s\n", v->name.c_str(), ins.c_str(), v->params.data.dump().c_str());
+                }
+                std::printf("VIEWERS dirty %d maximized '%s'\n", (int)app.dirty, ui.maximized.c_str());
+            }
+        }
         // STRATA_TEST_SHAKE=x,y: grab what's at a window position and shake it side to side, then
         // print every node's inputs
         bool shakeTest = false;
@@ -1178,7 +1271,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

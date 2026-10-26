@@ -39,13 +39,18 @@ struct ViewerState {
     bool overlays = true;    // Q: shapes, handles, trackers, format / bbox lines
     bool openSettings = false;  // S: viewer settings popup
     ImVec2 viewSize = {800, 450};
-    // A/B compare (the toolbar's A/B menu): B is another node, shown right of the wipe line
-    // or as the difference |A - B|
+    // A/B compare, from the Viewer node: "off", "wipe", "over", "under", "minus", "difference",
+    // "side by side", "above / below". Side by side keeps B in its own texture; the others are
+    // combined into the A texture.
     unsigned int texB = 0;
     int texBW = 0, texBH = 0;
-    int compareMode = 1;     // 1 wipe, 2 difference
-    float wipe = 0.5f;       // wipe position, across the format (0-1)
-    bool draggingWipe = false;
+    std::string compare = "off";
+    ImVec2 wipeC = {0, 0};   // wipe centre (full-res image pixels)
+    float wipeAngle = 0;     // degrees: 0 = a vertical line, B on the right
+    float wipeMix = 1;       // how much B shows on its side
+    std::string builtWith;   // the compare settings the textures were built with
+    int wipeDrag = 0;        // 1 dragging the centre, 2 the rotate handle
+    bool hasB = false;       // the textures hold a B image
 };
 
 // The Viewer's 3D mode (Tab): Maya-style navigation and manipulators.
@@ -309,6 +314,14 @@ struct UiState {
     bool openGotoFrame = false;
     int gotoFrame = 1;
     std::string toggleMaximize;   // Space: panel to maximize (or restore)
+    std::string newViewer;        // Ctrl+I made this Viewer node: dock its panel beside the main viewer
+    // The viewer panels: ui.viewer is the state of the active viewer's panel (app.activeViewer);
+    // the others keep theirs here, by Viewer node name.
+    std::string viewerOf;         // whose state ui.viewer holds
+    std::map<std::string, ViewerState> otherViewers;
+    std::string hoverViewer;      // the Viewer node of the viewer panel under the mouse
+    std::string activateNext;     // a click in this viewer's panel: make it active next frame
+    int splitViewers = 0;         // Viewer menu: 1 lay the viewer panels side by side, 2 stacked
     std::string maximized;        // currently maximized panel
     bool showShortcuts = false;
     bool showAbout = false;
@@ -475,5 +488,7 @@ bool graphTestPipe(App& app, UiState& ui, int frame);
 bool typingInText();
 void viewerUpload(ViewerState& v);  // rebuild the display texture
 void viewerFit(ViewerState& v, ImVec2 size);
+// Make `name` the active viewer: its panel's state moves into ui.viewer, it drives the main render.
+void activateViewer(App& app, UiState& ui, const std::string& name);
 
 }  // namespace strata::ui

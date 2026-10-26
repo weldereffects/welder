@@ -222,6 +222,7 @@ ImVec2 size(const Node* n) {
         }
         return ImVec2(w, std::max(h + 6, 30.0f));
     }
+    if (n->type == "Viewer") return ImVec2(std::max(160.0f, std::ceil(ImGui::CalcTextSize(n->name.c_str()).x / 10.0f) * 10.0f + 40.0f), kNodeH);
     // Graph units are pixels at zoom 1, so measure the name at the base font size.
     float w = std::max(kNodeW, std::ceil(ImGui::CalcTextSize(n->name.c_str()).x / 10.0f) * 10.0f + 20.0f);
     const float stamp = stampHeight(n);
@@ -334,6 +335,10 @@ ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
         return ImVec2(p.x, p.y + std::min(s.y * 0.5f, 10.0f) + 14.0f * (i - Node::kKnobBase));
     }
     std::string label = n->inputLabel(i);
+    if (n->type == "Viewer") {  // ten pipes across the top, 1 on the left ... 0 on the right
+        *dir = ImVec2(0, -1);
+        return ImVec2(p.x + s.x * (i + 0.5f) / 10, p.y);
+    }
     if (n->type == "Dot") {  // pipes run through a Dot's centre, so a corner made with Dots is square
         *dir = ImVec2(0, -1);
         return ImVec2(p.x + s.x / 2, p.y + s.y / 2);
@@ -1793,7 +1798,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         Node* best = nullptr;
         float bestD = grabR;
         for (auto& up : comp.nodes) {
-            if (up->type == "Dot" || !vis(up.get()) || (isAnnotation(up.get()) && !isPrecomp(up.get()))) continue;  // a Dot's whole body is its port
+            if (up->type == "Dot" || up->type == "Viewer" || !vis(up.get()) || (isAnnotation(up.get()) && !isPrecomp(up.get()))) continue;  // a Dot's whole body is its port
             ImVec2 o = outPort(up.get());
             float d = std::hypot(o.x - sp.x, o.y - sp.y);
             if (d < bestD) { bestD = d; best = up.get(); }
@@ -1935,6 +1940,12 @@ void drawNodeGraph(App& app, UiState& ui) {
                            isMask ? 0.6f : 0.9f);
                 col = ImGui::ColorConvertFloat4ToU32(c);
             }
+            if (n->type == "Viewer" && src) {  // the A pipe (shown) in the viewer orange, B in blue
+                if (i == App::pipeIndex((int)n->params.num("a_pipe", 0, 1))) col = IM_COL32(255, 196, 70, 255);
+                else if (n->params.str("compare", "off") != "off" && i == App::pipeIndex((int)n->params.num("b_pipe", 0, -1)))
+                    col = IM_COL32(90, 170, 255, 255);
+                else col = IM_COL32(160, 160, 160, 200);
+            }
             if (g.drag == GraphState::Drag::FromInput && g.dragNode == n->name && g.dragInput == i) continue;
             Node* from = src && hiddenIn.count(src) ? hiddenIn[src] : src;  // on a collapsed backdrop: from the backdrop
             if (src && !vis(from)) src = nullptr;  // (connections across levels aren't drawn)
@@ -1980,6 +1991,10 @@ void drawNodeGraph(App& app, UiState& ui) {
                     ImVec2 ts = font->CalcTextSizeA(fs * 0.8f, FLT_MAX, 0, label.c_str());
                     dl->AddText(font, fs * 0.8f, ImVec2(a.x - ts.x - 4, a.y - ts.y * 0.5f), IM_COL32(200, 200, 230, 230), label.c_str());
                 }
+            } else if (i < n->maxInputs() && n->type == "Viewer") {  // an empty pipe: a small dot to drag from
+                ImVec2 b = S(ip);
+                dl->AddCircleFilled(b, 2.5f * std::max(0.6f, g.zoom), IM_COL32(150, 150, 150, 140));
+                handles.push_back({n, i, ImVec2(b.x, b.y - 4 * g.zoom)});
             } else if (i < n->maxInputs()) {
                 float stub = isMask ? kStub * 0.6f : kStub;
                 ImVec2 end(ip.x + dir.x * stub, ip.y + dir.y * stub);
@@ -2238,8 +2253,8 @@ void drawNodeGraph(App& app, UiState& ui) {
                 ly += sfs + 1 * g.zoom;
             }
         }
-        // Output port.
-        {
+        // Output port (a Viewer has none: it's where pipes end).
+        if (n->type != "Viewer") {
             ImVec2 o = outPort(n);
             bool hot = n == hoverOut || (g.drag == GraphState::Drag::FromOutput && g.dragNode == n->name);
             const float t = (hot ? 6.5f : 4.5f) * std::max(0.6f, g.zoom);
@@ -2247,20 +2262,11 @@ void drawNodeGraph(App& app, UiState& ui) {
             const ImU32 oc = hot ? IM_COL32(255, 196, 70, 255) : edge;
             dl->AddTriangleFilled(ImVec2(o.x - t, top), ImVec2(o.x + t, top), ImVec2(o.x, top + t * 1.1f), oc);
         }
-        // Viewer slot tags (1..9) and the viewed marker.
-        float tx = p1.x + 4 * g.zoom;
-        const float tag = 15 * g.zoom;
-        for (int k = 1; k <= 9; ++k)
-            if (app.viewerSlots[k] == n->name) {
-                char t[4];
-                std::snprintf(t, sizeof(t), "%d", k);
-                ImU32 tc = app.viewed == n->name ? IM_COL32(255, 196, 70, 255) : IM_COL32(150, 150, 150, 255);
-                dl->AddRectFilled(ImVec2(tx, p0.y), ImVec2(tx + tag, p0.y + tag), tc, 2);
-                if (drawText) dl->AddText(font, fs * 0.9f, ImVec2(tx + tag * 0.25f, p0.y), IM_COL32(20, 20, 20, 255), t);
-                tx += tag + 3 * g.zoom;
-            }
-        if (app.viewed == n->name && tx == p1.x + 4 * g.zoom)
+        // The viewed marker (the active viewer's A pipe comes from here).
+        if (app.viewed == n->name) {
+            const float tx = p1.x + 4 * g.zoom;
             dl->AddRectFilled(ImVec2(tx, p0.y), ImVec2(tx + 5 * g.zoom, p1.y), IM_COL32(255, 196, 70, 255), 1);
+        }
         // Animated (keyframes, shape keys, baked tracks or transforms): a little curve-and-key badge
         // on the node's top-left corner.
         if (!isAnnotation(n) && n->type != "Dot" && nodeAnimated(app, n)) {
@@ -2366,7 +2372,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 g.dragInput = e.bottom ? 0 : e.input;
                 g.edgeNode = e.node->name;
                 g.edgeArmed = true;
-            } else if (hoverOut || (hit && hit->type != "Dot" && !isAnnotation(hit) && mouseG.y > pos(hit).y + size(hit).y - 4)) {
+            } else if (hoverOut || (hit && hit->type != "Dot" && hit->type != "Viewer" && !isAnnotation(hit) && mouseG.y > pos(hit).y + size(hit).y - 4)) {
                 g.drag = GraphState::Drag::FromOutput;
                 g.dragNode = hoverOut ? hoverOut->name : hit->name;
             } else if (hit) {
@@ -2760,10 +2766,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("View selected", "1", false, app.selection.size() == 1)) {
-            app.viewerSlots[1] = *app.selection.begin();
-            app.setViewed(*app.selection.begin());
-        }
+        if (ImGui::MenuItem("View selected", "1", false, app.selection.size() == 1)) app.viewPipe(1, *app.selection.begin());
         if (ImGui::MenuItem("Properties", "Enter", false, !app.selection.empty()))
             for (auto& s : app.selection) app.openPanel(s);
         if (ImGui::MenuItem("Delete", "Del", false, !app.selection.empty())) graphDelete(app);

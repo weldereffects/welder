@@ -74,11 +74,12 @@ double pickScale(float zoom, bool fullRes) {
 
 void viewerUpload(ViewerState& v) {
     v.dirtyTexture = false;
+    v.hasB = false;
     const ImagePtr& img = v.res.image;
     if (!img || img->bounds.empty()) return;
     const int W = img->bounds.width(), H = img->bounds.height(), n = img->nch();
     std::array<int, 4> m = layerChannels(*img, v.layer);
-    static std::vector<float> buf;
+    static std::vector<float> buf, bb;
     buf.resize((size_t)W * H * 4);
     const float* src = img->data.data();
     float* d = buf.data();
@@ -89,32 +90,71 @@ void viewerUpload(ViewerState& v) {
         for (size_t i = 0; i < (size_t)W * H; ++i, src += n, d += 4)
             for (int k = 0; k < 4; ++k) d[k] = m[k] >= 0 ? src[m[k]] : (k == 3 ? 1.0f : 0.0f);
     }
-    viewerUploadFloat(v.tex, v.texW, v.texH, W, H, buf.data());
     v.texBounds = img->bounds;
     v.texScale = v.res.scale;
-    // the compare image, over the same pixels (difference mode: |A - B|)
+    // the B buffer, over the same pixels, in the same layer
     const ImagePtr& ib = v.res.imageB;
-    if (ib && ib->bounds == img->bounds) {
+    const bool haveB = v.compare != "off" && ib && ib->bounds == img->bounds;
+    if (haveB) {
         std::array<int, 4> mb = layerChannels(*ib, v.layer);
-        static std::vector<float> bb;
         bb.resize(buf.size());
         const int nb = ib->nch();
         const float* sb = ib->data.data();
         for (size_t i = 0; i < (size_t)W * H; ++i, sb += nb)
-            for (int k = 0; k < 4; ++k) {
-                float b = mb[k] >= 0 ? sb[mb[k]] : (k == 3 ? 1.0f : 0.0f);
-                bb[i * 4 + k] = v.compareMode == 2 ? (k == 3 ? 1.0f : std::fabs(buf[i * 4 + k] - b)) : b;
-            }
-        viewerUploadFloat(v.texB, v.texBW, v.texBH, W, H, bb.data());
+            for (int k = 0; k < 4; ++k) bb[i * 4 + k] = mb[k] >= 0 ? sb[mb[k]] : (k == 3 ? 1.0f : 0.0f);
+        const std::string& c = v.compare;
+        if (c == "side by side" || c == "above / below") {
+            viewerUploadFloat(v.texB, v.texBW, v.texBH, W, H, bb.data());
+            v.hasB = true;
+        } else {
+            // combined into the A texture
+            const double s = v.res.scale, ang = v.wipeAngle * 3.14159265358979 / 180;
+            const double nx = std::cos(ang), ny = std::sin(ang);  // the normal: B's side
+            const float mix = std::clamp(v.wipeMix, 0.0f, 1.0f);
+            const Box& bx = img->bounds;
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    const size_t i = ((size_t)y * W + x) * 4;
+                    float* a = &buf[i];
+                    const float* q = &bb[i];
+                    if (c == "wipe") {
+                        const double X = (bx.x1 + x + 0.5) / s - v.wipeC.x, Y = (bx.y1 + y + 0.5) / s - v.wipeC.y;
+                        if (X * nx + Y * ny > 0)
+                            for (int k = 0; k < 4; ++k) a[k] += (q[k] - a[k]) * mix;
+                    } else if (c == "over") {
+                        const float t = 1 - a[3];
+                        for (int k = 0; k < 4; ++k) a[k] += q[k] * t;
+                    } else if (c == "under") {
+                        const float t = 1 - q[3];
+                        for (int k = 0; k < 4; ++k) a[k] = q[k] + a[k] * t;
+                    } else if (c == "minus") {
+                        for (int k = 0; k < 3; ++k) a[k] -= q[k];
+                    } else if (c == "difference") {
+                        for (int k = 0; k < 3; ++k) a[k] = std::fabs(a[k] - q[k]);
+                        a[3] = 1;
+                    }
+                }
+        }
     }
+    viewerUploadFloat(v.tex, v.texW, v.texH, W, H, buf.data());
+}
+
+// The gap between A and B side by side, and where B sits (full-res pixels).
+static ImVec2 sideOffset(const ViewerState& v) {
+    const Format& f = v.res.format;
+    if (v.compare == "side by side") return ImVec2((float)(f.width + std::max(8, f.width / 50)), 0);
+    if (v.compare == "above / below") return ImVec2(0, -(float)(f.height + std::max(8, f.height / 50)));
+    return ImVec2(0, 0);
 }
 
 void viewerFit(ViewerState& v, ImVec2 size) {
     const Format& f = v.res.format;
     if (f.width <= 0 || f.height <= 0 || size.x < 10 || size.y < 10) return;
-    v.zoom = std::min((size.x - 40) / f.width, (size.y - 40) / f.height);
+    const ImVec2 off = sideOffset(v);
+    const float w = f.width + std::fabs(off.x), h = f.height + std::fabs(off.y);
+    v.zoom = std::min((size.x - 40) / w, (size.y - 40) / h);
     v.zoom = std::max(v.zoom, 0.01f);
-    v.pan = ImVec2(f.width * 0.5f, f.height * 0.5f);
+    v.pan = ImVec2(f.width * 0.5f + off.x * 0.5f, f.height * 0.5f + off.y * 0.5f);
     v.fitPending = false;
 }
 
@@ -216,16 +256,163 @@ static void pickSpecial(App& app, PickerState& pk, int x, int y) {
     app.message(name + (remove ? ": removed " : ": added ") + entry);
 }
 
-void drawViewer(App& app, UiState& ui) {
-    ViewerState& v = ui.viewer;
+// The viewer's pipes in the toolbar: A (shown), B (compared) and how they're compared.
+static std::string pipeLabel(Node* vn, int pipe) {
+    Node* x = vn && pipe >= 0 ? vn->input(App::pipeIndex(pipe)) : nullptr;
+    return std::to_string(pipe) + "  " + (x ? x->name : std::string("-"));
+}
+
+static void pipeCombos(App& app, Node* vn, int aPipe, int bPipe, ViewerState& v) {
+    if (!vn) {
+        ImGui::TextDisabled("(no viewer: press 1)");
+        return;
+    }
+    const std::string vname = vn->name;
+    auto list = [&](const char* id, int cur, bool isB) {
+        std::string label = (isB ? "B: " : "A: ") + (cur < 0 ? std::string("none") : pipeLabel(vn, cur));
+        ImGui::SetNextItemWidth(isB ? 120 : 130);
+        if (ImGui::BeginCombo(id, label.c_str(), ImGuiComboFlags_HeightLarge)) {
+            if (isB && ImGui::Selectable("none", cur < 0)) app.setViewerParam(vname, "b_pipe", -1);
+            for (int k = 1; k <= 10; ++k) {
+                const int pipe = k % 10;
+                if (!vn->input(App::pipeIndex(pipe))) continue;
+                if (ImGui::Selectable(pipeLabel(vn, pipe).c_str(), cur == pipe)) {
+                    if (isB) {
+                        app.setViewerParam(vname, "b_pipe", pipe);
+                        if (v.compare == "off") app.setViewerParam(vname, "compare", "wipe");
+                    } else {
+                        app.setViewerParam(vname, "a_pipe", pipe);
+                    }
+                }
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled(isB ? "Shift+1-9, 0 over the viewer or graph" : "1-9, 0: select a node, press its pipe number");
+            ImGui::EndCombo();
+        }
+    };
+    list("##apipe", aPipe, false);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("A: the pipe shown (number keys)");
+    ImGui::SameLine(0, 4);
+    list("##bpipe", v.compare == "off" ? -1 : bPipe, true);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("B: the pipe to compare against (Shift+number)");
+    ImGui::SameLine(0, 4);
+    static const char* modes[] = {"off", "wipe", "over", "under", "minus", "difference", "side by side", "above / below"};
+    const std::string cur = vn->params.str("compare", "off");
+    ImGui::SetNextItemWidth(105);
+    if (ImGui::BeginCombo("##cmpmode", cur.c_str())) {
+        for (const char* m : modes)
+            if (ImGui::Selectable(m, cur == m)) {
+                app.setViewerParam(vname, "compare", m);
+                if (std::string(m) != "off" && bPipe < 0)  // no B yet: the next connected pipe
+                    for (int step = 1; step < 10; ++step) {
+                        const int i = (App::pipeIndex(aPipe) + step) % 10;
+                        if (vn->input(i)) { app.setViewerParam(vname, "b_pipe", (i + 1) % 10); break; }
+                    }
+                v.fitPending = std::string(m) == "side by side" || std::string(m) == "above / below" || v.compare == "side by side" ||
+                               v.compare == "above / below";
+            }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("How A and B are compared (W: wipe on / off)\nwipe: drag the line's centre to move it, its handle to turn it\n"
+                          "over / under: A over B, B over A\nminus: A - B   difference: |A - B| (black: the same)\n"
+                          "side by side / above / below: next to each other");
+    if (cur == "wipe") {
+        ImGui::SameLine(0, 4);
+        float mix = (float)vn->params.num("wipe_mix", 0, 1);
+        ImGui::SetNextItemWidth(60);
+        if (ImGui::SliderFloat("##wmix", &mix, 0, 1, "mix %.2f")) app.setViewerParam(vname, "wipe_mix", mix);
+    }
+    if (cur != "off" && bPipe >= 0) {
+        ImGui::SameLine(0, 4);
+        if (ImGui::SmallButton("A<>B")) {  // swap the buffers
+            app.setViewerParam(vname, "b_pipe", aPipe);
+            app.setViewerParam(vname, "a_pipe", bPipe);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Swap A and B");
+    }
+}
+
+// The wipe: a line through its centre (drag it), a handle to turn it, A on one side, B the other.
+static void wipeHandles(App& app, Node* vn, ViewerState& v, ImDrawList* dl, const ViewXf& xf, const std::string& nodeA,
+                        const std::string& nodeB) {
+    if (!vn) return;
+    ImGuiIO& io = ImGui::GetIO();
+    const double a = v.wipeAngle * 3.14159265358979 / 180;
+    const ImVec2 c = xf.toScreen(v.wipeC.x, v.wipeC.y);
+    const ImVec2 n((float)std::cos(a), -(float)std::sin(a));  // B's side, on screen
+    const ImVec2 d(-n.y, n.x);                                 // along the line
+    const ImVec2 rh(c.x + n.x * 60, c.y + n.y * 60);
+    const float dc = std::hypot(io.MousePos.x - c.x, io.MousePos.y - c.y), dr = std::hypot(io.MousePos.x - rh.x, io.MousePos.y - rh.y);
+    if (v.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyAlt) {
+        if (dr < 9) v.wipeDrag = 2;
+        else if (dc < 10) v.wipeDrag = 1;
+    }
+    if (v.wipeDrag && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) v.wipeDrag = 0;
+    if (v.wipeDrag == 1) {
+        const ImVec2 mi = xf.toImage(io.MousePos);
+        app.setViewerParam(vn->name, "wipe_center", json::array({std::round(mi.x), std::round(mi.y)}));
+    } else if (v.wipeDrag == 2) {
+        const ImVec2 mi = xf.toImage(io.MousePos);
+        double deg = std::atan2(mi.y - v.wipeC.y, mi.x - v.wipeC.x) * 180 / 3.14159265358979;
+        if (io.KeyShift) deg = std::round(deg / 15) * 15;  // Shift: 15 degree steps
+        app.setViewerParam(vn->name, "wipe_angle", std::round(deg * 10) / 10);
+    }
+    const ImU32 w = IM_COL32(255, 255, 255, 190), hot = IM_COL32(255, 230, 40, 255);
+    dl->AddLine(ImVec2(c.x - d.x * 5000, c.y - d.y * 5000), ImVec2(c.x + d.x * 5000, c.y + d.y * 5000), w, 1.5f);
+    dl->AddCircle(c, 7, v.wipeDrag == 1 || (dc < 10 && !v.wipeDrag) ? hot : w, 0, 2);
+    dl->AddLine(c, rh, w, 1.0f);
+    dl->AddCircleFilled(rh, 5, v.wipeDrag == 2 || (dr < 9 && !v.wipeDrag) ? hot : w);
+    const std::string la = "A " + nodeA, lb = "B " + nodeB;
+    const ImVec2 sa = ImGui::CalcTextSize(la.c_str());
+    dl->AddText(ImVec2(c.x - n.x * 24 - sa.x * (n.x > 0 ? 1.0f : 0.0f) + d.x * 40, c.y - n.y * 24 + d.y * 40 - 8), IM_COL32(255, 196, 70, 230), la.c_str());
+    dl->AddText(ImVec2(c.x + n.x * 24 - ImGui::CalcTextSize(lb.c_str()).x * (n.x < 0 ? 1.0f : 0.0f) + d.x * 40, c.y + n.y * 24 + d.y * 40 - 8),
+                IM_COL32(90, 170, 255, 230), lb.c_str());
+}
+
+// One viewer panel: `vn` is its Viewer node (may be null: nothing to look through yet); `active`:
+// it is the active viewer (main renderer, overlays, tools).
+static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, bool active, const std::string& winName) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::Begin(ui.win("Viewer").c_str(), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::Begin(winName.c_str(), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
     ui.noteHover("Viewer");
+    const std::string vname = vn ? vn->name : "";
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+        ui.hoverViewer = vname;
+        // a click anywhere in another viewer's panel makes it the active one
+        if (!active && vn && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
+                              ImGui::IsMouseClicked(ImGuiMouseButton_Right)))
+            ui.activateNext = vname;
+    }
+    // what this viewer looks at: its A pipe, and B when comparing
+    std::string nodeA, nodeB;
+    int aPipe = 1, bPipe = -1;
+    if (vn) {
+        aPipe = (int)vn->params.num("a_pipe", 0, 1);
+        bPipe = (int)vn->params.num("b_pipe", 0, -1);
+        if (Node* x = vn->input(App::pipeIndex(aPipe))) nodeA = x->name;
+        if (Node* x = bPipe >= 0 ? vn->input(App::pipeIndex(bPipe)) : nullptr) nodeB = x->name;
+        const std::string cmp = nodeB.empty() ? "off" : vn->params.str("compare", "off");
+        auto wc = vn->params.vec<2>("wipe_center", 0, {v.res.format.width / 2.0, v.res.format.height / 2.0});
+        const ImVec2 c((float)wc[0], (float)wc[1]);
+        const float ang = (float)vn->params.num("wipe_angle", 0, 0), mix = (float)vn->params.num("wipe_mix", 0, 1);
+        char key[160];
+        std::snprintf(key, sizeof key, "%s|%.2f|%.2f|%.3f|%.3f", cmp.c_str(), c.x, c.y, ang, mix);
+        v.compare = cmp, v.wipeC = c, v.wipeAngle = ang, v.wipeMix = mix;
+        if (key != v.builtWith) {
+            v.builtWith = key;
+            v.dirtyTexture = true;
+        }
+        if (cmp == "off") nodeB.clear();
+    }
+    if (!active && vn) {
+        // (the request is sent below, once the region on screen is known)
+    }
 
-    // Pick up a finished render.
-    ViewResult r = app.result();
-    if (r.serial != v.shownSerial) {
+    // Pick up a finished render (the active viewer's from the main renderer, others' from their own).
+    ViewResult r = active ? app.result() : app.auxResult(vname);
+    if (r.serial > v.shownSerial && (r.node == nodeA || nodeA.empty())) {
         const bool hadImage = v.res.image && v.res.format.width > 0;
         bool firstOfNode = r.node != v.res.node || v.res.format.width != r.format.width ||
                            v.res.format.height != r.format.height;
@@ -249,7 +436,7 @@ void drawViewer(App& app, UiState& ui) {
     if (v.dirtyTexture) viewerUpload(v);
 
     // ---- 3D mode (Tab): its own toolbar and viewport
-    if (viewer3DActive(app, ui)) {
+    if (active && viewer3DActive(app, ui)) {
         ImGui::SetCursorPos(ImVec2(6, ImGui::GetCursorPosY() + 4));
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(app.viewed.empty() ? "(nothing viewed)" : app.viewed.c_str());
@@ -266,7 +453,11 @@ void drawViewer(App& app, UiState& ui) {
     // ---- toolbar
     ImGui::SetCursorPos(ImVec2(6, ImGui::GetCursorPosY() + 4));
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(app.viewed.empty() ? "(nothing viewed)" : app.viewed.c_str());
+    if (active) ImGui::TextColored(ImVec4(1.0f, 0.77f, 0.27f, 1), "%s", vname.empty() ? "Viewer" : vname.c_str());
+    else ImGui::TextDisabled("%s", vname.empty() ? "Viewer" : vname.c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(active ? "The active viewer (number keys route here)" : "Click in this viewer to make it active");
+    ImGui::SameLine(0, 10);
+    pipeCombos(app, vn, aPipe, bPipe, v);
     ImGui::SameLine(0, 16);
     ImGui::SetNextItemWidth(110);
     if (ImGui::BeginCombo("##layer", v.layer.c_str())) {
@@ -296,44 +487,12 @@ void drawViewer(App& app, UiState& ui) {
     ImGui::SameLine(0, 12);
     viewerProcessCombo(app);
     ImGui::SameLine(0, 8);
-    {
-        std::string cmp = app.compareNode();
-        ImGui::SetNextItemWidth(90);
-        std::string label = cmp.empty() ? "A/B off" : "B: " + cmp;
-        if (ImGui::BeginCombo("##compare", label.c_str(), ImGuiComboFlags_HeightLarge)) {
-            if (ImGui::Selectable("off", cmp.empty())) app.setCompareNode("");
-            ImGui::SeparatorText("compare with");
-            std::set<std::string> listed;
-            for (int i = 1; i < 10; ++i) {
-                const std::string& n = app.viewerSlots[i];
-                if (n.empty() || !app.node(n) || !listed.insert(n).second) continue;
-                std::string it = std::to_string(i) + "  " + n;
-                if (ImGui::Selectable(it.c_str(), cmp == n)) app.setCompareNode(n);
-            }
-            for (auto& n : app.selection)
-                if (app.node(n) && listed.insert(n).second && ImGui::Selectable(n.c_str(), cmp == n)) app.setCompareNode(n);
-            ImGui::SeparatorText("mode");
-            if (ImGui::RadioButton("wipe", v.compareMode == 1)) {
-                v.compareMode = 1;
-                v.dirtyTexture = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("difference", v.compareMode == 2)) {
-                v.compareMode = 2;
-                v.dirtyTexture = true;
-            }
-            ImGui::EndCombo();
-        }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("A/B compare: the viewed node (A) against another (B: a viewer input 1-9 or a selected node),\n"
-                              "with a wipe line to drag, or as the difference |A - B|");
-    }
     ImGui::SameLine(0, 12);
     if (ImGui::Button("Fit")) v.fitPending = true;
     ImGui::SameLine();
     if (ImGui::Button("1:1")) v.zoom = 1.0f;
     ImGui::SameLine();
-    if (ImGui::Button("3D")) {
+    if (ImGui::Button("3D") && active) {
         ui.v3d.on = true;
         ui.v3d.force2D = false;
     }
@@ -353,20 +512,20 @@ void drawViewer(App& app, UiState& ui) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1), "PROXY");
     }
-    if (app.viewPaused) {
+    if (active && app.viewPaused) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "PAUSED (U to update)");
     }
-    if (app.rendering()) {
+    if (active && app.rendering()) {
         ImGui::SameLine(0, 16);
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "rendering...");
     } else if (v.res.image) {
         ImGui::SameLine(0, 16);
-        ImGui::TextDisabled("%.0f ms", app.lastRenderMs());
+        ImGui::TextDisabled("%.0f ms", active ? app.lastRenderMs() : v.res.ms);
     }
 
     // ---- a viewer tool's own row (the Tracker's toolbar)
-    if (activeTracker(app)) {
+    if (active && activeTracker(app)) {
         ImGui::Spacing();
         drawTrackerToolbar(app, ui);
     }
@@ -428,13 +587,17 @@ void drawViewer(App& app, UiState& ui) {
         ImVec2 a = toImage(p0), b = toImage(p1);
         Box visible((int)std::floor(std::min(a.x, b.x)), (int)std::floor(std::min(a.y, b.y)),
                     (int)std::ceil(std::max(a.x, b.x)), (int)std::ceil(std::max(a.y, b.y)));
+        const ImVec2 off = sideOffset(v);  // side by side: what's on screen of B, in B's own pixels, too
+        if (off.x != 0 || off.y != 0)
+            visible = visible.unite(Box(visible.x1 - (int)off.x, visible.y1 - (int)off.y, visible.x2 - (int)off.x, visible.y2 - (int)off.y));
         bool covered = sc == v.reqScale && !v.reqRegion.empty() && visible.intersect(v.reqRegion) == visible;
-        if (!covered && !app.viewPaused) {
+        if (!covered && !(active && app.viewPaused)) {
             int px = std::max(64, visible.width() / 3), py = std::max(64, visible.height() / 3);
             v.reqRegion = visible.pad(px, py);
             v.reqScale = sc;
-            app.setViewWindow(v.reqRegion, sc);
+            if (active) app.setViewWindow(v.reqRegion, sc);
         }
+        if (!active && vn) app.requestAuxView(vname, nodeA, nodeB, app.frame, v.reqRegion, v.reqScale);
     }
 
     const ViewResult& res = v.res;
@@ -449,32 +612,20 @@ void drawViewer(App& app, UiState& ui) {
         const Box& b = v.texBounds;
         const double s = v.texScale;
         viewerDrawImage(dl, v.tex, toScreen(b.x1 / s, b.y2 / s), toScreen(b.x2 / s, b.y1 / s), ImVec2(0, 1), ImVec2(1, 0), dp);
-        if (res.imageB && v.texB) {
-            ImVec2 a0 = toScreen(b.x1 / s, b.y2 / s), a1 = toScreen(b.x2 / s, b.y1 / s);
-            if (v.compareMode == 2) {
-                viewerDrawImage(dl, v.texB, a0, a1, ImVec2(0, 1), ImVec2(1, 0), dp);
-            } else {
-                float wx = toScreen(v.wipe * res.format.width, 0).x;
-                dl->PushClipRect(ImVec2(std::max(wx, a0.x), std::min(a0.y, a1.y)), ImVec2(std::max(a1.x, wx), std::max(a0.y, a1.y)), true);
-                viewerDrawImage(dl, v.texB, a0, a1, ImVec2(0, 1), ImVec2(1, 0), dp);
-                dl->PopClipRect();
-                // the wipe line and its handle (drag it)
-                float top = std::min(a0.y, a1.y), bot = std::max(a0.y, a1.y);
-                ImVec2 hc(wx, (top + bot) * 0.5f);
-                dl->AddLine(ImVec2(wx, top), ImVec2(wx, bot), IM_COL32(255, 255, 255, 170), 1.5f);
-                dl->AddCircle(hc, 7, IM_COL32(255, 255, 255, 220), 0, 2);
-                dl->AddText(ImVec2(wx - 18, top + 4), IM_COL32(255, 255, 255, 200), "A");
-                dl->AddText(ImVec2(wx + 8, top + 4), IM_COL32(255, 255, 255, 200), "B");
-                ImGuiIO& wio = ImGui::GetIO();
-                if (v.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-                    std::hypot(wio.MousePos.x - hc.x, wio.MousePos.y - hc.y) < 10)
-                    v.draggingWipe = true;
-                if (v.draggingWipe) {
-                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && res.format.width > 0)
-                        v.wipe = std::clamp((float)(toImage(wio.MousePos).x / res.format.width), 0.0f, 1.0f);
-                    else v.draggingWipe = false;
-                }
-            }
+        if (v.hasB && v.texB) {  // side by side / above and below: B in its place, labelled
+            const ImVec2 off = sideOffset(v);
+            ImVec2 a0 = toScreen(b.x1 / s + off.x, b.y2 / s + off.y), a1 = toScreen(b.x2 / s + off.x, b.y1 / s + off.y);
+            viewerDrawImage(dl, v.texB, a0, a1, ImVec2(0, 1), ImVec2(1, 0), dp);
+            ImVec2 fa = toScreen(0, res.format.height), fb = toScreen(off.x, res.format.height + off.y);
+            dl->AddText(ImVec2(fa.x + 4, fa.y - 18), IM_COL32(255, 196, 70, 230), ("A  " + nodeA).c_str());
+            dl->AddText(ImVec2(fb.x + 4, fb.y - 18), IM_COL32(90, 170, 255, 230), ("B  " + nodeB).c_str());
+            ImVec2 g0 = toScreen(off.x, res.format.height + off.y), g1 = toScreen(off.x + res.format.width, off.y);
+            dl->AddRect(g0, g1, IM_COL32(90, 170, 255, 160));
+        } else if (v.compare == "wipe" && res.imageB && res.format.width > 0) {
+            wipeHandles(app, vn, v, dl, ViewXf{center, v.pan, v.zoom}, nodeA, nodeB);
+        } else if (v.compare != "off" && res.imageB) {
+            const std::string t = "A " + v.compare + " B";
+            dl->AddText(ImVec2(p0.x + 10, p0.y + 8), IM_COL32(255, 255, 255, 170), t.c_str());
         }
         // Format box and bbox (O toggles them).
         if (v.overlays) {
@@ -498,7 +649,7 @@ void drawViewer(App& app, UiState& ui) {
         }
         }
     } else {
-        const char* msg = app.viewed.empty() ? "Select a node and press 1 to view it" : "";
+        const char* msg = nodeA.empty() ? "Select a node and press 1 to view it" : "";
         if (!res.error.empty()) msg = "";
         ImVec2 ts = ImGui::CalcTextSize(msg);
         dl->AddText(ImVec2(center.x - ts.x / 2, center.y - ts.y / 2), IM_COL32(120, 120, 120, 255), msg);
@@ -507,7 +658,7 @@ void drawViewer(App& app, UiState& ui) {
     // drag averages a box. Takes the mouse from the roto tools while active.
     PickerState& pk = ui.picker;
     if (pk.active && !app.node(pk.node)) pk.active = false;
-    if (pk.active) {
+    if (active && pk.active) {
         ImVec2 mi = toImage(io.MousePos);
         if (v.hovered && ImGui::IsKeyPressed(ImGuiKey_Escape)) pk.active = false;
         if (v.hovered && !io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -588,8 +739,9 @@ void drawViewer(App& app, UiState& ui) {
         dl->AddText(ImVec2(p0.x + 10, p1.y - 22), IM_COL32(255, 210, 120, 255), hint);
     }
 
-    // Roto shapes and tools (when a Roto node's properties are open).
-    if (v.overlays) {
+    // Roto shapes and tools (when a Roto node's properties are open): in the active viewer.
+    if (!active) {
+    } else if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawRotoViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
@@ -679,6 +831,86 @@ void drawViewer(App& app, UiState& ui) {
         ImGui::EndPopup();
     }
     ImGui::End();
+}
+
+void activateViewer(App& app, UiState& ui, const std::string& name) {
+    if (name.empty() || !app.viewerNode(name)) return;
+    if (name != ui.viewerOf) {
+        if (!ui.viewerOf.empty()) ui.otherViewers[ui.viewerOf] = ui.viewer;
+        auto it = ui.otherViewers.find(name);
+        if (it != ui.otherViewers.end()) {
+            ui.viewer = it->second;
+            ui.otherViewers.erase(it);
+        } else {
+            ViewerState fresh;
+            fresh.layer = ui.viewer.layer;
+            ui.viewer = fresh;
+        }
+        ui.viewerOf = name;
+        ui.viewer.shownSerial = 0;  // the main renderer's results now
+        ui.viewer.reqRegion = Box();
+        ui.viewer.reqScale = 0;
+    }
+    if (app.activeViewer != name) {
+        app.activeViewer = name;
+        app.syncViewer();
+    }
+}
+
+// Every viewer panel: the first Viewer node in the main "Viewer" panel, the others (Ctrl+I) in
+// panels of their own, docked beside it when they first appear.
+void drawViewer(App& app, UiState& ui) {
+    app.syncViewer();
+    auto viewers = app.viewerNodes();
+    if (!ui.activateNext.empty()) {
+        activateViewer(app, ui, ui.activateNext);
+        ui.activateNext.clear();
+    }
+    if (!app.viewerNode() && !viewers.empty()) app.activeViewer = viewers.front()->name;
+    if (ui.viewerOf != app.activeViewer && app.viewerNode()) {
+        if (ui.viewerOf.empty()) ui.viewerOf = app.activeViewer;  // the first frame: no swap
+        else activateViewer(app, ui, app.activeViewer);
+    }
+    // forget the states of viewers that are gone
+    for (auto it = ui.otherViewers.begin(); it != ui.otherViewers.end();)
+        it = app.viewerNode(it->first) ? std::next(it) : ui.otherViewers.erase(it);
+    ui.hoverViewer.clear();
+    const bool maxed = ui.maximized == "Viewer";
+    // the main panel (maximized: the active viewer takes the screen)
+    Node* primary = viewers.empty() ? nullptr : viewers.front();
+    Node* mainNode = maxed && app.viewerNode() ? app.viewerNode() : primary;
+    const bool mainActive = !mainNode || mainNode->name == app.activeViewer;
+    drawViewerPanel(app, ui, mainActive ? ui.viewer : ui.otherViewers[mainNode->name], mainNode, mainActive, ui.win("Viewer"));
+    if (maxed) return;
+    ImGuiWindow* mainWin = ImGui::FindWindowByName("Viewer");
+    // Viewer menu > Split: the viewer area divided evenly between the viewers, side by side or stacked
+    if (ui.splitViewers && mainWin && mainWin->DockId && viewers.size() > 1) {
+        const ImGuiDir dir = ui.splitViewers == 1 ? ImGuiDir_Right : ImGuiDir_Down;
+        const size_t n = viewers.size();
+        ImGuiID cur = mainWin->DockId;
+        for (size_t i = 1; i < n; ++i) {
+            ImGuiID at = 0, rest = 0;  // `at`: the side the rest of the viewers go; `rest`: this slot
+            ImGui::DockBuilderSplitNode(cur, dir, (float)(n - i) / (float)(n - i + 1), &at, &rest);
+            ImGui::DockBuilderDockWindow(i == 1 ? "Viewer" : (viewers[i - 1]->name + "###viewer_" + viewers[i - 1]->name).c_str(), rest);
+            cur = at;
+        }
+        ImGui::DockBuilderDockWindow((viewers[n - 1]->name + "###viewer_" + viewers[n - 1]->name).c_str(), cur);
+        ImGui::DockBuilderFinish(mainWin->DockId);
+        ui.viewer.fitPending = true;
+        for (auto& [k, st] : ui.otherViewers) st.fitPending = true;
+    }
+    ui.splitViewers = 0;
+    for (size_t i = 1; i < viewers.size(); ++i) {
+        Node* vn = viewers[i];
+        const std::string title = vn->name + "###viewer_" + vn->name;
+        if (!ImGui::FindWindowByName(title.c_str()) || ui.newViewer == vn->name) {  // first time: a tab beside the main viewer
+            if (mainWin && mainWin->DockId) ImGui::SetNextWindowDockID(mainWin->DockId, ImGuiCond_Always);
+            ImGui::SetNextWindowFocus();
+            if (ui.newViewer == vn->name) ui.newViewer.clear();
+        }
+        const bool act = vn->name == app.activeViewer;
+        drawViewerPanel(app, ui, act ? ui.viewer : ui.otherViewers[vn->name], vn, act, title);
+    }
 }
 
 }  // namespace strata::ui

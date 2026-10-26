@@ -1185,6 +1185,25 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(sf, 32, 40, "A"), 0, 1e-6);  // off the ribbon
     });
 
+    test("Viewer: renders its A pipe; exports to .nk as a Viewer with its pipes and input_number", [] {
+        auto c = comp(json::array({
+            {{"name", "A"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.4, 0.6, 1}}}}},
+            {{"name", "B"}, {"type", "Constant"}, {"params", {{"color", {0.9, 0.1, 0.1, 1}}}}},
+            {{"name", "Viewer1"}, {"type", "Viewer"}, {"inputs", {"A", "B"}}, {"params", {{"a_pipe", 2}, {"b_pipe", 1}}}},
+        }));
+        auto v = render(*c, "Viewer1");
+        CHECK_NEAR(px(v, 5, 5, "R"), 0.9, 1e-6);  // pipe 2 is B
+        Node* vn = c->find("Viewer1");
+        vn->params.data["a_pipe"] = 1;
+        auto v1 = render(*c, "Viewer1");
+        CHECK_NEAR(px(v1, 5, 5, "R"), 0.2, 1e-6);
+        CHECK(vn->inputLabel(0) == "1" && vn->inputLabel(9) == "0");
+        std::string t = nk::exportNodes(c->toJson()["nodes"]).text;
+        CHECK(t.find("Viewer {") != std::string::npos);
+        CHECK(t.find("inputs 2") != std::string::npos);
+        CHECK(t.find("input_number 0") != std::string::npos);
+    });
+
     test("KillOutline: the light rim of a key takes the colour inside it; alpha and the core stay", [] {
         const std::string d = "hypot(x - 32, y - 24)", al = "clamp((14 - " + d + ") / 3)";
         auto c = comp(json::array({

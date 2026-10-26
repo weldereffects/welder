@@ -388,7 +388,9 @@ void drawTimeline(App& app, UiState& ui) {
             dl->AddLine(ImVec2(x, markTop + 2), ImVec2(x + d, markTop + 2), kAccent, 2);
         }
     }
-    // the cache line: frames in the RAM playback cache
+    // the cache line: frames in the RAM playback cache (green), on the disk cache (amber, under it)
+    for (int cf : app.diskCachedFrames(first, last))
+        dl->AddRectFilled(ImVec2(xOf(cf) - ppf * 0.5f, tickTop - 2), ImVec2(xOf(cf) + ppf * 0.5f + 0.5f, tickTop), IM_COL32(220, 150, 40, 220));
     for (int cf : app.cachedFrames())
         if (cf >= first && cf <= last)
             dl->AddRectFilled(ImVec2(xOf(cf) - ppf * 0.5f, tickTop - 4), ImVec2(xOf(cf) + ppf * 0.5f + 0.5f, tickTop - 2), kCache);

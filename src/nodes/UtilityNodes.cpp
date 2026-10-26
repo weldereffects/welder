@@ -166,6 +166,7 @@ void registerLensFlare();
 void registerKeyingExtraNodes();
 void registerSplineFlow();
 void registerToolkitNodes();
+void registerViewerNode();
 void registerColorExtraNodes();
 void registerFilterExtraNodes();
 void registerTimeExtraNodes();
@@ -218,6 +219,7 @@ void registerBuiltinNodes() {
     registerKeyingExtraNodes();
     registerSplineFlow();
     registerToolkitNodes();
+    registerViewerNode();
     registerColorExtraNodes();
     registerFilterExtraNodes();
     registerTimeExtraNodes();

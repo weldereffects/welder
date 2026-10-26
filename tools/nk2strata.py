@@ -2840,8 +2840,13 @@ class Translator:
             self.translated += 1
             return self.emit(nk_name, klass, "Dot", main[:1], {}, k)
 
-        if klass == "Viewer":
-            return None  # UI-only
+        if klass == "Viewer":  # its pipes (1-9, 0) and the one shown
+            self.translated += 1
+            params = {"a_pipe": 1, "b_pipe": -1, "compare": "off", "wipe_angle": 0.0, "wipe_mix": 1.0}
+            num = str(k.get("input_number", "0"))
+            if is_number(num):
+                params["a_pipe"] = (int(float(num)) + 1) % 10
+            return self.emit(nk_name, klass, "Viewer", main[:10], params, k)
         if klass in ("BackdropNode", "StickyNote"):
             label = strip_html(str(k.get("label", "")))
             params = {"label": label}

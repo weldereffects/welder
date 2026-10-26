@@ -813,12 +813,35 @@ THE EDITOR
     (.cube / .3dl / .cdl / .clf LUTs), OCIOCDLTransform, Log2Lin (Cineon log
     DPX scans: read them raw, then Log2Lin).
 
-  VIEWER COMPARE AND PLAYBACK
-    A/B (viewer toolbar): compare with another viewer slot or a selected
-    node, as a wipe (drag the divider's handle) or a difference.
+  VIEWER NODES, PIPES AND COMPARE
+    A viewer looks through a Viewer node in the node graph: ten pipes,
+    numbered 1-9 and 0 like the keys. Select a node and press a number to
+    connect that pipe and view it; with nothing selected the number switches
+    pipes (zoom and position stay). Backspace: the previous connected pipe.
+    The shown pipe (A) is orange in the graph, the B pipe blue.
+    Shift+number: the B buffer to compare against (again: compare off).
+    Compare (toolbar, Viewer menu, W for the wipe):
+      wipe           A one side of a line, B the other; drag its centre to
+                     move it, its handle to turn it (Shift: 15 degree steps);
+                     mix fades B in
+      over / under   A over B or B over A, in the viewer only
+      minus          A - B;   difference |A - B| (black: identical)
+      side by side, above / below   A and B next to each other
+    A<>B swaps the buffers. The pipes, A / B and wipe are saved with the
+    script, and .nk Viewers come across with their pipes.
+  MORE THAN ONE VIEWER
+    Ctrl+I (or Viewer > New Viewer): another Viewer node with its own panel,
+    a tab beside the first; drag the tab to split the screen, or Viewer >
+    Split Viewers Side by Side / Stacked. Each has its own pipes, zoom,
+    channels and compare. Click in a viewer to make it the active one: number
+    keys route into it, it plays from the RAM cache, tools draw their handles
+    there. Space or ` maximises the viewer under the mouse.
+
+  VIEWER PLAYBACK
     cache (next to the fps): renders the play range into RAM in the
     background so it plays in real time. Played frames are kept too; the
-    green line on the timeline shows what's cached. Any edit makes them stale.
+    green line on the timeline shows what's cached, the amber line under it
+    what's on the disk cache. Any edit makes them stale.
     Disk cache (Render > Disk Cache, 20 GB by default, in
     %LOCALAPPDATA%\Welder\cache): frames that took a while to render are also
     written to disk, keyed by what they contain, so they come back after an
