@@ -3117,6 +3117,11 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
         drawRotoPanel(app, ui, n);
         shown.insert("shapes");
         shown.insert("edit_b");
+    } else if (n->type == "SplineFlow" && def) {
+        drawKnobs(c, *def, mainTabKey);
+        for (auto& k : def->knobs) shown.insert(k.name);
+        drawRotoPanel(app, ui, n);
+        shown.insert("shapes");
     } else if (n->type == "Roto" || n->type == "RotoPaint") {
         drawRotoPanel(app, ui, n);
         for (const char* k : {"shapes", "output", "premultiply", "motionblur", "shutter", "shutter_offset"}) shown.insert(k);

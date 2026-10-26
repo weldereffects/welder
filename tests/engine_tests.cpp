@@ -1060,6 +1060,131 @@ int main(int argc, char** argv) {
         CHECK_NEAR(st->inputTime(0, 9), 9, 0);
     });
 
+    test("Finishing tools: flare, keying, flow and everyday 2D nodes render the same in any tiles and do something", [] {
+        const std::string disc = "clamp((14 - hypot(x - 48, y - 32)) / 2)";
+        json path = json::array({{{"name", "P"}, {"kind", "bezier"}, {"closed", true},
+                                  {"points", json::array({{10, 30, 0, 0, 0, 0, 0, 0}, {50, 40, 0, 0, 0, 0, 0, 0}, {86, 28, 0, 0, 0, 0, 0, 0}})}}});
+        json nodes = json::array({
+            {{"name", "Src"}, {"type", "Ramp"}, {"params", {{"p0", {0, 0}}, {"p1", {96, 64}}, {"color0", {0.1, 0.2, 0.4, 1}}, {"color", {1.6, 0.9, 0.3, 1}}}}},
+            {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0.3, 0.5, 0.25, 1}}}}},
+            {{"name", "Fg"}, {"type", "Expression"},
+             {"params", {{"channel0", "rgb"}, {"expr0", "(0.7 + 0.2 * sin(x * 0.3)) * " + disc}, {"channel1", "A"}, {"expr1", disc}}}},
+            {{"name", "GS"}, {"type", "Expression"},
+             {"params", {{"channel0", "R"}, {"expr0", "0.15 + 0.4 * " + disc}, {"channel1", "G"}, {"expr1", "0.55 + 0.002 * x - 0.3 * " + disc},
+                         {"channel2", "B"}, {"expr2", "0.2"}, {"channel3", "A"}, {"expr3", "1"}}}},
+        });
+        // name, type, inputs, params
+        std::vector<std::tuple<std::string, std::string, json, json>> n = {
+            {"LensFlare", "LensFlare", json::array({"Src"}), {{"position", {30, 40}}}},
+            {"LensFlareAna", "LensFlare", json::array({"Src", "Fg"}), {{"position", {40, 30}}, {"style", "anamorphic"}, {"flicker", 0.5}}},
+            {"SpillSuppress", "SpillSuppress", json::array({"GS", "Bg"}), {{"respill", "background"}, {"hue_shift", 10}}},
+            {"ScreenClean", "ScreenClean", json::array({"GS"}), {{"smoothness", 8}}},
+            {"LightWrap", "LightWrap", json::array({"Src", "Fg"}), json::object()},
+            {"Bandpass", "Bandpass", json::array({"Src"}), json::object()},
+            {"ChromaBlur", "ChromaBlur", json::array({"Fg"}), json::object()},
+            {"ErodeFine", "ErodeFine", json::array({"Fg"}), {{"size", -2.5}, {"softness", 1}}},
+            {"MatteRefine", "MatteRefine", json::array({"Fg"}), {{"chew", 0.5}}},
+            {"SplineFlow", "SplineFlow", json::array({"Src", "Bg"}), {{"shapes", path}, {"width", 20}}},
+            {"Halation", "Halation", json::array({"Src"}), {{"size", 6}}},
+            {"Diffusion", "Diffusion", json::array({"Src"}), {{"size", 4}}},
+            {"HighlightSuppress", "HighlightSuppress", json::array({"Src"}), json::object()},
+            {"DeHaze", "DeHaze", json::array({"Src"}), {{"patch", 5}, {"refine", 6}}},
+            {"NaNKiller", "NaNKiller", json::array({"Src"}), json::object()},
+            {"MirrorBorder", "MirrorBorder", json::array({"Src"}), {{"border", 20}}},
+            {"Deflicker", "Deflicker", json::array({"Src"}), {{"size", 10}}},
+            {"HeatWave", "HeatWave", json::array({"Src"}), json::object()},
+            {"Rain", "Rain", json::array({"Src"}), {{"density", 4}}},
+            {"LensDroplets", "LensDroplets", json::array({"Src"}), {{"size", 14}, {"density", 1.5}}},
+            {"Denoise", "Denoise", json::array({"Src"}), {{"temporal_frames", 0}, {"fine", 0.5}, {"coarse", 0.2}, {"sharpen", 0.5}}},
+        };
+        for (auto& [name, type, in, p] : n) nodes.push_back({{"name", name}, {"type", type}, {"inputs", in}, {"params", p}});
+        auto c = comp(nodes, 96, 64);
+        auto src = render(*c, "Src", 4);
+        for (auto& [name, type, in, p] : n) {
+            auto a = render(*c, name, 4), b = render(*c, name, 4, 16);
+            double d = 0, diff = 0;
+            for (size_t i = 0; i < a->data.size() && i < b->data.size(); ++i) d = std::max(d, (double)std::fabs(a->data[i] - b->data[i]));
+            for (int y = 0; y < 64; ++y)
+                for (int x = 0; x < 96; ++x) diff += std::fabs(px(a, x, y, "R") - px(src, x, y, "R")) + std::fabs(px(a, x, y, "G") - px(src, x, y, "G"));
+            if (d > 1e-4) std::printf("  tiles differ: %s (%g)\n", name.c_str(), d);
+            CHECK_NEAR(d, 0.0, 1e-4);
+            if (name != "NaNKiller" && name != "MirrorBorder" && name != "Deflicker" && name != "ChromaBlur" && name != "ErodeFine" &&
+                name != "MatteRefine" && name != "SpillSuppress" && name != "ScreenClean") {
+                if (diff <= 1e-3) std::printf("  no change: %s\n", name.c_str());
+                CHECK(diff > 1e-3);  // it changed the picture
+            }
+        }
+    });
+
+    test("Finishing tools: what each one is for", [] {
+        const std::string disc = "clamp((14 - hypot(x - 32, y - 24)) / 2)";
+        auto c = comp(json::array({
+            {{"name", "Spill"}, {"type", "Constant"}, {"params", {{"color", {0.3, 0.6, 0.2, 1}}}}},
+            {{"name", "SS"}, {"type", "SpillSuppress"}, {"inputs", {"Spill"}}},
+            {{"name", "SSM"}, {"type", "SpillSuppress"}, {"inputs", {"Spill"}}, {"params", {{"method", "max"}}}},
+            {{"name", "SSL"}, {"type", "SpillSuppress"}, {"inputs", {"Spill"}}, {"params", {{"respill", "luminance"}}}},
+            {{"name", "Fg"}, {"type", "Expression"}, {"params", {{"channel0", "rgba"}, {"expr0", disc}}}},
+            {{"name", "EF"}, {"type", "ErodeFine"}, {"inputs", {"Fg"}}, {"params", {{"size", -3}}}},
+            {{"name", "EG"}, {"type", "ErodeFine"}, {"inputs", {"Fg"}}, {"params", {{"size", 3}}}},
+            {{"name", "Bright"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},
+            {{"name", "LW"}, {"type", "LightWrap"}, {"inputs", {"Bright", "Fg"}}, {"params", {{"output", "wrap only"}, {"wrap_width", 4}}}},
+            {{"name", "Ramp"}, {"type", "Ramp"}, {"params", {{"p0", {0, 0}}, {"p1", {64, 0}}}}},
+            {{"name", "MB"}, {"type", "MirrorBorder"}, {"inputs", {"Ramp"}}, {"params", {{"border", 10}}}},
+            {{"name", "Bad"}, {"type", "Expression"}, {"params", {{"channel0", "rgba"}, {"expr0", "x == 10 && y == 10 ? sqrt(-1) : 0.5"}}}},
+            {{"name", "NK"}, {"type", "NaNKiller"}, {"inputs", {"Bad"}}},
+            {{"name", "Flick"}, {"type", "Expression"}, {"params", {{"channel0", "rgba"}, {"expr0", "0.5 * (frame % 2 == 0 ? 1.3 : 0.7)"}}}},
+            {{"name", "DF"}, {"type", "Deflicker"}, {"inputs", {"Flick"}}, {"params", {{"mode", "global"}, {"frames", 2}}}},
+            {{"name", "LF"}, {"type", "LensFlare"}, {"inputs", json::array({nullptr, "Bright"})}, {"params", {{"position", {32, 24}}}}},
+            {{"name", "LF0"}, {"type", "LensFlare"}, {"params", {{"position", {32, 24}}}}},
+            {{"name", "Den"}, {"type", "Denoise"}, {"inputs", {"Ramp"}}, {"params", {{"temporal_frames", 0}, {"fine", 0}, {"medium", 0}, {"coarse", 0}}}},
+            {{"name", "SF"}, {"type", "SplineFlow"}, {"inputs", {"Ramp"}},
+             {"params", {{"shapes", json::array({{{"name", "P"}, {"kind", "bezier"}, {"closed", false},
+                                                  {"points", json::array({{4, 24, 0, 0, 0, 0, 0, 0}, {60, 24, 0, 0, 0, 0, 0, 0}})}}})},
+                         {"width", 10}, {"speed", 0}, {"taper_start", 0}, {"taper_end", 0}}}},
+        }));
+        auto ss = render(*c, "SS"), sm = render(*c, "SSM"), sl = render(*c, "SSL");
+        CHECK_NEAR(px(ss, 5, 5, "G"), 0.25, 1e-5);  // limited to (r + b) / 2
+        CHECK_NEAR(px(sm, 5, 5, "G"), 0.3, 1e-5);   // limited to max(r, b)
+        CHECK_NEAR(px(ss, 5, 5, "R"), 0.3, 1e-5);
+        CHECK(px(sl, 5, 5, "R") > 0.3f && px(sl, 5, 5, "B") > 0.2f);  // the spill's brightness put back as grey
+        auto fg = render(*c, "Fg"), ef = render(*c, "EF"), eg = render(*c, "EG");
+        // the 0.5 point (radius 13) moves 3 px in / out
+        CHECK_NEAR(px(fg, 32 + 13, 24, "A"), 0.5, 1e-5);
+        CHECK(px(ef, 32 + 9, 24, "A") > 0.6f && px(ef, 32 + 11, 24, "A") < 0.4f);
+        CHECK(px(ef, 32 + 13, 24, "A") < 0.05f);
+        CHECK(px(eg, 32 + 15, 24, "A") > 0.6f && px(eg, 32 + 17, 24, "A") < 0.4f);
+        CHECK_NEAR(px(ef, 32, 24, "A"), 1, 1e-4);
+        auto lw = render(*c, "LW");
+        CHECK(px(lw, 32 + 13, 24, "R") > 0.05f);    // the edge band glows with the bg
+        CHECK_NEAR(px(lw, 32, 24, "R"), 0, 0.02);   // the middle doesn't
+        CHECK_NEAR(px(lw, 5, 5, "R"), 0, 1e-6);     // outside A: nothing
+        auto rp = render(*c, "Ramp"), mb = render(*c, "MB");
+        Node* mbn = c->find("MB");
+        EngineOptions o;
+        Engine e(o);
+        auto mbo = e.renderRegion(mbn, 1, Box(-10, 0, 74, 48));
+        CHECK_NEAR(mbo->at(-1, 10, mbo->ch("R")), rp->at(0, 10, rp->ch("R")), 1e-6);
+        CHECK_NEAR(mbo->at(-5, 10, mbo->ch("R")), rp->at(4, 10, rp->ch("R")), 1e-6);
+        CHECK_NEAR(mbo->at(64, 10, mbo->ch("R")), rp->at(63, 10, rp->ch("R")), 1e-6);
+        (void)mb;
+        auto nk = render(*c, "NK"), bad = render(*c, "Bad");
+        CHECK(std::isnan(px(bad, 10, 10, "R")));
+        CHECK_NEAR(px(nk, 10, 10, "R"), 0.5, 1e-6);
+        auto f4 = render(*c, "DF", 4), f5 = render(*c, "DF", 5);
+        CHECK_NEAR(px(f4, 5, 5, "R"), px(f5, 5, 5, "R"), 0.08);  // was 0.65 vs 0.35
+        auto lf = render(*c, "LF"), lf0 = render(*c, "LF0");
+        CHECK(px(lf0, 32, 24, "R") > 0.5f);
+        CHECK_NEAR(px(lf, 32, 24, "R"), 0, 1e-6);  // fully occluded: no flare
+        auto den = render(*c, "Den");
+        double dd = 0;
+        for (size_t i = 0; i < den->data.size(); ++i) dd = std::max(dd, (double)std::fabs(den->data[i] - rp->data[i]));
+        CHECK_NEAR(dd, 0.0, 1e-4);  // nothing of any size removed: the source
+        auto sf = render(*c, "SF");
+        CHECK_NEAR(px(sf, 32, 24, "R"), px(rp, 32, 24, "R"), 0.03);  // the ramp along the path: half way, the middle
+        CHECK_NEAR(px(sf, 32, 24, "A"), px(rp, 32, 24, "A"), 0.03);
+        CHECK_NEAR(px(sf, 32, 40, "A"), 0, 1e-6);  // off the ribbon
+    });
+
     test("KillOutline: the light rim of a key takes the colour inside it; alpha and the core stay", [] {
         const std::string d = "hypot(x - 32, y - 24)", al = "clamp((14 - " + d + ") / 3)";
         auto c = comp(json::array({

@@ -137,6 +137,20 @@ THE EDITOR
                  FlowLines, PatternGrid, NoisePattern, CodeRain - over the bg input
     Random choices follow "seed" and "changes per second".
 
+  FINISHING TOOLS (lens flares, keying helpers, everyday fixes)
+    LensFlare     a flare designer: glow, halo, rainbow ring, starburst, anamorphic streak, iris
+                  ghosts; styles (classic, anamorphic, sun, sci-fi, spotlight, subtle); an occluder
+                  input dims it when something passes in front of the light
+    Keying        SpillSuppress (several despill methods, hue shift, protect skin, respill from the
+                  background), ScreenClean (evens out an uneven screen; builds its own clean plate),
+                  MatteRefine (core + soft edge, chew for hair), ErodeFine (sub-pixel), ChromaBlur
+    LightWrap     A over B with the background's light wrapped around A's edges (Merge group)
+    SplineFlow    an image laid along roto paths like a ribbon and flowed along them (energy, trails)
+    Denoise       now also: measure the noise in a sample box, fine / medium / coarse strength, sharpen
+    Look          Halation, Diffusion (mist), HighlightSuppress, DeHaze, Bandpass
+    Fixes         NaNKiller, MirrorBorder (fills overscan), Deflicker
+    Weather       HeatWave (shimmer), Rain, LensDroplets (water on the lens)
+
   STYLIZE (the Sty group in the toolbar, or Tab)
     Distort       pixels pushed along the slope of the image's brightness (or a map input's)
     DistortRGB    the same, a different strength / direction per channel: colour splits

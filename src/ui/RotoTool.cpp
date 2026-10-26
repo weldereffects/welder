@@ -431,7 +431,7 @@ Node* activeToolNode(App& app) {
     // The most recently opened panel among the nodes with viewer tools.
     for (auto& p : app.panels)
         if (Node* n = app.node(p))
-            if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "Tracker" || n->type == "PlanarTracker" ||
+            if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "SplineFlow" || n->type == "Tracker" || n->type == "PlanarTracker" ||
                 n->type == "CameraTracker" || n->type == "FlowField" || n->type == "TrackMask" || n->type == "Transform" || n->type == "Position" || n->type == "CornerPin2D" ||
                 n->type == "TransformMasked" || n->type == "GridWarp")
                 return n;
@@ -440,7 +440,7 @@ Node* activeToolNode(App& app) {
 
 Node* activeRoto(App& app) {
     Node* n = activeToolNode(app);
-    return n && (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp") ? n : nullptr;
+    return n && (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "SplineFlow") ? n : nullptr;
 }
 
 void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered) {
@@ -1267,7 +1267,7 @@ void drawRotoPanel(App& app, UiState& ui, Node* n) {
         });
     };
 
-    if (n->type != "SplineWarp") {  // (a SplineWarp's curves make no matte)
+    if (n->type != "SplineWarp" && n->type != "SplineFlow") {  // (their curves make no matte)
     row("output");
     {
         std::string out = n->params.str("output", paint ? "rgba" : "alpha");

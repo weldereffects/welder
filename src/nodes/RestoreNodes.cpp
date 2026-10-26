@@ -84,6 +84,21 @@ YCC toYCC(const Image& img) {
     return o;
 }
 
+// The noise's standard deviation inside a box of a plane (a flat area the user picked).
+float boxSigma(const std::vector<float>& p, int W, const Box& b) {
+    std::vector<float> hp;
+    for (int y = b.y1; y < b.y2; ++y)
+        for (int x = b.x1; x < b.x2; ++x) {
+            float mean = 0;
+            for (int j = -1; j <= 1; ++j)
+                for (int i = -1; i <= 1; ++i) mean += p[(size_t)(y + j) * W + x + i];
+            hp.push_back(std::fabs(p[(size_t)y * W + x] - mean / 9));
+        }
+    if (hp.empty()) return 0;
+    std::nth_element(hp.begin(), hp.begin() + hp.size() / 2, hp.end());
+    return hp[hp.size() / 2] / (0.6745f * 0.9428f);
+}
+
 // The noise's standard deviation in a plane: the median absolute high-pass on its flatter half.
 float noiseSigma(const std::vector<float>& p, int W, int H) {
     if (W < 8 || H < 8) return 0;
@@ -159,9 +174,20 @@ private:
         YCC c = toYCC(*cur);
         // the noise, measured (or set by hand)
         float sY = noiseSigma(c.y, W, H), sC = 0.5f * (noiseSigma(c.cb, W, H) + noiseSigma(c.cr, W, H));
-        if (params.str("noise_level", "auto") == "manual") {
+        const std::string level = params.str("noise_level", "auto");
+        if (level == "manual") {
             sY = (float)params.num("noise_luma", f, 0.02);
             sC = (float)params.num("noise_chroma", f, 0.02);
+        } else if (level == "sample box") {  // measured where the user says the picture is flat
+            const double sc = e.scale();
+            auto b = params.vec<4>("sample_box", f, {0, 0, 0, 0});
+            Box sb((int)std::floor(std::min(b[0], b[2]) * sc) - D.x1, (int)std::floor(std::min(b[1], b[3]) * sc) - D.y1,
+                   (int)std::ceil(std::max(b[0], b[2]) * sc) - D.x1, (int)std::ceil(std::max(b[1], b[3]) * sc) - D.y1);
+            sb = sb.intersect(Box(1, 1, W - 1, H - 1));
+            if (sb.width() >= 6 && sb.height() >= 6) {
+                sY = boxSigma(c.y, W, sb);
+                sC = 0.5f * (boxSigma(c.cb, W, sb) + boxSigma(c.cr, W, sb));
+            }
         }
         const float lumaS = (float)params.num("luma", f, 1), chromaS = (float)params.num("chroma", f, 1.5);
 
@@ -343,11 +369,51 @@ private:
                     for (int i = 0; i < 3; ++i) {
                         if (ch[i] < 0) continue;
                         float v = s[ch[i]] + (res[i] - s[ch[i]]) * amount;
-                        o[ch[i]] = showNoise ? s[ch[i]] - v : v;  // noise view: what was taken out
+                        o[ch[i]] = v;
                     }
                 }
         });
+        bandsAndSharpen(*cur, *out, f, e.scale());
+        if (showNoise)  // what was taken out
+            for (size_t q = 0; q < (size_t)W * H; ++q)
+                for (int c2 : {iR, iG, iB})
+                    if (c2 >= 0) out->data[q * nc + c2] = cur->data[q * nc + c2] - out->data[q * nc + c2];
         return out;
+    }
+
+    // Per-detail-size strength: the removed noise split into fine / medium / coarse bands, each
+    // scaled; then an unsharp mask.
+    void bandsAndSharpen(const Image& cur, Image& out, double f, double sc) {
+        const float fb = (float)std::max(0.0, params.num("fine", f, 1)), mb = (float)std::max(0.0, params.num("medium", f, 1));
+        const float cb = (float)std::max(0.0, params.num("coarse", f, 1));
+        const float sh = (float)std::max(0.0, params.num("sharpen", f, 0));
+        const int iR = out.ch("R"), iG = out.ch("G"), iB = out.ch("B"), nc = out.nch();
+        if (iR < 0 || iG < 0 || iB < 0) return;
+        const Box& D = out.bounds;
+        const size_t N = (size_t)D.width() * D.height();
+        const int chs[3] = {iR, iG, iB};
+        if (fb != 1 || mb != 1 || cb != 1) {
+            Image r(D, {"R", "G", "B"}), b1(D, {"R", "G", "B"}), b2(D, {"R", "G", "B"});
+            for (size_t q = 0; q < N; ++q)
+                for (int k = 0; k < 3; ++k) r.data[q * 3 + k] = cur.data[q * nc + chs[k]] - out.data[q * nc + chs[k]];
+            blurSum(r, b1, {{2.5 * sc, 2.5 * sc, 1}}, {0, 1, 2});
+            blurSum(r, b2, {{9 * sc, 9 * sc, 1}}, {0, 1, 2});
+            for (size_t q = 0; q < N; ++q)
+                for (int k = 0; k < 3; ++k) {
+                    const size_t i = q * 3 + k;
+                    const float rem = (r.data[i] - b1.data[i]) * fb + (b1.data[i] - b2.data[i]) * mb + b2.data[i] * cb;
+                    out.data[q * nc + chs[k]] = cur.data[q * nc + chs[k]] - rem;
+                }
+        }
+        if (sh > 0) {
+            const double s = std::max(0.3, params.num("sharpen_size", f, 1.5)) * sc;
+            Image o3(D, {"R", "G", "B"}), bl(D, {"R", "G", "B"});
+            for (size_t q = 0; q < N; ++q)
+                for (int k = 0; k < 3; ++k) o3.data[q * 3 + k] = out.data[q * nc + chs[k]];
+            blurSum(o3, bl, {{s, s, 1}}, {0, 1, 2});
+            for (size_t q = 0; q < N; ++q)
+                for (int k = 0; k < 3; ++k) out.data[q * nc + chs[k]] += sh * (o3.data[q * 3 + k] - bl.data[q * 3 + k]);
+        }
     }
 };
 

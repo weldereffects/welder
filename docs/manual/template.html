@@ -223,6 +223,7 @@ footer { margin-top: 20px; color: var(--muted); font-size: 13px; border-top: 1px
       <li><a href="#tracking">Tracking</a></li>
       <li><a href="#ai">AI nodes</a></li>
       <li><a href="#mograph">Motion graphics</a></li>
+      <li><a href="#finishing">Flares, keying &amp; finishing</a></li>
       <li><a href="#nk">.nk scripts &amp; OFX</a></li>
       <li><a href="#keys">Keyboard shortcuts</a></li>
       <li><a href="#nodes">Node reference</a></li>
@@ -508,6 +509,18 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <div class="card"><h4>Warps</h4><p>WaveWarp, Bulge and SliceShift bend and cut the picture, animated by their speed knobs.</p></div>
       </div>
       <p class="muted" style="margin-top:14px">Random choices are seeded: change <strong>seed</strong> for a different pattern, and <strong>changes per second</strong> for how often it re-rolls. Generators draw over their bg input; <strong>over bg</strong> sets how (over, add, screen, under). For a screen insert, finish with LCDScreen to give the picture real pixels up close.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="finishing">
+      <div class="sec-head"><span class="eyebrow">The last mile</span><h2>Flares, keying &amp; finishing</h2></div>
+      <p>A set of finishing tools for the jobs every comp ends up needing: a flare designer, keying helpers, a ribbon flow along paths, and everyday look and repair nodes. All are built into Welder and render the same in proxy and in any tiles.</p>
+      <div class="grid">
+        <div class="card"><h4>LensFlare</h4><p>Build a flare from a glow, halo, rainbow ring, starburst, anamorphic streak and a chain of iris-shaped ghosts through the lens centre. Start from a style (classic, anamorphic, sun, sci-fi, spotlight, subtle), then scale each element. Plug something into <strong>occluder</strong> and the flare dims as it passes in front of the light.</p></div>
+        <div class="card"><h4>Keying helpers</h4><p><strong>ScreenClean</strong> evens out an uneven screen first (with your clean plate, or one it builds). <strong>SpillSuppress</strong> despills several ways, protects skin and can put the spill back as the background's colour. <strong>MatteRefine</strong>, <strong>ErodeFine</strong> and <strong>ChromaBlur</strong> finish the matte, and <strong>LightWrap</strong> sits the result in its plate.</p></div>
+        <div class="card"><h4>SplineFlow</h4><p>Draw paths with the roto tools and an image is laid along each one like a ribbon, tapered at the ends and flowing along at the <strong>speed</strong> you set: energy beams, magic trails, smoke and light streams.</p></div>
+        <div class="card"><h4>Look &amp; repair</h4><p>Halation, Diffusion, HighlightSuppress, DeHaze and Bandpass shape the image; NaNKiller, MirrorBorder and Deflicker fix it; HeatWave, Rain and LensDroplets add weather. Denoise can measure noise in a sample box and set fine, medium and coarse strength separately.</p></div>
+      </div>
     </section>
 
     <!-- ============================================================ -->

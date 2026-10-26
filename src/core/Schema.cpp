@@ -555,11 +555,17 @@ std::vector<NodeDef> build() {
                   Div("temporal"), I("temporal_frames", "frames each side", 2, 0, 4),
                   F("temporal", "temporal strength", 1, 0.05, 4, "How different a neighbouring frame may be and still be averaged in"),
                   B("motion_compensated", "motion compensated", true), When(F("vector_detail", "vector detail", 0.25, 0.05, 1), "motion_compensated=true"),
-                  Div("noise level"), C("noise_level", "noise level", "auto", {"auto", "manual"}),
+                  Div("noise level"), C("noise_level", "noise level", "auto", {"auto", "sample box", "manual"}),
+                  When(KnobDef{"sample_box", "sample box", Knob::Box, json::array({0, 0, 0, 0}), 0, 4096, {},
+                               "Drag a box over a flat, featureless area (sky, a wall): the noise is measured there"}, "noise_level=sample box"),
                   When(F("noise_luma", "luma noise", 0.02, 0, 0.5), "noise_level=manual"),
-                  When(F("noise_chroma", "chroma noise", 0.02, 0, 0.5), "noise_level=manual")},
+                  When(F("noise_chroma", "chroma noise", 0.02, 0, 0.5), "noise_level=manual"),
+                  Div("detail sizes (how much noise to remove)"), F("fine", "fine", 1, 0, 2), F("medium", "medium", 1, 0, 2),
+                  F("coarse", "coarse", 1, 0, 2, "Coarse, blotchy noise; lower keeps more of it (and more texture)"),
+                  Div("sharpen"), F("sharpen", "sharpen", 0, 0, 3), F("sharpen_size", "size", 1.5, 0.3, 20)},
                  "Noise reduction: neighbouring frames lined up with optical flow and averaged where they match, then "
-                 "similar patches averaged in the frame. The noise level is measured from the image. Output noise: what it "
+                 "similar patches averaged in the frame. The noise level is measured from the image (or from a sample box you drag over a flat area). "
+                 "Fine / medium / coarse set how much noise of each size is removed; sharpen restores crispness. Output noise: what it "
                  "removed (a clean plate for CADGrain's degrain input, or a grain sample)."});
     d.push_back({"VectorGenerator", "Time",
                  {F("vector_detail", "vector detail", 0.3, 0.05, 1, "Resolution of the flow (1 = every pixel; lower is faster and smoother)"),
@@ -858,6 +864,165 @@ std::vector<NodeDef> build() {
                  "Alpha from hue: 1 within width/2 degrees of the hue, falling off over the softness."});
     d.push_back({"Difference", "Keyer", {F("offset", "offset", 0, 0, 1), F("gain", "gain", 1, 0, 10)},
                  "Alpha = (|A - B| - offset) * gain. Inputs: B (clean plate or reference), A."});
+    // ---------------------------------------------------------------- finishing tools (flares, keying, everyday 2D)
+    {
+        d.push_back({"LensFlare", "Draw",
+                     {C("style", "style", "classic", {"classic", "anamorphic", "sun", "sci-fi", "spotlight", "subtle"}),
+                      PickXY(XY("position", "light position", "$center", 0, 4096)),
+                      PickXY(XY("axis_center", "lens centre", "$center", 0, 4096)),
+                      F("brightness", "brightness", 1, 0, 10), F("scale", "scale", 1, 0.05, 5), Col4("color", "tint", json::array({1, 1, 1, 1})),
+                      Div("elements (x the style)"), F("glow", "glow", 1, 0, 4), Same(F("glow_size", "size", 1, 0.05, 5)),
+                      F("halo", "halo ring", 1, 0, 4), Same(F("halo_size", "size", 1, 0.05, 5)), F("rainbow", "rainbow ring", 1, 0, 4),
+                      F("rays", "starburst rays", 1, 0, 4), I("ray_count", "ray count (0: style)", 0, 0, 64), F("ray_length", "ray length", 1, 0.05, 5),
+                      F("ray_randomness", "ray randomness", 0.5, 0, 1), F("rotation", "ray rotation", 0, -180, 180),
+                      F("streak", "anamorphic streak", 1, 0, 4), F("streak_length", "streak length", 1, 0.05, 5),
+                      F("streak_thickness", "streak thickness", 1, 0.05, 5), F("streak_angle", "streak angle", 0, -180, 180),
+                      Div("ghosts"), F("ghosts", "ghosts", 1, 0, 4), I("ghost_count", "count (0: style)", 0, 0, 40),
+                      C("ghost_shape", "iris shape", "style", {"style", "circle", "pentagon", "hexagon", "octagon"}),
+                      F("ghost_size", "size", 1, 0.05, 5), F("ghost_spread", "spread", 1, 0, 3), F("ghost_squeeze", "squeeze", 1, 0.05, 2),
+                      F("iris_rotation", "iris rotation", 0, -180, 180), F("chromatic", "chromatic edges", 0.3, 0, 1), I("seed", "seed", 0, 0, 1000),
+                      Div("occlusion & life"),
+                      F("occlusion_radius", "occlusion sample radius", 12, 1, 200, "How big the light is: the occluder's alpha over this disc dims the flare"),
+                      F("occlusion_softness", "occlusion softness", 0.5, 0, 1, "1: dims in proportion to the cover; 0: any cover kills it fast"),
+                      F("edge_fade", "off-screen fade (px)", 200, 1, 4000), F("flicker", "flicker", 0, 0, 1), F("flicker_speed", "flicker speed", 8, 0, 60),
+                      Div(""), Width(C("combine", "over bg", "add", {"add", "screen", "over"}), 100), F("opacity", "opacity", 1, 0, 1),
+                      I("antialias", "antialias (samples per axis)", 1, 1, 4)},
+                     "A lens flare designer: glow, halo, rainbow ring, starburst, anamorphic streak and a chain of iris-shaped ghosts "
+                     "through the lens centre. Pick a style, then scale each element. Connect an occluder (its alpha) and the flare dims as "
+                     "something passes in front of the light; it fades as the light leaves frame and can flicker."});
+        d.push_back({"SpillSuppress", "Keyer",
+                     withMask({C("screen", "screen", "green", {"green", "blue"}),
+                               C("method", "method", "average", {"average", "double average", "max", "min", "weighted"}),
+                               When(F("balance", "balance (red / other)", 0.5, 0, 1), "method=weighted"),
+                               F("amount", "amount", 1, 0, 2), F("limit_gain", "limit gain", 1, 0, 2, "Above 1 leaves more of the screen colour; below takes more"),
+                               F("hue_shift", "hue shift", 0, -60, 60, "Rotate the colours before despilling (and back after): moves where the cut falls"),
+                               Div("protect"), B("protect", "protect a colour", false), EnableIf(Pick("protect_color", "colour", json::array({0.8, 0.55, 0.45, 1}),
+                               "Pick a colour (skin) to keep from being despilled"), "protect"),
+                               EnableIf(F("protect_tolerance", "tolerance", 0.15, 0.01, 1), "protect"),
+                               Div("respill"), C("respill", "replace spill with", "none", {"none", "luminance", "color", "background"}),
+                               F("respill_amount", "amount", 1, 0, 2), When(Col4("respill_color", "colour", json::array({1, 0.9, 0.8, 1})), "respill=color"),
+                               When(F("bg_blur", "bg blur", 40, 0, 500), "respill=background"),
+                               Div(""), C("output", "output", "despilled", {"despilled", "spill matte", "removed spill"}),
+                               B("spill_to_alpha", "write the spill matte to alpha", false)}),
+                     "Advanced spill suppression: the screen channel limited by one of several mixes of the other two, with a hue shift "
+                     "to move the cut, a protected colour (skin), and the removed light put back as neutral luminance, a colour, or the "
+                     "blurred background's colour (bg input). Output the spill matte to see what it takes."});
+        d.push_back({"ScreenClean", "Keyer",
+                     withMask({C("screen", "screen", "green", {"green", "blue"}), C("method", "method", "subtract", {"subtract", "divide"}),
+                               F("amount", "amount", 1, 0, 2),
+                               Pick("target_color", "target colour", json::array({0, 0, 0, 0}),
+                                    "The flat screen colour to even out to (black: the clean plate's average)"),
+                               B("limit_to_screen", "only on the screen", false),
+                               Div("automatic clean plate (no clean plate input)"),
+                               F("key_threshold", "screen key threshold", 0.05, 0, 1), F("key_softness", "key softness", 0.1, 0.001, 1),
+                               F("smoothness", "smoothness (px)", 20, 0, 400),
+                               Div(""), C("output", "output", "result", {"result", "clean plate", "screen key"})}),
+                     "Evens out an uneven blue / green screen before keying: the difference between a clean plate and one flat screen "
+                     "colour is subtracted (or divided) out, so creases, hot spots and falloff disappear. With no clean plate it builds one: "
+                     "the screen keyed, the foreground holes filled from the screen around them, smoothed. The holdout input keeps areas out."});
+        d.push_back({"LightWrap", "Merge",
+                     withMask({C("operation", "operation", "over", {"over", "plus", "screen"}),
+                               F("wrap_size", "wrap size (bg blur)", 30, 0, 500), F("wrap_width", "wrap width (into A)", 10, 0, 300),
+                               F("intensity", "intensity", 1, 0, 10), F("saturation", "saturation", 1, 0, 2),
+                               F("highlights", "highlights only above", 0, 0, 4, "0: all of the background wraps; higher: only its brights"),
+                               C("wrap_mode", "wrap mode", "add", {"add", "screen"}), B("ignore_behind_a", "ignore bg behind A", true),
+                               C("output", "output", "comp", {"comp", "wrap only"})}),
+                     "A over B with the background's light wrapped around A's edges - the blurred plate laid into a band just inside A, "
+                     "so a keyed element sits in its scene."});
+        d.push_back({"Bandpass", "Filter",
+                     withMask({Ch("channels", "channels", "rgb"), F("small", "small", 2, 0, 200), F("large", "large", 20, 0.5, 1000),
+                               F("gain", "gain", 1, 0, 20), F("offset", "offset", 0.5, -1, 1), B("luminance", "luminance only", false)}),
+                     "The detail between two sizes: blur(small) - blur(large), around a grey. For grain and texture work, "
+                     "frequency separation and edge keys."});
+        d.push_back({"ChromaBlur", "Filter",
+                     withMask({F("size", "chroma blur", 4, 0, 100), F("luma_size", "luma blur", 0, 0, 100)}),
+                     "Blurs the colour but not the brightness (YCbCr): cleans compressed / subsampled footage before keying."});
+        d.push_back({"ErodeFine", "Filter",
+                     withMask({Ch("channels", "channels", "alpha"), F("size", "size", -1, -50, 50, "Negative shrinks, positive grows (sub-pixel)"),
+                               F("softness", "softness", 0, 0, 50), B("premultiplied", "rescale premultiplied colour", false)}),
+                     "A sub-pixel erode / dilate: the matte blurred and re-thresholded where its edge would sit size pixels in or out."});
+        d.push_back({"MatteRefine", "Keyer",
+                     withMask({F("core_shrink", "core shrink", 2, 0, 50), F("grow", "grow / shrink all", 0, -50, 50),
+                               F("edge_softness", "edge softness", 6, 0, 200), F("edge_gamma", "edge gamma", 1, 0.05, 5),
+                               F("chew", "chew", 0, 0, 1, "Noise eats into the soft edge: hair, fur, organic outlines"),
+                               F("chew_size", "chew size", 3, 0.5, 50), I("seed", "seed", 0, 0, 1000),
+                               B("premultiply", "premultiply rgb", false), C("output", "output", "refined", {"refined", "core", "edge"})}),
+                     "Builds a natural matte edge from a hard one: a solid core (the matte shrunk) and a soft edge (blurred, shaped by "
+                     "a gamma), combined; chew roughens the soft part with noise."});
+        d.push_back({"SplineFlow", "Transform",
+                     {C("mapping", "mapping", "x along path", {"x along path", "y along path"}),
+                      C("fit", "fit", "stretch", {"stretch", "tile"}),
+                      When(F("repeat", "repeat", 1, 0.01, 50, "How many times the image fits along the path"), "fit=stretch"),
+                      When(F("tile_scale", "tile scale", 1, 0.01, 20), "fit=tile"),
+                      F("width", "width", 80, 0.5, 2000), F("edge_softness", "edge softness", 2, 0.3, 200),
+                      F("taper_start", "taper start", 0.15, 0, 1), F("taper_end", "taper end", 0.15, 0, 1), F("fade_ends", "fade ends", 0, 0, 1),
+                      Div("flow"), F("speed", "speed (lengths / sec)", 0.25, -10, 10), F("offset", "offset", 0, -10, 10),
+                      B("reverse", "reverse direction", false), B("flip", "flip across", false), B("closed_path", "closed path", false),
+                      Div(""), F("gain", "gain", 1, 0, 10), Width(C("combine", "over bg", "over", {"over", "add", "screen"}), 100),
+                      F("opacity", "opacity", 1, 0, 1)},
+                     "Lays an image along drawn paths like a ribbon and flows it - energy, magic trails, smoke, light streams. Draw paths "
+                     "with the roto tools (they are used open); src's x (or y) runs along each path, the other axis across the width; "
+                     "speed slides it along over time. A lighter alternative to warping the whole frame."});
+        d.push_back({"Halation", "Filter",
+                     withMask({F("threshold", "threshold", 0.8, 0, 10), F("knee", "knee", 0.4, 0.01, 4), F("size", "size", 30, 0.1, 500),
+                               F("spread", "spread", 4, 1, 20), F("intensity", "intensity", 0.6, 0, 10),
+                               Col4("color", "colour", json::array({1, 0.28, 0.08, 1})), F("color_from_image", "colour from image", 0.2, 0, 1),
+                               B("effect_only", "effect only", false), B("crop", "crop to format", true)}),
+                     "Film halation: light from the highlights scattered back through the film base - a warm red-orange glow hugging bright edges."});
+        d.push_back({"Diffusion", "Filter",
+                     withMask({F("amount", "amount", 0.4, 0, 4), F("size", "size", 25, 0.5, 500), F("threshold", "threshold", 0.5, 0, 10),
+                               F("haze", "haze (lifts blacks)", 0.1, 0, 1), Col4("color", "colour", json::array({1, 1, 1, 1})),
+                               B("crop", "crop to format", true)}),
+                     "A diffusion / mist filter: highlights bloom at three sizes, blacks lift a little into a haze, contrast softens."});
+        d.push_back({"HighlightSuppress", "Color",
+                     withMask({F("threshold", "threshold", 0.8, 0, 10), F("strength", "strength", 1, 0, 20), F("desaturate", "desaturate", 0.3, 0, 1),
+                               C("detect", "detect by", "luminance", {"luminance", "max channel"})}),
+                     "Rolls off highlights above a threshold, keeping their hue, and takes some saturation out of them."});
+        d.push_back({"DeHaze", "Color",
+                     withMask({F("amount", "amount", 0.9, 0, 1), F("patch", "patch size", 15, 1, 200), F("refine", "refine (px)", 30, 0, 400),
+                               F("min_transmission", "min transmission", 0.15, 0.01, 1),
+                               C("haze_color_mode", "haze colour", "auto", {"auto", "manual"}),
+                               When(Pick("haze_color", "colour", json::array({0.8, 0.85, 0.9, 1}), "Pick the haze (sky near the horizon)"), "haze_color_mode=manual"),
+                               C("output", "output", "result", {"result", "transmission", "haze"})}),
+                     "Takes atmospheric haze out (dark-channel method): how much of the scene comes through is estimated from each "
+                     "patch's darkest channel; the haze is then subtracted and the scene restored."});
+        d.push_back({"NaNKiller", "Filter",
+                     {Ch("channels", "channels", "all"), B("fix_nan", "NaN", true), Same(B("fix_inf", "infinite", true)),
+                      Same(B("fix_negative", "negative", false)),
+                      C("replace_with", "replace with", "neighbours", {"neighbours", "value", "clamp"}), F("value", "value", 0, -10, 10),
+                      When(F("max", "infinity becomes", 100, 0, 100000), "replace_with=clamp"),
+                      C("output", "output", "fixed", {"fixed", "bad pixels"})},
+                     "Finds NaN, infinite (and optionally negative) pixel values and replaces them - before they spread through blurs."});
+        d.push_back({"MirrorBorder", "Transform",
+                     {C("mode", "mode", "mirror", {"mirror", "repeat", "clamp"}), F("border", "border (px)", 200, 0, 8000),
+                      C("source", "source", "format", {"format", "bbox"})},
+                     "Fills the overscan around the frame by mirroring, repeating or stretching the edges - room for shake, "
+                     "distortion and blur without black borders."});
+        d.push_back({"Deflicker", "Time",
+                     withMask({C("mode", "mode", "local", {"local", "global"}), I("frames", "frames each side", 3, 1, 12),
+                               When(F("size", "region size (px)", 100, 1, 2000, "Brightness is matched over areas this big"), "mode=local"),
+                               F("amount", "amount", 1, 0, 1), B("per_channel", "per channel (colour flicker)", false)}),
+                     "Takes out frame-to-frame brightness flicker: each frame's local (or overall) brightness is matched to the "
+                     "average of its neighbours, so slow light changes stay and the pumping goes."});
+        d.push_back({"HeatWave", "Stylize",
+                     withMask({F("amplitude", "amplitude (px)", 6, 0, 200), F("size", "size", 60, 1, 2000), F("stretch", "stretch", 2, 0.1, 10),
+                               F("speed", "rise speed (px / frame)", 2, -100, 100), F("direction", "direction", 90, -180, 180),
+                               F("evolution", "evolution (per sec)", 1, 0, 20), I("detail", "detail", 2, 1, 5), I("seed", "seed", 0, 0, 1000)}),
+                     "Rising heat shimmer: the image pushed around by a smooth noise that drifts and evolves. The mask says where the heat is."});
+        d.push_back({"Rain", "Draw",
+                     {F("density", "density", 1, 0.01, 20), I("layers", "depth layers", 3, 1, 6), F("angle", "angle", -10, -80, 80),
+                      F("speed", "speed (px / frame)", 40, -400, 400), F("length", "length", 60, 1, 1000), F("width", "width", 1.2, 0.2, 20),
+                      F("variation", "variation", 0.5, 0, 1), F("depth_falloff", "depth falloff", 0.5, 0, 0.95),
+                      F("brightness", "brightness", 0.5, 0, 4), Col4("color", "colour", json::array({0.85, 0.9, 1, 1})), I("seed", "seed", 0, 0, 1000),
+                      Div(""), Width(C("combine", "over bg", "screen", {"over", "add", "screen", "under"}), 100), F("opacity", "opacity", 1, 0, 1),
+                      I("antialias", "antialias (samples per axis)", 2, 1, 4)},
+                     "Falling rain streaks in depth layers: near drops bigger, faster and brighter, far ones finer."});
+        d.push_back({"LensDroplets", "Stylize",
+                     withMask({F("density", "density", 0.5, 0.01, 4), F("size", "size", 30, 1, 500), F("size_variance", "size variance", 0.6, 0, 1),
+                               F("refraction", "refraction", 1, -4, 4), F("shadow", "rim shadow", 0.35, 0, 1), F("highlight", "highlight", 0.5, 0, 4),
+                               F("slide", "slide (px / frame)", 0, -50, 50), I("seed", "seed", 0, 0, 1000)}),
+                     "Water drops on the lens: each shows a small flipped, magnified view of the scene, with a dark rim and a highlight."});
+    }
     // ---------------------------------------------------------------- MoGraph (screen graphics, glitches, transitions)
     {
         auto seedRate = [](std::vector<KnobDef> k, double rate) {
