@@ -1002,7 +1002,8 @@ int main(int argc, char** argv) {
                         if (v->input(i)) ins += std::to_string((i + 1) % 10) + ":" + v->input(i)->name + " ";
                     std::printf("VIEWER %s pipes [%s] params %s\n", v->name.c_str(), ins.c_str(), v->params.data.dump().c_str());
                 }
-                std::printf("VIEWERS dirty %d maximized '%s'\n", (int)app.dirty, ui.maximized.c_str());
+                std::printf("VIEWERS dirty %d maximized '%s' inout %d %g %g\n", (int)app.dirty, ui.maximized.c_str(),
+                            (int)app.comp->project.hasInOut, app.comp->project.inPoint, app.comp->project.outPoint);
             }
         }
         // STRATA_TEST_SHAKE=x,y: grab what's at a window position and shake it side to side, then

@@ -105,7 +105,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Viewer", "Ctrl+Left / Ctrl+Right", "halfway to the previous / next keyframe or end", true},
         {"Viewer", "Home / End", "in point (or first frame) / out point (or last frame)", true},
         {"Viewer", "J / K / L", "play backward / stop / play forward", true},
-        {"Viewer", "I / O", "mark in point / out point", true},
+        {"Viewer", "I / O", "in / out point at this frame (again on the same frame: off)", true},
         {"Viewer", "Alt+drag, middle-drag", "pan", true},
         {"Viewer", "W / Shift+0-9", "wipe / reference inputs", false},
         {"Viewer", "Alt+W", "region of interest", false},
@@ -347,19 +347,31 @@ void handleHotkeys(App& app, UiState& ui) {
         if (key(ImGuiKey_J)) { app.playDir = -1; app.playing = true; return; }
         if (key(ImGuiKey_K)) { app.playing = false; return; }
         if (key(ImGuiKey_I) || key(ImGuiKey_O)) {
-            bool in = ImGui::IsKeyPressed(ImGuiKey_I);
-            double fr = app.frame;
-            auto vis = app.visibleRange();
-            app.edit([fr, in, vis](Comp& c) {
-                if (!c.project.hasInOut) {
-                    c.project.inPoint = vis.first;
-                    c.project.outPoint = vis.second;
+            // I / O set the in / out point at this frame; pressed again on the frame that already
+            // is the in (out) point, they take it off (back to the start / end of the range)
+            const bool in = ImGui::IsKeyPressed(ImGuiKey_I);
+            const double fr = app.frame;
+            const auto vis = app.visibleRange();
+            const auto& pr = app.comp->project;
+            const bool clear = pr.hasInOut && (in ? pr.inPoint == fr && fr != vis.first : pr.outPoint == fr && fr != vis.second);
+            app.edit([fr, in, vis, clear](Comp& c) {
+                auto& p = c.project;
+                if (!p.hasInOut) {
+                    p.inPoint = vis.first;
+                    p.outPoint = vis.second;
                 }
-                if (in) c.project.inPoint = std::min(fr, c.project.outPoint);
-                else c.project.outPoint = std::max(fr, c.project.inPoint);
-                c.project.hasInOut = true;
+                if (clear) {
+                    if (in) p.inPoint = vis.first;
+                    else p.outPoint = vis.second;
+                } else if (in) {
+                    p.inPoint = std::min(fr, p.outPoint);
+                } else {
+                    p.outPoint = std::max(fr, p.inPoint);
+                }
+                // neither set any more: no in / out at all
+                p.hasInOut = !(p.inPoint <= vis.first && p.outPoint >= vis.second);
             });
-            app.message(std::string(in ? "in point " : "out point ") + std::to_string((int)fr));
+            app.message(std::string(in ? "in point " : "out point ") + (clear ? "off" : std::to_string((int)fr)));
             return;
         }
     }

@@ -83,7 +83,7 @@ THE EDITOR
   Viewer and timeline
     Left/Right          previous/next frame (Shift: 10 frames, Alt: keyframes)
     J K L               play backward / stop / play forward
-    I / O               set in / out point;  Home / End  go to in / out
+    I / O               set in / out point (again on that frame: off);  Home / End  go to in / out
   Viewer
     R G B A             show red/green/blue/alpha (again for RGBA); Y luminance
     M                   matte (alpha as a red overlay);  Q overlays
