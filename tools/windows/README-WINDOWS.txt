@@ -127,6 +127,16 @@ THE EDITOR
     are the slowest to decode (as in .nk apps); plates on a network drive are
     limited by the network, so copy them locally for real-time first passes.
 
+  MOGRAPH (screen graphics: the MoGraph group in the toolbar, or Tab)
+    Glitch       GlitchBlocks, Tear, RGBSplit, PixelSort, SignalLoss, BitCrush, Stutter (frames that stick)
+    Screens      CRT (curved tube, scanlines, phosphor mask), VHS, Hologram, LCDScreen (real pixels up close)
+    Transitions  WipeTransition, WarpTransition, GlitchTransition, PixelTransition, ZoomTransition,
+                 PushTransition: A to B over start + length frames, or a progress knob
+    Warps        WaveWarp, Bulge, SliceShift
+    Drawn        Shape (trim draws it on), Bars, BoxGrid, Radar, Waveform, Scatter (copies of a sprite),
+                 FlowLines, PatternGrid, NoisePattern, CodeRain - over the bg input
+    Random choices follow "seed" and "changes per second".
+
   STYLIZE (the Sty group in the toolbar, or Tab)
     Distort       pixels pushed along the slope of the image's brightness (or a map input's)
     DistortRGB    the same, a different strength / direction per channel: colour splits

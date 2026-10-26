@@ -160,6 +160,8 @@ void registerMLNodes();
 void registerColorMgmtNodes();
 void registerMergeExtraNodes();
 void registerKillOutline();
+void registerMoGraphFx();
+void registerMoGraphGen();
 void registerColorExtraNodes();
 void registerFilterExtraNodes();
 void registerTimeExtraNodes();
@@ -206,6 +208,8 @@ void registerBuiltinNodes() {
     registerColorMgmtNodes();
     registerMergeExtraNodes();
     registerKillOutline();
+    registerMoGraphFx();
+    registerMoGraphGen();
     registerColorExtraNodes();
     registerFilterExtraNodes();
     registerTimeExtraNodes();

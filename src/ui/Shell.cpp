@@ -348,6 +348,13 @@ static void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float
                 const float x0 = -0.85f + i * (0.85f + g), y0 = -0.85f + j * (0.85f + g);
                 dl->AddRectFilled(P(x0, y0), P(x0 + 0.85f - g, y0 + 0.85f - g), col, s * 0.12f);
             }
+    } else if (cat == "MoGraph") {  // a screen with a glitched bar and a waveform
+        dl->AddRect(P(-1, -0.75f), P(1, 0.75f), col, s * 0.15f, 0, t);
+        dl->AddRectFilled(P(-0.55f, -0.45f), P(0.75f, -0.2f), col);
+        dl->AddRectFilled(P(-0.75f, -0.15f), P(0.3f, 0.05f), col);
+        ImVec2 w[7];
+        for (int i = 0; i < 7; ++i) w[i] = P(-0.75f + i * 0.25f, 0.42f + ((i & 1) ? -0.16f : 0.12f));
+        dl->AddPolyline(w, 7, col, 0, t * 0.8f);
     } else if (cat == "OFX") {  // a plug
         dl->AddRectFilled(P(-0.55f, -0.3f), P(0.55f, 0.35f), col, s * 0.15f);
         dl->AddLine(P(-0.28f, -0.3f), P(-0.28f, -0.85f), col, t * 1.2f);

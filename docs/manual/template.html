@@ -205,7 +205,7 @@ footer { margin-top: 20px; color: var(--muted); font-size: 13px; border-top: 1px
       <a class="btn" href="#keys">Keyboard shortcuts</a>
       <a class="btn" href="#nodes">Node reference</a>
     </div>
-    <div class="stats"><span><b>{{NODECOUNT}}</b>nodes</span><span><b>{{NEWCOUNT}}</b>new in this build</span><span><b>{{KEYCOUNT}}</b>shortcuts</span><span><b>15</b>toolbar groups</span></div>
+    <div class="stats"><span><b>{{NODECOUNT}}</b>nodes</span><span><b>{{NEWCOUNT}}</b>new in this build</span><span><b>{{KEYCOUNT}}</b>shortcuts</span><span><b>16</b>toolbar groups</span></div>
   </div>
 </header>
 
@@ -222,6 +222,7 @@ footer { margin-top: 20px; color: var(--muted); font-size: 13px; border-top: 1px
       <li><a href="#roto">Roto, paint &amp; warping</a></li>
       <li><a href="#tracking">Tracking</a></li>
       <li><a href="#ai">AI nodes</a></li>
+      <li><a href="#mograph">Motion graphics</a></li>
       <li><a href="#nk">.nk scripts &amp; OFX</a></li>
       <li><a href="#keys">Keyboard shortcuts</a></li>
       <li><a href="#nodes">Node reference</a></li>
@@ -318,7 +319,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
       </div>
       <div class="table-wrap"><table>
         <tr><th>Panel</th><th>What it's for</th></tr>
-        <tr><td>Nodes</td><td>The toolbar: a button per node group (Image, Draw, Time, Channel, Color, Filter, Keyer, Merge, Transform, Stylize, 3D, Value, AI, Other, OFX).</td></tr>
+        <tr><td>Nodes</td><td>The toolbar: a button per node group (Image, Draw, Time, Channel, Color, Filter, Keyer, Merge, Transform, Stylize, MoGraph, 3D, Value, AI, Other, OFX).</td></tr>
         <tr><td>Viewer</td><td>The viewed node's image, with the tools of the node being edited drawn on top.</td></tr>
         <tr><td>Timeline</td><td>Scrubbing, playback, in and out points, keyframe ticks and the RAM cache line.</td></tr>
         <tr><td>Node Graph</td><td>Where the comp is built. Curve Editor, Dope Sheet and Messages are tabs beside it.</td></tr>
@@ -497,6 +498,19 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
     </section>
 
     <!-- ============================================================ -->
+    <section id="mograph">
+      <div class="sec-head"><span class="eyebrow">Screens, HUDs, glitches</span><h2>Motion graphics</h2></div>
+      <p>The <strong>MoGraph</strong> toolbar group holds 30 nodes for screen graphics: glitches for broken signals and old screens, transitions between two shots, warps, and shapes, HUD elements and patterns drawn over a background. They're built into Welder and work in proxy and in any tiles the same way.</p>
+      <div class="grid">
+        <div class="card"><h4>Glitch</h4><p>GlitchBlocks, Tear, RGBSplit, PixelSort, SignalLoss, BitCrush and Stutter break a picture apart; CRT, VHS, Hologram and LCDScreen make it look like it's on a screen.</p></div>
+        <div class="card"><h4>Transitions</h4><p>WipeTransition (linear, iris, clock, blinds, checker), WarpTransition, GlitchTransition, PixelTransition, ZoomTransition and PushTransition go from A to B over a start frame and length, or follow a progress knob.</p></div>
+        <div class="card"><h4>Shapes and HUD</h4><p>Shape (with trim to draw it on), Bars, BoxGrid, Radar, Waveform and Scatter build interface graphics; FlowLines, PatternGrid, NoisePattern and CodeRain fill screens with motion.</p></div>
+        <div class="card"><h4>Warps</h4><p>WaveWarp, Bulge and SliceShift bend and cut the picture, animated by their speed knobs.</p></div>
+      </div>
+      <p class="muted" style="margin-top:14px">Random choices are seeded: change <strong>seed</strong> for a different pattern, and <strong>changes per second</strong> for how often it re-rolls. Generators draw over their bg input; <strong>over bg</strong> sets how (over, add, screen, under). For a screen insert, finish with LCDScreen to give the picture real pixels up close.</p>
+    </section>
+
+    <!-- ============================================================ -->
     <section id="nk">
       <div class="sec-head"><span class="eyebrow">Round trips</span><h2>.nk scripts &amp; OFX</h2></div>
       <div class="grid">
@@ -563,7 +577,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
 <script>
 const NODES = {{NODES}};
 const KEYS = {{KEYS}};
-const COLORS = {Image:"#8c8c8c",Draw:"#d88f7c",Time:"#9cb87f",Channel:"#5ea1b8",Color:"#8aa86f",Filter:"#c98f5e",Keyer:"#5eb362",Merge:"#4e8ac9",Transform:"#a77ab9",Stylize:"#d6b35a","3D":"#4ab0c2",Value:"#786ee6",AI:"#d86a8a",Other:"#9a9a9a"};
+const COLORS = {Image:"#8c8c8c",Draw:"#d88f7c",Time:"#9cb87f",Channel:"#5ea1b8",Color:"#8aa86f",Filter:"#c98f5e",Keyer:"#5eb362",Merge:"#4e8ac9",Transform:"#a77ab9",Stylize:"#d6b35a",MoGraph:"#e86aa8","3D":"#4ab0c2",Value:"#786ee6",AI:"#d86a8a",Other:"#9a9a9a"};
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 // keycaps: "Ctrl+Shift+Z / Ctrl+Y" -> key caps, mouse actions as chips, other words as text

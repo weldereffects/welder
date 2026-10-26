@@ -993,6 +993,73 @@ int main(int argc, char** argv) {
         CHECK_NEAR(d, 0.0, 1e-5);
     });
 
+    test("MoGraph: every effect, transition and generator renders the same in any tiles; ends of transitions are A and B", [] {
+        json nodes = json::array({
+            {{"name", "Src"}, {"type", "Ramp"}, {"params", {{"p0", {0, 0}}, {"p1", {96, 64}}, {"color0", {0.1, 0.2, 0.4, 1}}, {"color", {0.9, 0.5, 0.2, 1}}}}},
+            {{"name", "Two"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.8, 0.3, 1}}}}},
+        });
+        const std::vector<std::string> fx = {"GlitchBlocks", "Tear", "RGBSplit", "PixelSort", "CRT", "VHS", "Hologram", "BitCrush",
+                                             "SignalLoss", "WaveWarp", "Bulge", "SliceShift", "LCDScreen"};
+        const std::vector<std::string> tr = {"WipeTransition", "WarpTransition", "GlitchTransition", "PixelTransition", "ZoomTransition", "PushTransition"};
+        const std::vector<std::string> gen = {"Shape", "Bars", "BoxGrid", "Scatter", "Radar", "Waveform", "FlowLines", "PatternGrid", "NoisePattern", "CodeRain"};
+        for (auto& t : fx) nodes.push_back({{"name", t}, {"type", t}, {"inputs", {"Src"}}});
+        for (auto& t : tr) {
+            nodes.push_back({{"name", t}, {"type", t}, {"inputs", {"Src", "Two"}}, {"params", {{"timing", "progress"}, {"progress", 0.4}, {"ease", "linear"}}}});
+            nodes.push_back({{"name", t + "0"}, {"type", t}, {"inputs", {"Src", "Two"}}, {"params", {{"timing", "progress"}, {"progress", 0}}}});
+            nodes.push_back({{"name", t + "1"}, {"type", t}, {"inputs", {"Src", "Two"}}, {"params", {{"timing", "progress"}, {"progress", 1}}}});
+        }
+        for (auto& t : gen) nodes.push_back({{"name", t}, {"type", t}, {"inputs", {"Src"}}});
+        auto c = comp(nodes, 96, 64);
+        std::vector<std::string> all = fx;
+        all.insert(all.end(), tr.begin(), tr.end());
+        all.insert(all.end(), gen.begin(), gen.end());
+        auto src = render(*c, "Src", 7), two = render(*c, "Two", 7);
+        for (auto& n : all) {
+            auto a = render(*c, n, 7), b = render(*c, n, 7, 16);
+            double d = 0, sum = 0;
+            for (size_t i = 0; i < a->data.size() && i < b->data.size(); ++i) {
+                d = std::max(d, (double)std::fabs(a->data[i] - b->data[i]));
+                sum += std::fabs(a->data[i]);
+            }
+            if (d > 1e-5) std::printf("  tiles differ: %s (%g)\n", n.c_str(), d);
+            CHECK_NEAR(d, 0.0, 1e-5);
+            CHECK(sum > 0);  // draws something
+        }
+        for (auto& t : tr) {  // progress 0 shows A, 1 shows B
+            auto a0 = render(*c, t + "0", 7), a1 = render(*c, t + "1", 7);
+            CHECK_NEAR(px(a0, 40, 30, "R"), px(src, 40, 30, "R"), 1e-5);
+            CHECK_NEAR(px(a1, 40, 30, "G"), px(two, 40, 30, "G"), 1e-5);
+        }
+    });
+
+    test("MoGraph: Shape covers what it should; GlitchBlocks at amount 0 and RGBSplit at 0 change nothing; Stutter holds", [] {
+        auto c = comp(json::array({
+            {{"name", "Src"}, {"type", "Ramp"}, {"params", {{"p0", {0, 0}}, {"p1", {64, 48}}}}},
+            {{"name", "Box"}, {"type", "Shape"}, {"params", {{"type", "rectangle"}, {"center", {32, 24}}, {"size", {20, 10}}, {"fill_color", {1, 0.5, 0, 1}}}}},
+            {{"name", "Ring"}, {"type", "Shape"}, {"params", {{"type", "ring"}, {"center", {32, 24}}, {"size", {40, 40}}, {"thickness", 4}}}},
+            {{"name", "G0"}, {"type", "GlitchBlocks"}, {"inputs", {"Src"}}, {"params", {{"amount", 0}}}},
+            {{"name", "S0"}, {"type", "RGBSplit"}, {"inputs", {"Src"}}, {"params", {{"red", {0, 0}}, {"blue", {0, 0}}}}},
+            {{"name", "St"}, {"type", "Stutter"}, {"inputs", {"Src"}}, {"params", {{"chance", 1}, {"hold", 4}, {"start", 1}}}},
+        }));
+        auto b = render(*c, "Box");
+        CHECK_NEAR(px(b, 32, 24, "R"), 1, 1e-5);
+        CHECK_NEAR(px(b, 32, 24, "G"), 0.5, 1e-5);
+        CHECK_NEAR(px(b, 32, 24, "A"), 1, 1e-5);
+        CHECK_NEAR(px(b, 45, 24, "A"), 0, 1e-5);
+        CHECK_NEAR(px(b, 32, 31, "A"), 0, 1e-5);
+        auto r = render(*c, "Ring");
+        CHECK_NEAR(px(r, 32 + 18, 24, "A"), 1, 0.05);  // on the ring (radius 20, 4 thick: 16..20)
+        CHECK_NEAR(px(r, 32, 24, "A"), 0, 1e-5);       // the hole
+        auto s = render(*c, "Src"), g = render(*c, "G0"), sp = render(*c, "S0");
+        double d = 0;
+        for (size_t i = 0; i < s->data.size(); ++i) d = std::max({d, (double)std::fabs(s->data[i] - g->data[i]), (double)std::fabs(s->data[i] - sp->data[i])});
+        CHECK_NEAR(d, 0.0, 1e-5);
+        Node* st = c->find("St");
+        CHECK_NEAR(st->inputTime(0, 7), 5, 0);   // frames 5-8 hold 5
+        CHECK_NEAR(st->inputTime(0, 8), 5, 0);
+        CHECK_NEAR(st->inputTime(0, 9), 9, 0);
+    });
+
     test("KillOutline: the light rim of a key takes the colour inside it; alpha and the core stay", [] {
         const std::string d = "hypot(x - 32, y - 24)", al = "clamp((14 - " + d + ") / 3)";
         auto c = comp(json::array({

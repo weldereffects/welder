@@ -858,6 +858,176 @@ std::vector<NodeDef> build() {
                  "Alpha from hue: 1 within width/2 degrees of the hue, falling off over the softness."});
     d.push_back({"Difference", "Keyer", {F("offset", "offset", 0, 0, 1), F("gain", "gain", 1, 0, 10)},
                  "Alpha = (|A - B| - offset) * gain. Inputs: B (clean plate or reference), A."});
+    // ---------------------------------------------------------------- MoGraph (screen graphics, glitches, transitions)
+    {
+        auto seedRate = [](std::vector<KnobDef> k, double rate) {
+            k.push_back(F("rate", "changes per second", rate, 0, 60, "How often the random choices change (0: never)"));
+            k.push_back(I("seed", "seed", 0, 0, 1000));
+            return k;
+        };
+        auto gen = [](std::vector<KnobDef> k) {  // drawn over the bg input
+            k.push_back(Div(""));
+            k.push_back(Width(C("combine", "over bg", "over", {"over", "add", "screen", "under"}), 100));
+            k.push_back(F("opacity", "opacity", 1, 0, 1));
+            k.push_back(I("antialias", "antialias (samples per axis)", 1, 1, 4));
+            return k;
+        };
+        auto trans = [](std::vector<KnobDef> k) {
+            std::vector<KnobDef> r = {C("timing", "timing", "frames", {"frames", "progress"}),
+                                      When(Field(I("start", "start frame", 1, -100000, 100000), 70), "timing=frames"),
+                                      When(Same(Field(I("length", "length", 24, 1, 10000), 60)), "timing=frames"),
+                                      When(F("progress", "progress", 0.5, 0, 1, "0 = A, 1 = B: animate it"), "timing=progress"),
+                                      C("ease", "ease", "smooth", {"linear", "smooth", "ease in", "ease out"}), Div("")};
+            r.insert(r.end(), k.begin(), k.end());
+            return r;
+        };
+        auto box = [](const char* n, const char* l, json def, const char* tip) {
+            KnobDef k{n, l, Knob::Box, def, 0, 4096, {}, tip};
+            return k;
+        };
+        // glitches
+        d.push_back({"GlitchBlocks", "MoGraph", withMask(seedRate({F("amount", "amount", 0.3, 0, 1, "How many blocks are hit"),
+            XY("block_size", "block size", json::array({80, 24}), 2, 400), F("size_variance", "size variance", 0.6, 0, 1),
+            F("shift", "shift (px)", 60, 0, 500), F("rgb_split", "rgb split (px)", 6, 0, 100), F("invert_chance", "invert chance", 0, 0, 1)}, 8)),
+            "Blocks of the picture knocked sideways with their colours split, re-chosen several times a second."});
+        d.push_back({"Tear", "MoGraph", withMask(seedRate({F("amount", "amount", 0.25, 0, 1), F("band_height", "band height", 12, 1, 200),
+            F("shift", "shift (px)", 40, 0, 500), F("wobble", "wobble (px)", 3, 0, 50), F("wobble_length", "wobble length", 80, 1, 1000),
+            C("edges", "edges", "black", {"black", "extend"})}, 12)),
+            "Bands of rows torn sideways, over a gentle wobble: a bad sync."});
+        d.push_back({"RGBSplit", "MoGraph", withMask(seedRate({C("mode", "mode", "linear", {"linear", "radial"}),
+            When(XY("red", "red offset", json::array({6, 0}), -100, 100), "mode=linear"), When(XY("blue", "blue offset", json::array({-6, 0}), -100, 100), "mode=linear"),
+            When(F("amount", "amount at the edge (px)", 8, 0, 100), "mode=radial"), When(PickXY(XY("center", "center", "$center", 0, 4096)), "mode=radial"),
+            F("jitter", "jitter (px)", 0, 0, 50, "A random extra offset, re-chosen at the rate below")}, 12)),
+            "Red and blue moved apart from green: by fixed offsets, or out from a centre."});
+        d.push_back({"PixelSort", "MoGraph", withMask({C("direction", "direction", "horizontal", {"horizontal", "vertical"}),
+            F("low", "low", 0.25, 0, 1, "Pixels darker than this break the runs"), F("high", "high", 0.85, 0, 1, "Pixels brighter than this break the runs"),
+            C("order", "order", "ascending", {"ascending", "descending"}), F("max_span", "longest run (px, 0 = any)", 0, 0, 2000)}),
+            "Runs of pixels between the low and high brightness, sorted by brightness: streaky melt."});
+        d.push_back({"CRT", "MoGraph", withMask({F("curvature", "curvature", 0.12, 0, 1), F("scanlines", "scanlines", 0.5, 0, 1),
+            F("line_count", "lines", 270, 20, 2000), C("mask", "phosphor mask", "aperture grille", {"aperture grille", "shadow mask", "slot mask", "none"}),
+            F("mask_strength", "mask strength", 0.35, 0, 1), F("mask_size", "mask size (px)", 3, 1, 30), F("bloom", "bloom", 0.25, 0, 2),
+            F("bloom_size", "bloom size", 6, 0, 50), F("vignette", "vignette", 0.35, 0, 1), F("brightness", "brightness", 1.25, 0, 4),
+            F("flicker", "flicker", 0.03, 0, 0.5), F("roll", "rolling bar", 0.08, 0, 1), F("roll_speed", "roll speed", 0.3, -4, 4), I("seed", "seed", 0, 0, 1000)}),
+            "An old tube monitor: curved glass, scanlines, a phosphor mask, bloom, vignette, flicker and a rolling bar."});
+        d.push_back({"VHS", "MoGraph", withMask({F("chroma_bleed", "chroma bleed (px)", 4, 0, 40), F("chroma_shift", "chroma shift (px)", 3, -40, 40),
+            F("luma_blur", "luma softness (px)", 1, 0, 10), F("saturation", "saturation", 0.85, 0, 2), F("noise", "tape noise", 0.06, 0, 1),
+            F("tracking", "tracking error", 0.5, 0, 2), F("tracking_height", "tracking band height", 0.08, 0.01, 0.5), F("tracking_speed", "tracking band speed", 0.25, -4, 4),
+            F("head_switch", "head switching (px)", 8, 0, 60), F("wobble", "wobble (px)", 1, 0, 20), I("seed", "seed", 0, 0, 1000)}),
+            "Videotape: colour bleeding sideways, soft picture, tape noise, a rolling tracking band and head-switching noise at the bottom."});
+        d.push_back({"Hologram", "MoGraph", withMask({Col4("color", "colour", json::array({0.3, 0.85, 1, 1})), F("keep_colour", "keep the picture's colour", 0.2, 0, 1),
+            F("opacity", "opacity", 0.85, 0, 1), F("scan_spacing", "scan line spacing", 4, 1, 50), F("scan_strength", "scan lines", 0.5, 0, 1),
+            F("scan_speed", "scan speed (px/s)", 20, -500, 500), F("flicker", "flicker", 0.15, 0, 1), F("jitter", "row jitter", 0.15, 0, 1),
+            F("jitter_shift", "jitter shift (px)", 8, 0, 100), F("edge_glow", "edge glow", 1, 0, 4), F("edge_size", "edge size (px)", 3, 0.5, 30), I("seed", "seed", 0, 0, 1000)}),
+            "A projected hologram: the picture as tinted light with scan lines, flicker, jittering rows and glowing edges."});
+        d.push_back({"BitCrush", "MoGraph", withMask({F("pixel_size", "pixel size", 4, 1, 100), I("levels", "levels per channel", 8, 2, 256),
+            C("dither", "dither", "ordered", {"ordered", "noise", "none"}), F("dither_amount", "dither amount", 1, 0, 2)}),
+            "Fewer, bigger pixels and fewer colours, with an ordered or noise dither: retro and low-fi."});
+        d.push_back({"SignalLoss", "MoGraph", withMask(seedRate({F("amount", "amount", 0.5, 0, 1), F("snow", "snow", 0.3, 0, 1),
+            F("dropouts", "line dropouts", 0.08, 0, 1), F("blocks", "noise blocks", 0.06, 0, 1), B("colour_noise", "colour noise", true)}, 24)),
+            "A failing signal: snow, dropped lines and blocks of noise."});
+        d.push_back({"Stutter", "MoGraph", {F("chance", "chance", 0.25, 0, 1, "How often a stretch of frames sticks"), I("hold", "frames per stretch", 4, 1, 100),
+            C("mode", "mode", "hold", {"hold", "repeat", "jump back"}), Field(I("start", "start frame", 1, -100000, 100000), 70), I("seed", "seed", 0, 0, 1000)},
+            "Frames that stick: now and then a stretch of the clip holds a frame, repeats, or jumps back."});
+        // transitions
+        d.push_back({"WipeTransition", "MoGraph", trans({C("type", "type", "linear", {"linear", "iris", "clock", "diamond", "blinds", "checker"}),
+            F("angle", "angle", 0, -180, 180), PickXY(XY("center", "center", "$center", 0, 4096)), F("softness", "softness (px)", 40, 0, 1000),
+            When(I("count", "blinds", 8, 1, 100), "type=blinds"), When(F("cell_size", "cell size", 120, 4, 1000), "type=checker"),
+            F("glow", "edge glow", 0, 0, 4), Col4("glow_color", "glow colour", json::array({1, 0.6, 0.2, 1}))}),
+            "A wipe from A to B: linear, iris, clock, diamond, blinds or checkerboard, with a soft and optionally glowing edge."});
+        d.push_back({"WarpTransition", "MoGraph", trans({F("amount", "amount (px)", 80, 0, 1000), F("size", "noise size", 160, 4, 2000), I("seed", "seed", 0, 0, 1000)}),
+            "A to B through a noise warp that's strongest halfway, while they dissolve."});
+        d.push_back({"GlitchTransition", "MoGraph", trans(seedRate({F("shift", "shift (px)", 120, 0, 1000), F("rgb_split", "rgb split (px)", 12, 0, 200),
+            XY("block_size", "block size", json::array({120, 30}), 2, 1000)}, 24)),
+            "A cut hidden in a burst of glitch blocks and colour splits that peaks at the cut."});
+        d.push_back({"PixelTransition", "MoGraph", trans({F("max_size", "biggest pixel (px)", 64, 2, 1000)}),
+            "The picture breaks into bigger and bigger pixels, switches to B, and sharpens again."});
+        d.push_back({"ZoomTransition", "MoGraph", trans({F("strength", "strength", 1.5, 0, 10), PickXY(XY("center", "center", "$center", 0, 4096)),
+            I("samples", "blur samples", 12, 1, 64), F("flash", "flash", 0.3, 0, 2)}),
+            "A rushes into the screen with a zoom blur, and B arrives zoomed in and settles."});
+        d.push_back({"PushTransition", "MoGraph", trans({C("direction", "B comes from", "right", {"left", "right", "up", "down"}), B("push", "push A out", true),
+            I("samples", "motion blur samples", 8, 1, 32), F("shutter", "shutter", 0.5, 0, 2)}),
+            "B slides in from a side, pushing A out, with motion blur."});
+        // distortions
+        d.push_back({"WaveWarp", "MoGraph", withMask({C("type", "wave", "sine", {"sine", "square", "triangle", "sawtooth", "noise"}),
+            F("direction", "direction", 0, -180, 180), F("amplitude", "amplitude (px)", 20, 0, 500), F("wavelength", "wavelength (px)", 120, 1, 4000),
+            F("speed", "speed (waves/s)", 1, -10, 10), F("phase", "phase", 0, -360, 360), C("edges", "edges", "extend", {"extend", "black"}), I("seed", "seed", 0, 0, 1000)}),
+            "Waves running across the picture, pushing it sideways: sine, square, triangle, sawtooth or noise."});
+        d.push_back({"Bulge", "MoGraph", withMask({PickXY(XY("center", "center", "$center", 0, 4096)), F("radius", "radius", 300, 1, 4000),
+            F("amount", "amount", 0.5, -1, 1, "Positive bulges the middle out, negative pinches it in")}),
+            "Bulges (or pinches) the picture within a circle."});
+        d.push_back({"SliceShift", "MoGraph", withMask({I("slices", "slices", 12, 1, 400), F("angle", "angle", 0, -180, 180), F("shift", "shift (px)", 60, 0, 2000),
+            C("pattern", "pattern", "alternate", {"alternate", "random"}), F("speed", "speed", 0.5, 0, 10, "0: a fixed offset"), F("gap", "gap (px)", 0, 0, 200),
+            C("edges", "edges", "black", {"black", "extend"}), I("seed", "seed", 0, 0, 1000)}),
+            "Cuts the picture into strips that slide against each other."});
+        // shapes and HUD elements
+        d.push_back({"Shape", "MoGraph", gen({C("type", "shape", "rectangle", {"rectangle", "ellipse", "polygon", "triangle", "star", "ring", "arc", "cross", "line"}),
+            PickXY(XY("center", "center", "$center", 0, 4096)), XY("size", "size", json::array({300, 300}), 0, 4096), F("rotate", "rotate", 0, -360, 360),
+            When(F("roundness", "corner radius", 0, 0, 500), "type=rectangle"), When(I("sides", "sides / points", 6, 3, 64), "type=polygon|star"),
+            When(F("inner", "inner radius", 0.5, 0.05, 0.95), "type=star"), When(F("thickness", "thickness", 24, 0.5, 500), "type=ring|arc|cross|line"),
+            When(F("arc_start", "arc start", 0, -360, 720), "type=arc"), When(F("arc_end", "arc end", 270, -360, 720), "type=arc"),
+            When(PickXY(XY("from", "from", json::array({576, 540}), 0, 4096)), "type=line"), When(PickXY(XY("to", "to", json::array({1344, 540}), 0, 4096)), "type=line"),
+            Div("Look"), B("fill", "fill", true), Col4("fill_color", "fill colour", json::array({1, 1, 1, 1})),
+            F("stroke_width", "stroke width", 0, 0, 200), Col4("stroke_color", "stroke colour", json::array({1, 0.6, 0.15, 1})), F("softness", "edge softness", 1, 0.3, 200),
+            Div("Trim"), F("trim_start", "start", 0, 0, 1), F("trim_end", "end", 1, 0, 1, "Animate to draw the shape on, clockwise from 12 o'clock"), F("trim_offset", "offset", 0, -1, 1)}),
+            "A crisp vector shape: rectangle (rounded), ellipse, polygon, star, ring, arc, cross or line, filled and / or stroked, with trim to draw it on."});
+        d.push_back({"Bars", "MoGraph", gen({box("area", "area", json::array({192, 108, 1728, 486}), "Where the bars stand"), I("count", "bars", 32, 1, 512),
+            F("gap", "gap", 0.3, 0, 0.95), C("orientation", "orientation", "vertical", {"vertical", "horizontal"}), B("mirror", "mirror (grow both ways)", false),
+            C("motion", "motion", "noise", {"noise", "random", "sine"}), F("speed", "speed", 1, 0, 20), F("smoothness", "neighbour likeness", 0.15, 0.01, 2),
+            F("minimum", "minimum", 0.05, 0, 1), F("maximum", "maximum", 1, 0, 1), B("peaks", "peak markers", true),
+            Col4("color_low", "colour at the bottom", json::array({0.1, 0.7, 1, 1})), Col4("color_high", "colour at the top", json::array({1, 0.35, 0.6, 1})), I("seed", "seed", 0, 0, 1000)}),
+            "Animated bars: an equaliser or a data readout, driven by noise, random jumps or a sine."});
+        d.push_back({"BoxGrid", "MoGraph", gen(seedRate({box("area", "area", json::array({1056, 594, 1824, 972}), "Where the grid sits"), I("columns", "columns", 12, 1, 200),
+            I("rows", "rows", 8, 1, 200), F("gap", "gap (px)", 6, 0, 100), F("corner", "corner radius", 2, 0, 50), F("line_width", "outline width", 1.5, 0.3, 20),
+            F("fill_chance", "filled", 0.35, 0, 1), F("outline_chance", "outlined", 0.35, 0, 1), F("accent_chance", "accent", 0.06, 0, 1),
+            Col4("color", "colour", json::array({0.35, 0.8, 1, 0.85})), Col4("accent_color", "accent colour", json::array({1, 0.45, 0.2, 1}))}, 4)),
+            "A grid of HUD cells that flicker between filled, outlined, accented and empty."});
+        d.push_back({"Scatter", "MoGraph", {box("area", "area", "$box", "Where the copies are scattered"), I("count", "count", 60, 0, 20000),
+            XY("scale", "scale min / max", json::array({0.2, 0.6}), 0, 10), XY("rotation", "rotation min / max", json::array({-180, 180}), -360, 360),
+            XY("opacity", "opacity min / max", json::array({0.5, 1}), 0, 1), XY("drift", "drift (px/s)", json::array({0, 40}), -2000, 2000),
+            F("spin", "spin (deg/s)", 20, -720, 720), Div("Without a sprite"), F("dot_size", "dot size", 12, 0.5, 500), Col4("color", "dot colour", json::array({1, 1, 1, 1})),
+            I("seed", "seed", 0, 0, 1000)},
+            "Copies of the sprite input (or soft dots) scattered over an area, each with its own size, angle and opacity, drifting and spinning."});
+        d.push_back({"Radar", "MoGraph", gen({PickXY(XY("center", "center", "$center", 0, 4096)), F("radius", "radius", 300, 4, 4000), I("rings", "rings", 4, 0, 50),
+            F("line_width", "line width", 1.5, 0.3, 20), I("ticks", "ticks", 72, 0, 720), I("major_every", "long tick every", 6, 1, 100), F("tick_length", "tick length", 10, 0, 200),
+            B("crosshair", "crosshair", true), B("sweep", "sweep", true), F("sweep_speed", "sweep speed (turns/s)", 0.4, -10, 10), F("sweep_trail", "sweep trail (deg)", 70, 1, 360),
+            I("blips", "contacts", 6, 0, 100), Col4("color", "colour", json::array({0.3, 1, 0.6, 1})), F("glow", "glow", 0.4, 0, 4), I("seed", "seed", 0, 0, 1000)}),
+            "A radar or targeting HUD: rings, tick marks, a crosshair, a rotating sweep and contacts that light up as it passes."});
+        d.push_back({"Waveform", "MoGraph", gen({box("area", "area", json::array({192, 378, 1728, 702}), "Where the trace runs"),
+            C("type", "signal", "sine", {"sine", "noise", "square", "heartbeat"}), I("lines", "lines", 1, 1, 16), F("amplitude", "amplitude", 0.35, 0, 1),
+            F("frequency", "cycles across", 3, 0.1, 100), F("speed", "speed", 1, -20, 20), F("line_offset", "offset between lines", 0.08, -1, 1),
+            F("thickness", "thickness", 2, 0.3, 50), F("glow", "glow", 0.5, 0, 4), Col4("color", "colour", json::array({0.3, 1, 0.8, 1})), I("seed", "seed", 0, 0, 1000)}),
+            "An oscilloscope trace: sine, noise, square or a heartbeat, scrolling, with glow and echo lines."});
+        d.push_back({"FlowLines", "MoGraph", gen({F("angle", "direction", 0, -180, 180), F("spacing", "lane spacing", 14, 1, 400), F("width", "line width", 2, 0.3, 100),
+            F("dash_length", "streak length", 160, 1, 4000), F("gap", "gap", 220, 0, 4000), F("speed", "speed (px/s)", 300, -5000, 5000),
+            F("speed_variance", "speed variance", 0.5, 0, 1), F("wobble", "wobble (px)", 6, 0, 200), F("wobble_length", "wobble length", 300, 1, 4000),
+            F("density", "density", 0.6, 0, 1), Col4("head_color", "head colour", json::array({1, 1, 1, 1})), Col4("tail_color", "tail colour", json::array({0.1, 0.5, 1, 1})),
+            I("seed", "seed", 0, 0, 1000)}),
+            "Streaks of light flowing in lanes: data streams, warp lines, sci-fi flow patterns."});
+        d.push_back({"PatternGrid", "MoGraph", gen({C("type", "pattern", "hex", {"hex", "grid", "squares", "dots", "crosses", "lines", "triangles", "checker"}),
+            F("cell_size", "cell size", 48, 4, 1000), F("line_width", "line width", 1.5, 0.3, 50), F("base", "resting brightness", 0.15, 0, 1),
+            F("reveal", "reveal threshold", 0.5, 0, 1), F("reveal_size", "reveal size (cells)", 6, 1, 100), F("reveal_speed", "reveal speed", 0.5, -10, 10),
+            F("accent_chance", "accent", 0.04, 0, 1), Col4("color", "colour", json::array({0.35, 0.85, 1, 1})), Col4("accent_color", "accent colour", json::array({1, 0.5, 0.2, 1})),
+            I("seed", "seed", 0, 0, 1000)}),
+            "A tiled HUD pattern (hexes, grid, squares, dots, crosses, lines, triangles, checker) whose cells light up as a noise drifts over them."});
+        d.push_back({"NoisePattern", "MoGraph", gen({C("type", "type", "digital", {"digital", "static", "interference", "scan", "cells", "waves", "electric", "smoke"}),
+            F("size", "size", 80, 1, 2000), F("speed", "speed", 1, -20, 20), F("contrast", "contrast", 1, 0, 10), F("brightness", "brightness", 0, -1, 1),
+            F("color_split", "colour split (px)", 0, 0, 200, "Red, green and blue from noise offset along the split angle"), F("split_angle", "split angle", 0, -180, 180),
+            Col4("color_low", "low colour", json::array({0, 0, 0, 1})), Col4("color_high", "high colour", json::array({0.3, 0.9, 1, 1})),
+            B("alpha_from_luminance", "alpha from brightness", false), I("seed", "seed", 0, 0, 1000)}),
+            "Stylised noise for screens and overlays: digital blocks, static, interference, scan noise, cells, waves, electric, smoke, with colour splitting."});
+        d.push_back({"CodeRain", "MoGraph", gen({F("column_width", "column width", 18, 4, 200), F("glyph_size", "glyph size", 18, 4, 200),
+            C("characters", "characters", "hex", {"hex", "binary", "digits", "letters", "symbols", "custom"}), When(S("custom", "custom characters", "01"), "characters=custom"),
+            F("speed", "speed (px/s)", 220, 0, 5000), F("speed_variance", "speed variance", 0.6, 0, 1), I("trail", "trail (glyphs)", 18, 1, 200),
+            F("density", "density", 0.7, 0, 1), F("flip_rate", "glyph changes per second", 6, 0, 60),
+            Col4("head_color", "head colour", json::array({0.85, 1, 0.9, 1})), Col4("trail_color", "trail colour", json::array({0.1, 0.9, 0.35, 1})),
+            File("font", "font"), I("seed", "seed", 0, 0, 1000)}),
+            "Columns of characters raining down the screen, bright at the head and fading behind."});
+        d.push_back({"LCDScreen", "MoGraph", withMask({F("pixel_size", "screen pixel size", 6, 1, 100, "The screen's pixel pitch in output pixels"),
+            C("layout", "subpixels", "RGB stripes", {"RGB stripes", "BGR stripes", "dots", "none"}), F("gap", "gap", 0.15, 0, 0.45),
+            F("grid_darkness", "gap darkness", 0.6, 0, 1), F("subpixel_strength", "subpixel strength", 1, 0, 1), F("brightness", "brightness", 3, 0, 8),
+            B("pixelate", "pixelate to the screen's pixels", true)}),
+            "The picture as a screen shows it close up: pixels made of red, green and blue subpixels with dark gaps; fades to an even tone when too small to resolve (no moire)."});
+    }
     d.push_back({"KillOutline", "Keyer",
                  withMask({C("remove", "remove", "light outline", {"light outline", "dark outline", "both"}),
                            F("size", "size", 4, 0.5, 50, "How far the clean colour from inside the edge is spread outward (px)"),
@@ -1766,7 +1936,7 @@ const NodeDef* nodeDef(const std::string& type) {
 }
 
 const std::vector<std::string>& categories() {
-    static std::vector<std::string> c = {"Image", "Draw", "Time", "Channel", "Color", "Filter", "Keyer", "Merge", "Transform", "Stylize", "3D", "Value", "AI", "Other", "OFX"};
+    static std::vector<std::string> c = {"Image", "Draw", "Time", "Channel", "Color", "Filter", "Keyer", "Merge", "Transform", "Stylize", "MoGraph", "3D", "Value", "AI", "Other", "OFX"};
     return c;
 }
 
@@ -1780,7 +1950,7 @@ unsigned int categoryColor(const std::string& c) {
     static const std::map<std::string, unsigned int> m = {
         {"Image", 0xFF8C8C8C}, {"Draw", 0xFF7C8FD8}, {"Keyer", 0xFF62B35E}, {"Time", 0xFF7FB89C}, {"Channel", 0xFFB8A15E}, {"Color", 0xFF6FA88A},
         {"Filter", 0xFF5E8FC9}, {"Merge", 0xFFC98A4E}, {"Transform", 0xFFB97AA7}, {"3D", 0xFFC2B04A}, {"AI", 0xFF8A6AD8}, {"Other", 0xFF9A9A9A},
-        {"OFX", 0xFF4FA3C4}, {"Stylize", 0xFF5AB3D6}, {"Value", 0xFFE66E78}};
+        {"OFX", 0xFF4FA3C4}, {"Stylize", 0xFF5AB3D6}, {"Value", 0xFFE66E78}, {"MoGraph", 0xFFA86AE8}};
     auto it = m.find(c);
     return it == m.end() ? 0xFF4A4AB8 : it->second;  // unknown: red
 }
