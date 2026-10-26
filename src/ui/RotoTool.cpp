@@ -433,7 +433,7 @@ Node* activeToolNode(App& app) {
         if (Node* n = app.node(p))
             if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "SplineFlow" || n->type == "Tracker" || n->type == "PlanarTracker" ||
                 n->type == "CameraTracker" || n->type == "FlowField" || n->type == "TrackMask" || n->type == "Transform" || n->type == "Position" || n->type == "CornerPin2D" ||
-                n->type == "TransformMasked" || n->type == "GridWarp")
+                n->type == "TransformMasked" || n->type == "GridWarp" || hasKnobHandles(n->type))
                 return n;
     return nullptr;
 }

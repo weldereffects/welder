@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "core/Schema.h"
 #include "App.h"
 #include "nodes/Roto.h"
 #include "imgui.h"
@@ -424,6 +425,13 @@ void setParamComp(json& v, int n, int k, double val, double frame, const std::ve
 // 2D transform handles (TransformTool.cpp): Transform, Position, CornerPin2D
 Node* activeTransform2D(App& app);
 void drawTransformViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+// Handles for the positions / transforms in a node's knobs (ui/KnobHandles.cpp): the node types
+// that have them, and the overlay for the node whose panel was opened last.
+bool hasKnobHandles(const std::string& type);
+void drawKnobHandles(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+// A knob's default (with "$center" etc. resolved against the format), and whether the panel shows it now.
+std::vector<double> knobDefaults(const KnobDef& k, int n, const Format& f);
+bool knobShown(const Node* n, const NodeDef& def, const KnobDef& k);
 // 3D viewer (Viewer3D.cpp)
 bool viewer3DActive(App& app, UiState& ui);
 void drawViewer3DToolbar(App& app, UiState& ui);

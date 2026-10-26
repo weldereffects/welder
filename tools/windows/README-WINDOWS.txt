@@ -535,6 +535,22 @@ THE EDITOR
     squares to scale x or y. Position: drag its handle. CornerPin2D: drag
     the four "to" corners. Animated values get a key on the current frame.
 
+  VIEWER HANDLES ON OTHER NODES
+    Every node with a position or a transform among its knobs shows handles
+    in the viewer while its properties are open (the panel opened last wins):
+      crosshair    a position: drag it (LensFlare light, Radial / Twirl / Bulge
+                   centre, focus points, ray centres, ...)
+      box          a region: drag a corner or edge square to resize, the
+                   outline to move it (Crop, Rectangle, Text box, CurveTool,
+                   Denoise sample box, MoGraph areas, ...)
+      ring         a radius: drag its rim or its square
+      arm          a direction: drag the dot round (light angles, rain, streaks)
+      line         two points (Ramp, Zap, Shape line): drag either end, or the
+                   middle square to move both
+      jack         Text, Noise and Feedback transforms, as on Transform
+    Shape also has a rotated size box. A handle hides when its knob is hidden
+    in the panel. One drag is one undo step; Q hides the handles.
+
   PROPERTIES BIN
     "max panels" sets how many panels stay open; "clear all" (or
     Ctrl+Shift+A over the bin) closes them all.

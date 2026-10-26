@@ -604,6 +604,7 @@ void drawViewer(App& app, UiState& ui) {
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         drawTransformViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawKnobHandles(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};

@@ -3280,6 +3280,9 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
 
 }  // namespace
 
+std::vector<double> knobDefaults(const KnobDef& k, int n, const Format& f) { return defaults(k, n, f); }
+bool knobShown(const Node* n, const NodeDef& def, const KnobDef& k) { return whenOk(n, def, k); }
+
 void setParamComp(json& v, int n, int k, double val, double frame, const std::vector<double>& defs) {
     setComp(v, n, k, val, frame, defs);
 }

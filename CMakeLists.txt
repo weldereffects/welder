@@ -394,6 +394,7 @@ if(STRATA_BUILD_UI)
   src/ui/CamTrackerTool.cpp
   src/ui/Viewer3D.cpp
   src/ui/TransformTool.cpp
+  src/ui/KnobHandles.cpp
   src/ui/FlowPaintTool.cpp
   src/ui/TrackMaskTool.cpp
   src/ui/AppML.cpp
