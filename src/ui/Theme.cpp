@@ -1,7 +1,7 @@
 // Themes: the ImGui style plus the colours Welder draws by hand (node graph canvas and tiles,
-// viewer surround, cards, toolbar icons). Four palettes; Forge is the default.
-//   forge     warm charcoal, molten orange accent (the Welder look)
+// viewer surround, cards, toolbar icons). Four palettes; Graphite is the default.
 //   graphite  neutral greys, amber accent (the classic look, refined)
+//   forge     warm charcoal, molten orange accent
 //   midnight  cool blue-black, teal accent
 //   neutral   true mid grey, quiet blue accent (colour-critical work)
 #include <cstdlib>
@@ -17,7 +17,7 @@ ThemeColors& theme() {
 }
 
 const std::vector<std::string>& themeNames() {
-    static const std::vector<std::string> n = {"forge", "graphite", "midnight", "neutral"};
+    static const std::vector<std::string> n = {"graphite", "forge", "midnight", "neutral"};
     return n;
 }
 
@@ -65,7 +65,7 @@ Palette palette(const std::string& name) {
         return {{58, 58, 58}, {72, 72, 72}, {80, 80, 80}, {52, 52, 52}, {60, 60, 60}, {90, 90, 90}, {104, 104, 104}, {44, 44, 44},
                 {226, 226, 226}, {160, 160, 160}, {244, 244, 244}, {110, 170, 230}, {56, 56, 56}, {64, 64, 64}, {70, 70, 70},
                 {84, 84, 84}, {238, 238, 238}, {200, 200, 200}};
-    // forge (the default)
+    // forge
     return {{27, 21, 18}, {42, 34, 28}, {52, 42, 35}, {24, 19, 16}, {38, 30, 25}, {66, 50, 38}, {92, 66, 46}, {12, 9, 8},
             {236, 226, 214}, {160, 142, 124}, {250, 242, 232}, {255, 122, 26}, {24, 19, 16}, {16, 12, 10}, {44, 36, 30},
             {50, 40, 33}, {244, 234, 222}, {206, 190, 172}};
@@ -78,7 +78,7 @@ void applyTheme(const std::string& requested) {
     if (const char* pv = std::getenv("STRATA_PREVIEW_THEME"); pv && *pv) name = pv;  // look-development screenshots
     bool known = false;
     for (auto& n : themeNames()) known = known || n == name;
-    if (!known) name = "forge";
+    if (!known) name = "graphite";
     const Palette p = palette(name);
     theme().name = name;
 

@@ -573,6 +573,7 @@ static void drawPreferences(App& app, UiState& ui) {
         for (auto& t : themeNames())
             if (ImGui::Selectable(themeLabel(t).c_str(), t == app.themeName)) {
                 app.themeName = t;
+                app.themeChosen = true;
                 ui.pendingTheme = t;  // applied between frames
                 app.saveSettings();
             }

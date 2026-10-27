@@ -351,7 +351,10 @@ void App::loadSettings() {
             playbackCacheGB = j.value("playback_cache_gb", playbackCacheGB);
             askMatchProject = j.value("ask_match_project", askMatchProject);
             uncPaths = j.value("unc_paths", uncPaths);
-            themeName = j.value("theme", themeName);
+            if (j.contains("ui_theme") && j["ui_theme"].is_string()) {  // ("theme" was written by every save before: ignored)
+                themeName = j["ui_theme"].get<std::string>();
+                themeChosen = true;
+            }
             recentFiles.clear();
             if (j.contains("recent_files") && j["recent_files"].is_array())
                 for (auto& r : j["recent_files"])
@@ -387,7 +390,7 @@ void App::saveSettings() {
     j["playback_cache_gb"] = playbackCacheGB;
     j["ask_match_project"] = askMatchProject;
     j["unc_paths"] = uncPaths;
-    j["theme"] = themeName;
+    if (themeChosen) j["ui_theme"] = themeName;
     j["recent_files"] = recentFiles;
     j["gpu"] = gpu::enabled();
     if (cacheDirSetting.empty()) j.erase("cache_dir");
