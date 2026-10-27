@@ -1795,6 +1795,11 @@ void drawNodeGraph(App& app, UiState& ui) {
         return ImVec2(o.x, o.y + (n->type == "Dot" ? 0.0f : 5.0f * g.zoom));
     };
     auto outPortAt = [&](ImVec2 sp) -> Node* {
+        // Over a node's body the node wins: its output is only grabbed from its bottom edge or
+        // below (zoomed out, the port's pick radius would otherwise cover the whole node).
+        if (Node* body = nodeAt(G(sp)); body && body->type != "Dot" && !isAnnotation(body) &&
+                                        sp.y < S(pos(body)).y + size(body).y * g.zoom - 3.0f)
+            return nullptr;
         Node* best = nullptr;
         float bestD = grabR;
         for (auto& up : comp.nodes) {
