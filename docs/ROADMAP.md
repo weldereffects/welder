@@ -25,6 +25,7 @@
 - [x] Expressions: a safe subset of the classic language on any knob (= in the properties), cache-aware, renamed with their nodes
 - [x] Copy nodes from Welder in the .nk clipboard format, and export whole comps as .nk (`welder nk`)
 - [ ] Python API (pybind11) and `.weld` <-> Python round trip
+- [x] Autosave with crash recovery, atomic saves, ask before discarding unsaved changes; Viewer › Performance (UI frame times and their parts, per-node render times, caches); `welder_ui --smoke` startup / open / play / autosave check with a stall watchdog
 - [x] Proxy / render scale, disk cache (content-keyed viewer frames), cost-aware tile cache
 
 ## Phase 3 — production

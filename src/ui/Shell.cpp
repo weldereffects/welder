@@ -14,6 +14,7 @@
 #include "PanelKit.h"
 #include "core/CacheDir.h"
 #include "core/Crash.h"
+#include "core/Platform.h"
 #include "gpu/Gpu.h"
 #include "core/FrameList.h"
 #include "ml/ML.h"
@@ -33,11 +34,8 @@ bool typingInText() { return ImGui::GetIO().WantTextInput; }
 // ------------------------------------------------------------------ file actions
 
 static void doOpen(App& app, UiState& ui) {
-    openFileDialog(ui, "Open comp", false, {".weld", ".strata"}, [&app, &ui](const std::string& p) {
-        std::string err;
-        if (!app.open(p, &err)) app.message("error: " + err);
-        ui.graph.needsFrame = true;
-        ui.viewer.fitPending = true;
+    openFileDialog(ui, "Open comp", false, {".weld", ".strata"}, [&ui](const std::string& p) {
+        ui.dropOpenComp = p;  // opened once unsaved changes are dealt with
     }, app.compPath.empty() ? "" : fs::path(app.compPath).parent_path().string());
 }
 
@@ -93,7 +91,7 @@ void drawMenuBar(App& app, UiState& ui) {
     }
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("New", "Ctrl+N")) { app.newComp(); ui.graph.needsFrame = true; }
+        if (ImGui::MenuItem("New", "Ctrl+N")) ui.dropOpenComp = kNewComp;  // (asks about unsaved changes)
         if (ImGui::MenuItem("Open...", "Ctrl+O")) doOpen(app, ui);
         if (ImGui::BeginMenu("Open Recent", !app.recentFiles.empty())) {
             const std::vector<std::string> recent = app.recentFiles;  // a pick changes the list
@@ -133,7 +131,7 @@ void drawMenuBar(App& app, UiState& ui) {
         if (ImGui::MenuItem("Save", "Ctrl+S")) doSave(app, ui);
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) doSaveAs(app, ui);
         ImGui::Separator();
-        if (ImGui::MenuItem("Close Comp", "Ctrl+W")) { app.newComp(); ui.graph.needsFrame = true; }
+        if (ImGui::MenuItem("Close Comp", "Ctrl+W")) ui.dropOpenComp = kNewComp;
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) ui.requestQuit = true;
         ImGui::EndMenu();
     }
@@ -230,6 +228,10 @@ void drawMenuBar(App& app, UiState& ui) {
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Go to Frame...", "Alt+G")) ui.openGotoFrame = true;
+        if (ImGui::MenuItem("Performance", nullptr, ui.showPerf)) {
+            ui.showPerf = !ui.showPerf;
+            app.setProfiling(ui.showPerf);
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Workspace")) {
@@ -580,8 +582,19 @@ static void drawPreferences(App& app, UiState& ui) {
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Forge: warm charcoal, orange accent (the default)\nGraphite: neutral greys, amber accent\n"
+        ImGui::SetTooltip("Graphite: neutral greys, amber accent (the default)\nForge: warm charcoal, orange accent\n"
                           "Midnight: cool blue-black, teal accent\nNeutral: true mid grey, for judging colour");
+    ImGui::SeparatorText("Autosave");
+    kit::rowLabel("every", "A copy of the comp goes to the settings folder this often while it has unsaved changes.\n"
+                           "After a crash, opening the script (or starting Welder, for an untitled comp) offers it back.\n0: off");
+    ImGui::SetNextItemWidth(120);
+    int secs = (int)app.autosaveSecs;
+    if (ImGui::InputInt("##autosave", &secs, 10, 60)) {
+        app.autosaveSecs = std::clamp(secs, 0, 3600);
+        app.saveSettings();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled(app.autosaveSecs > 0 ? "seconds" : "seconds (off)");
     ImGui::SeparatorText("New scripts");
     if (kit::checkbox("Offer to match the project to the first Read", &app.askMatchProject,
                       "When a new script's first Read gets its media, ask whether to set the project's frame range and resolution to it"))
@@ -954,7 +967,9 @@ static void drawMatchProject(App& app, UiState& ui) {
                 first = n.get();
                 break;
             }
-        if (first) {
+        // (once the viewer has finished: it has loaded the file by then, so its size is known
+        // without the UI thread decoding a frame itself)
+        if (first && !app.rendering() && !app.editsPending()) {
             app.matchArmed = false;  // only ever the first one
             if (app.askMatchProject) {
                 Offer x;
@@ -1050,8 +1065,130 @@ static void drawMatchProject(App& app, UiState& ui) {
     ImGui::EndPopup();
 }
 
+// Viewer > Performance: where the time goes, on this machine. The editor's own frames (the work
+// on the UI thread: anything slow here is felt as lag), the viewer's last full render and its
+// slowest nodes, and the caches. "Copy report" puts it all on the clipboard as text.
+static void drawPerformance(App& app, UiState& ui) {
+    if (!ui.showPerf) return;
+    ImGui::SetNextWindowSize(ImVec2(440, 540), ImGuiCond_FirstUseEver);
+    bool open = true;
+    if (!ImGui::Begin(ui.win("Performance").c_str(), &open)) {
+        ImGui::End();
+        if (!open) ui.showPerf = false, app.setProfiling(false);
+        return;
+    }
+    char b[256];
+    std::string report;
+    auto line = [&](const char* label, const std::string& value, ImU32 col = 0) {
+        kit::rowLabel(label);
+        ImGui::SameLine(kit::labelWidth());
+        ImGui::PushTextWrapPos(0.0f);  // long values (the GPU's status) wrap
+        ImGui::PushStyleColor(ImGuiCol_Text, col ? ImGui::ColorConvertU32ToFloat4(col) : ImGui::GetStyleColorVec4(ImGuiCol_Text));
+        ImGui::TextUnformatted(value.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
+        report += std::string(label) + ": " + value + "\n";
+    };
+    auto section = [&](const char* name) {
+        ImGui::Spacing();
+        ImGui::PushFont(theme().small, 0.0f);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(theme().muted), "%s", name);
+        ImGui::PopFont();
+        report += std::string("\n[") + name + "]\n";
+    };
+    const ImU32 warn = IM_COL32(240, 150, 60, 255), bad = IM_COL32(240, 80, 70, 255), good = IM_COL32(120, 200, 120, 255);
+
+    // ---- the editor (UI thread)
+    section("EDITOR");
+    const double now = ImGui::GetTime();
+    float worst = 0, sum = 0;
+    int n = 0;
+    for (int i = 0; i < 240; ++i)
+        if (ui.frameStamp[i] > 0 && now - ui.frameStamp[i] <= 2.0) {
+            worst = std::max(worst, ui.frameMs[i]);
+            sum += ui.frameMs[i];
+            ++n;
+        }
+    std::snprintf(b, sizeof b, "%.1f ms average, %.1f ms slowest (last 2 s)", n ? sum / n : 0.0f, worst);
+    line("frame work", b, worst > 100 ? bad : worst > 33 ? warn : good);
+    {  // the last 240 frames, oldest first; the line is 16.7 ms (60 fps)
+        float v[240];
+        for (int i = 0; i < 240; ++i) v[i] = ui.frameMs[(ui.frameIdx + i) % 240];
+        ImGui::PushStyleColor(ImGuiCol_PlotLines, ImGui::ColorConvertU32ToFloat4(themeAccent()));
+        ImGui::PlotLines("##frames", v, 240, 0, nullptr, 0.0f, std::max(33.0f, worst * 1.1f), ImVec2(-1, 48));
+        ImGui::PopStyleColor();
+    }
+    if (ui.slowFrame.ms > 0 && now - ui.slowFrame.when <= 2.0 && !ui.slowFrame.parts.empty()) {
+        auto parts = ui.slowFrame.parts;
+        std::sort(parts.begin(), parts.end(), [](auto& a, auto& b2) { return a.second > b2.second; });
+        std::string t;
+        for (size_t i = 0; i < parts.size() && i < 4; ++i) {
+            std::snprintf(b, sizeof b, "%s%s %.0f ms", i ? ", " : "", parts[i].first.c_str(), parts[i].second);
+            t += b;
+        }
+        line("slowest frame", t, ui.slowFrame.ms > 100 ? warn : 0);
+    }
+    std::snprintf(b, sizeof b, "%.0f MB of %.0f free", platform::availableRamGB() * 1024, platform::physicalRamGB() * 1024);
+    line("memory", b);
+    line("GPU", gpu::enabled() ? gpu::status() : std::string("off (Preferences)"));
+    line("disk cache", app.diskCache() ? "on" : "off");
+
+    // ---- the viewer's last full render
+    const App::PerfSnapshot p = app.perfSnapshot();
+    section("VIEWER RENDER");
+    if (p.serial == 0) {
+        ImGui::TextDisabled("(waiting for the next render: change a frame or a knob)");
+    } else {
+        std::snprintf(b, sizeof b, "%.0f ms  %s, frame %g, scale %g", p.ms, p.node.c_str(), p.frame, p.scale);
+        line("last render", b, p.ms > 1000 ? bad : p.ms > 200 ? warn : 0);
+        std::snprintf(b, sizeof b, "up to %d at once, of %d", p.peakThreads, p.threads);
+        line("threads", b);
+        double total = 0;
+        for (auto& t : p.nodes) total += t.ms;
+        if (ImGui::BeginTable("##nodes", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("node", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("ms", ImGuiTableColumnFlags_WidthFixed, 70);
+            ImGui::TableSetupColumn("share", ImGuiTableColumnFlags_WidthFixed, 110);
+            report += "slowest nodes (their own time, all threads):\n";
+            for (size_t i = 0; i < p.nodes.size() && i < 10; ++i) {
+                const auto& t = p.nodes[i];
+                const float share = total > 0 ? (float)(t.ms / total) : 0.0f;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(t.node.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%.0f", t.ms);
+                ImGui::TableNextColumn();
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::ColorConvertU32ToFloat4(themeAccent()));
+                std::snprintf(b, sizeof b, "%.0f%%", share * 100);
+                ImGui::ProgressBar(share, ImVec2(-1, 0), b);
+                ImGui::PopStyleColor();
+                std::snprintf(b, sizeof b, "  %s  %.0f ms  %.0f%%  (%d tiles)\n", t.node.c_str(), t.ms, share * 100.0f, t.tiles);
+                report += b;
+            }
+            ImGui::EndTable();
+        }
+    }
+    section("TILE CACHE");
+    const uint64_t asked = p.cache.hits + p.cache.misses;
+    std::snprintf(b, sizeof b, "%.0f of %.0f MB, %zu tiles", p.cache.bytes / 1048576.0, p.cache.budget / 1048576.0, p.cache.entries);
+    line("used", b);
+    std::snprintf(b, sizeof b, "%.0f%% reused, %llu evicted", asked ? 100.0 * p.cache.hits / asked : 0.0, (unsigned long long)p.cache.evictions);
+    line("reuse", b);
+
+    ImGui::Spacing();
+    if (ImGui::Button("Copy report")) ImGui::SetClipboardText(("Welder performance\n" + report).c_str());
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("The numbers above as text, to paste into a message or bug report");
+    ImGui::End();
+    if (!open) {
+        ui.showPerf = false;
+        app.setProfiling(false);
+    }
+}
+
 void drawDialogs(App& app, UiState& ui) {
     drawMatchProject(app, ui);
+    drawPerformance(app, ui);
     drawPreferences(app, ui);
     if (!ui.lastCrash.empty() && !ImGui::IsPopupOpen("Welder closed unexpectedly")) ImGui::OpenPopup("Welder closed unexpectedly");
     if (ImGui::BeginPopupModal("Welder closed unexpectedly", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -1072,39 +1209,84 @@ void drawDialogs(App& app, UiState& ui) {
         }
         ImGui::EndPopup();
     }
-    if (!ui.dropOpenComp.empty()) {
-        if (!app.dirty) {
-            std::string err;
-            if (!app.open(ui.dropOpenComp, &err)) app.message("error: " + err);
-            ui.graph.needsFrame = true;
-            ui.viewer.fitPending = true;
-            ui.dropOpenComp.clear();
-        } else if (!ImGui::IsPopupOpen("Open dropped comp"))
-            ImGui::OpenPopup("Open dropped comp");
+    // Opening a comp, or a new one: straight away, or asking first when there are unsaved changes.
+    auto doIt = [&app, &ui](bool discarded) {
+        const std::string what = ui.dropOpenComp;
+        ui.dropOpenComp.clear();
+        if (discarded) app.discardAutosave();  // the changes were thrown away: so is their autosave
+        std::string err;
+        if (what == kNewComp) app.newComp();
+        else if (!app.open(what, &err)) app.message("error: " + err);
+        ui.graph.needsFrame = true;
+        ui.viewer.fitPending = true;
+    };
+    if (!ui.dropOpenComp.empty() && !ImGui::IsPopupOpen("Unsaved changes##switch")) {
+        if (!app.dirty) doIt(false);
+        else ImGui::OpenPopup("Unsaved changes##switch");
     }
-    if (ImGui::BeginPopupModal("Open dropped comp", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Open %s?", fs::path(ui.dropOpenComp).filename().string().c_str());
-        ImGui::TextDisabled("This comp has unsaved changes.");
-        if (ImGui::Button("Save, then open")) {
+    if (ImGui::BeginPopupModal("Unsaved changes##switch", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool isNew = ui.dropOpenComp == kNewComp;
+        const std::string target = isNew ? "" : fs::path(ui.dropOpenComp).filename().string();
+        ImGui::Text("%s has unsaved changes.", app.compPath.empty() ? "This comp" : fs::path(app.compPath).filename().string().c_str());
+        ImGui::TextDisabled("%s", isNew ? "Save them before starting a new comp?" : ("Save them before opening " + target + "?").c_str());
+        ImGui::Spacing();
+        if (app.compPath.empty()) ImGui::BeginDisabled();
+        if (ImGui::Button("Save")) {
             std::string err;
-            bool saved = !app.compPath.empty() && app.save(app.compPath, &err);
-            if (!saved) app.message(app.compPath.empty() ? "save the comp first (File > Save As)" : "error: " + err);
-            else if (!app.open(ui.dropOpenComp, &err)) app.message("error: " + err);
-            ui.graph.needsFrame = true;
-            ui.dropOpenComp.clear();
+            if (app.save(app.compPath, &err)) doIt(false);
+            else app.message("error: " + err), ui.dropOpenComp.clear();
             ImGui::CloseCurrentPopup();
         }
+        if (app.compPath.empty()) {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Not saved yet: use File > Save As first");
+        }
         ImGui::SameLine();
-        if (ImGui::Button("Open without saving")) {
-            std::string err;
-            if (!app.open(ui.dropOpenComp, &err)) app.message("error: " + err);
-            ui.graph.needsFrame = true;
-            ui.dropOpenComp.clear();
+        if (ImGui::Button("Don't save")) {
+            doIt(true);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             ui.dropOpenComp.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    // An autosave newer than the script just opened (or an untitled one left from a crash).
+    if (!app.recovery.autosave.empty() && !ImGui::IsPopupOpen("Recover autosave")) ImGui::OpenPopup("Recover autosave");
+    if (ImGui::BeginPopupModal("Recover autosave", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const auto& r = app.recovery;
+        const double m = r.minutesOld;
+        char age[64];
+        if (m < 1) std::snprintf(age, sizeof age, "less than a minute ago");
+        else if (m < 120) std::snprintf(age, sizeof age, "%.0f minute%s ago", m, m < 1.5 ? "" : "s");
+        else if (m < 48 * 60) std::snprintf(age, sizeof age, "%.0f hours ago", m / 60);
+        else std::snprintf(age, sizeof age, "%.0f days ago", m / 1440);
+        if (r.original.empty()) ImGui::TextUnformatted("An untitled comp was autosaved but never saved.");
+        else ImGui::Text("%s has an autosave newer than the saved script.", fs::path(r.original).filename().string().c_str());
+        ImGui::TextDisabled("Autosaved %s. Welder may have closed before it was saved.", age);
+        ImGui::Spacing();
+        if (ImGui::Button("Recover")) {
+            std::string err;
+            if (!app.recoverAutosave(&err)) app.message("error: " + err);
+            ui.graph.needsFrame = true;
+            ui.viewer.fitPending = true;
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open the autosaved work (it stays unsaved until you save)");
+        ImGui::SameLine();
+        if (ImGui::Button("Discard")) {
+            std::error_code ec;
+            fs::remove(r.autosave, ec);
+            app.recovery = {};
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Delete the autosave and keep the saved script");
+        ImGui::SameLine();
+        if (ImGui::Button("Not now") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            app.recovery = {};  // (kept: offered again next time)
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

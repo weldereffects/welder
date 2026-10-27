@@ -259,6 +259,12 @@ std::vector<Engine::NodeTime> Engine::profile() {
 
 int Engine::profileThreads() { return peak_.load(); }
 
+void Engine::resetProfile() {
+    std::lock_guard<std::mutex> l(profM_);
+    prof_.clear();
+    peak_ = 0;
+}
+
 void Engine::setCacheBudget(size_t bytes) {
     cache_.setBudget(bytes);
     std::lock_guard<std::mutex> l(asmM_);
@@ -362,7 +368,8 @@ ImagePtr Engine::tile(Node* n, double frame, uint64_t h, int tx, int ty, const B
         const double savedUp = t_upCost;
         t_upCost = 0;
         const auto c0 = std::chrono::steady_clock::now();
-        if (g_prof.on || profile_) {
+        const bool prof = profile_;  // (it can be switched while a tile renders)
+        if (g_prof.on || prof) {
             double savedChild = t_childMs;
             t_childMs = 0;
             auto t0 = std::chrono::steady_clock::now();
@@ -382,7 +389,7 @@ ImagePtr Engine::tile(Node* n, double frame, uint64_t h, int tx, int ty, const B
                 }
             };
             std::optional<Active> act;
-            if (profile_) act.emplace(active_, peak_);
+            if (prof) act.emplace(active_, peak_);
             n->render(args, *img);
             double total = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
             const std::string who = n->name + " (" + n->type + ")";
@@ -392,7 +399,7 @@ ImagePtr Engine::tile(Node* n, double frame, uint64_t h, int tx, int ty, const B
                 e.first += total - t_childMs;
                 e.second += 1;
             }
-            if (profile_) {
+            if (prof) {
                 std::lock_guard<std::mutex> l(profM_);
                 auto& e = prof_[who];
                 e.first += total - t_childMs;

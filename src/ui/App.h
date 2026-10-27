@@ -32,6 +32,9 @@
 
 namespace strata::ui {
 
+// Writes a file via a temporary next to it, so a crash mid-write never leaves it half written.
+bool writeFileAtomic(const std::string& path, const std::string& text, std::string* err);
+
 struct ViewResult {
     ImagePtr image;   // null if nothing to show; bounds are pixels at `scale`
     ImagePtr imageB;  // the A/B compare node's image (same region / scale), when comparing
@@ -174,6 +177,18 @@ public:
     std::function<void()> onResult;
     // Time of the last finished full-quality pass, for the status line.
     double lastRenderMs() const { return lastMs_; }
+    // The Performance panel: while on, the viewer's renders are timed per node.
+    struct PerfSnapshot {
+        std::string node;                    // what was rendered
+        double frame = 0, scale = 1, ms = 0;  // its frame, render scale and time
+        std::vector<Engine::NodeTime> nodes;  // each node's own time in it, slowest first
+        int peakThreads = 0, threads = 0;
+        CacheStats cache;
+        uint64_t serial = 0;  // bumps with each new snapshot
+    };
+    void setProfiling(bool on);
+    bool profiling() const { return profiling_; }
+    PerfSnapshot perfSnapshot();
     // A/B compare: also render this node (same frame / region / scale) into ViewResult::imageB.
     void setCompareNode(const std::string& name);
     std::string compareNode();
@@ -232,7 +247,24 @@ public:
     // ------------------------------------------------------------ files
     bool newComp();
     bool open(const std::string& path, std::string* err);
-    bool save(const std::string& path, std::string* err);
+    bool save(const std::string& path, std::string* err);  // atomic: a crash mid-save leaves the old script
+
+    // ---- autosave: every autosaveSecs (0: off) while there are unsaved changes, a copy of the comp
+    // goes to <config>/autosave (written on a background thread). Saving the comp, or throwing its
+    // changes away, removes it. Opening a script with a newer autosave (or starting with an untitled
+    // one left over) sets `recovery`, and the UI offers it.
+    double autosaveSecs = 30;
+    void tickAutosave(bool userBusy);  // each UI frame; userBusy: a drag is under way (wait for it)
+    void discardAutosave();            // the current comp's (its changes were thrown away)
+    struct Recovery {
+        std::string autosave;  // the autosave file
+        std::string original;  // the script it belongs to (empty: an untitled comp)
+        double minutesOld = 0;
+    };
+    Recovery recovery;
+    void checkAutosave();                    // sets `recovery` for the current comp, if there is one
+    bool recoverAutosave(std::string* err);  // opens `recovery` (unsaved, under the original's name)
+    std::string autosavePath(const std::string& compPath) const;
     bool importNk(const std::string& nkPath, std::string* err);
     // Nodes copied in another .nk app (its clipboard text) -> {"strata_nodes"} entries; null on failure.
     json nkToNodes(const std::string& nkText, std::string* err);
@@ -348,6 +380,13 @@ private:
     void restore(const std::string& snap);
 
     std::unique_ptr<Engine> engine_;
+    double lastAutosave_ = 0;
+    std::thread autosaveThread_;
+    std::atomic<bool> autosaveBusy_{false};
+    void adoptComp(std::shared_ptr<Comp> loaded);  // (open and recover)
+    std::atomic<bool> profiling_{false};
+    std::mutex perfM_;
+    PerfSnapshot perf_;
     std::unique_ptr<DiskCache> disk_;
     std::vector<std::vector<std::string>> pythonCandidates() const;
     bool runImporter(const std::vector<std::string>& args, std::string* err);
@@ -357,6 +396,7 @@ private:
     static Box viewBox(const Format& fmt, const Box& dod, double sc, const Box& region);
     bool diskHasView(const std::string& node, double f, double sc, const Box& region);
     bool cleanAfterApply_ = false;  // set by open/new so loading doesn't mark the comp modified
+    bool dirtyAfterApply_ = false;  // set by recoverAutosave: the loaded comp is unsaved
     // the timeline's disk-cache line: scanned on a thread of its own (it reads every frame's
     // hash, which for a Read means its files), never on the UI thread
     struct DiskScan {

@@ -319,6 +319,9 @@ struct DopeSheetState {
     std::map<KeySel, double> dragOrig;
 };
 
+// UiState::dropOpenComp for File > New / Close Comp (asks about unsaved changes like an open does)
+inline const char* kNewComp = "\x01new";
+
 struct UiState {
     ViewerState viewer;
     CurveEditorState curves;
@@ -361,7 +364,19 @@ struct UiState {
     bool resetWorkspace = false;  // Workspace > Reset Workspace: the default layout on the next frame
     bool showPrefs = false;  // Edit > Preferences (Shift+S)
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)
-    std::string dropOpenComp;  // a .weld dropped on the window: opened (asking first when there are unsaved changes)
+    bool showPerf = false;     // Viewer > Performance
+    float frameMs[240] = {};   // the UI's work per frame, the last 240 frames (a ring)
+    int frameIdx = 0;
+    double frameStamp[240] = {};  // when each was drawn (s)
+    // where a frame's time went: this frame's parts so far, and the slowest frame of the last 2 s
+    struct FrameParts {
+        float ms = 0;
+        double when = 0;
+        std::vector<std::pair<std::string, float>> parts;
+    };
+    std::vector<std::pair<std::string, float>> curParts;
+    FrameParts slowFrame;
+    std::string dropOpenComp;  // a comp to open (dropped, recent, File > Open), or kNewComp: done once unsaved changes are dealt with
     bool requestQuit = false;
     double lastPlayTime = 0;
     // Timeline (the classic): playback mode (0 repeat, 1 bounce, 2 stop at the end),

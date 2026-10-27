@@ -23,6 +23,7 @@
 #include "GL.h"
 #include "Panels.h"
 #include "core/Crash.h"
+#include "SmokeTest.h"
 #include "core/FrameList.h"
 #include "ViewerGL.h"
 #include "imgui.h"
@@ -48,6 +49,8 @@ struct Options {
     int width = 1600, height = 960;
     bool resetWorkspace = false;  // --reset-workspace: start with the default layout (forgets the saved one)
     int idScan = 0;  // --idscan <step px>: sweep the mouse over the window and report ImGui ID conflicts
+    bool smoke = false;  // --smoke [files...]: the startup / open / play / autosave check (SmokeTest.cpp)
+    std::vector<std::string> smokeItems;
 };
 
 Options parse(int argc, char** argv) {
@@ -70,7 +73,9 @@ Options parse(int argc, char** argv) {
         else if (a == "--size") {
             std::string s = next();
             std::sscanf(s.c_str(), "%dx%d", &o.width, &o.height);
-        } else o.file = a;
+        } else if (a == "--smoke") o.smoke = true;
+        else if (o.smoke) o.smokeItems.push_back(a);
+        else o.file = a;
     }
     return o;
 }
@@ -298,6 +303,10 @@ int main(int argc, char** argv) {
     splash::pump();
     UiState ui;
     if (opt.screenshot.empty()) ui.lastCrash = crash::takePreviousReport();
+    if (envFlag("STRATA_TEST_PERF")) {  // screenshots: the Performance panel open
+        ui.showPerf = true;
+        app.setProfiling(true);
+    }
 
     // Open a file from the command line.
     if (!opt.file.empty()) {
@@ -306,6 +315,10 @@ int main(int argc, char** argv) {
         if (!ok) app.message("error: " + err);
     }
     app.applyEdits();
+    if (opt.file.empty() && opt.screenshot.empty() && !opt.smoke) app.checkAutosave();  // an untitled comp left by a crash
+    if (opt.smoke) smoke::start(opt.smokeItems);
+    if (const char* tr = std::getenv("STRATA_TEST_RECOVERY"); tr && *tr && !opt.screenshot.empty())  // screenshots: the offer
+        app.recovery = {tr, app.compPath, 7};
     if (opt.frame >= 0) app.frame = opt.frame;
     if (!opt.view.empty()) {  // through the viewer's pipe 1
         app.viewPipe(1, opt.view);
@@ -352,9 +365,19 @@ int main(int argc, char** argv) {
         // when something must advance every frame.
         // Keys pressed faster than frames are trickled in one per frame by ImGui; keep
         // polling while any are queued so a burst of hotkeys is never held back.
-        if (app.playing || app.editsPending() || !opt.screenshot.empty() || GImGui->InputEventsQueue.Size > 0) glfwPollEvents();
+        if (app.playing || app.editsPending() || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
+            glfwPollEvents();
         else glfwWaitEventsTimeout(app.rendering() ? 0.05 : 0.5);
         const auto frameWorkStart = std::chrono::steady_clock::now();  // (WELDER_DEBUG_FRAMES)
+        // the parts of this frame (the Performance panel and --smoke say which part a slow frame spent its time in)
+        auto lastMark = frameWorkStart;
+        ui.curParts.clear();
+        auto mark = [&](const std::string& part) {
+            const auto t = std::chrono::steady_clock::now();
+            const float ms = std::chrono::duration<float, std::milli>(t - lastMark).count();
+            lastMark = t;
+            if (ms >= 0.5f) ui.curParts.push_back({part, ms});
+        };
         auto frameStart = std::chrono::steady_clock::now();
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -403,7 +426,9 @@ int main(int argc, char** argv) {
         // docked panels keep their places and come back untouched on restore.
         lockTimelineHeight();  // only the viewer and node graph resize; the timeline keeps its height
         ImGui::DockSpaceOverViewport(dock, vp, ui.maximized.empty() ? 0 : ImGuiDockNodeFlags_KeepAliveOnly);
+        mark("frame setup");
         drawMenuBar(app, ui);
+        mark("menu bar");
         {
             struct PanelFn { const char* name; void (*fn)(App&, UiState&); };
             static const PanelFn kPanels[] = {{"Nodes", drawToolbar},       {"Viewer", drawViewer},
@@ -430,6 +455,7 @@ int main(int argc, char** argv) {
                     if (justMaximized) ImGui::SetNextWindowFocus();
                 }
                 p.fn(app, ui);
+                mark(p.name);
             }
         }
         if (focusGraph && frameCount > 0) {
@@ -1132,9 +1158,12 @@ int main(int argc, char** argv) {
                 }
             }
         }
+        mark("tools and tests");
         drawDialogs(app, ui);
+        mark("dialogs");
         tickPlayback(app, ui);
         handleHotkeys(app, ui);
+        mark("playback and hotkeys");
         ui.hoverPanel = ui.hoverNext;
         // Hotkeys often set a flag acted on next frame (open a popup, maximize):
         // make sure that frame comes now instead of at the next idle timeout.
@@ -1165,6 +1194,7 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             if (ImGui::Button("Don't save", ImVec2(90, 0))) {
+                app.discardAutosave();
                 app.dirty = false;
                 ui.requestQuit = true;
                 ImGui::CloseCurrentPopup();
@@ -1174,12 +1204,26 @@ int main(int argc, char** argv) {
             ImGui::EndPopup();
         }
 
+        if (smoke::active()) {
+            const int rc = smoke::tick(app, ui, ui.frameMs[(ui.frameIdx + 239) % 240]);
+            if (rc >= 0) {
+                scanResult = rc;
+                break;
+            }
+        }
+        if (opt.screenshot.empty())  // not mid-drag: the comp is changing under the mouse
+            app.tickAutosave(ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left) ||
+                             ImGui::IsMouseDown(ImGuiMouseButton_Middle));
+        mark("smoke test and autosave");
         ImGui::Render();
+        mark("ImGui render");
         double buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
         profBuildMax = std::max(profBuildMax, buildMs);
         app.pollTracking();
         app.pollML();
+        mark("tracking and AI results");
         app.applyEdits();
+        mark("applying edits");
 
         int fbw, fbh;
         glfwGetFramebufferSize(win, &fbw, &fbh);
@@ -1187,6 +1231,7 @@ int main(int argc, char** argv) {
         glClearColor(0.12f, 0.12f, 0.12f, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         if (!scanning) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());  // the ID sweep needs no pixels
+        mark("drawing (OpenGL)");
         if (frameCount % 60 == 0) {  // OpenGL errors (out of GPU memory...) go in the crash breadcrumbs
             for (int k = 0; k < 4; ++k) {
                 const GLenum ge = glGetError();
@@ -1241,6 +1286,15 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "screenshot timed out\n");
                 break;
             }
+        }
+        {  // the Performance panel's frame graph: this frame's own work
+            mark("the rest");
+            const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - frameWorkStart).count();
+            const double nowS = ImGui::GetTime();
+            if (frameCount > 3 && (ms >= ui.slowFrame.ms || nowS - ui.slowFrame.when > 2.0)) ui.slowFrame = {ms, nowS, ui.curParts};
+            ui.frameMs[ui.frameIdx] = ms;
+            ui.frameStamp[ui.frameIdx] = ImGui::GetTime();
+            ui.frameIdx = (ui.frameIdx + 1) % 240;
         }
         if (!scanning) glfwSwapBuffers(win);
         // WELDER_DEBUG_FRAMES: the slowest UI frame each second (a stall shows as a long frame)

@@ -133,6 +133,11 @@ public:
     };
     std::vector<NodeTime> profile();
     int profileThreads();  // the most tiles rendering at the same moment
+    // Profiling switched on and off while running (the editor's Performance panel), and its
+    // totals cleared (per render).
+    void setProfile(bool on) { profile_ = on; }
+    bool profiling() const { return profile_; }
+    void resetProfile();
     // A new tile cache budget (evicting down to it), e.g. after running short of memory.
     void setCacheBudget(size_t bytes);
     int tileSize() const { return tile_; }
@@ -143,7 +148,7 @@ private:
     ImagePtr tile(Node* n, double frame, uint64_t h, int tx, int ty, const Box& dodBox, bool wait = true);
 
     TileCache cache_;
-    bool profile_ = false;
+    std::atomic<bool> profile_{false};
     bool finalRender_ = false;
     std::mutex profM_;
     std::map<std::string, std::pair<double, int>> prof_;

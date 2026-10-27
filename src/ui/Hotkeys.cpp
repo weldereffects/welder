@@ -273,12 +273,12 @@ void handleHotkeys(App& app, UiState& ui) {
     const std::string& panel = ui.hoverPanel;
 
     // ---- global (file operations work even while typing in a field)
-    if (key(ImGuiKey_N, true)) { app.newComp(); ui.graph.needsFrame = true; return; }
+    if (key(ImGuiKey_N, true)) { ui.dropOpenComp = kNewComp; return; }  // (asks about unsaved changes)
     if (key(ImGuiKey_O, true)) { ui.menuAction = "open"; return; }
     if (key(ImGuiKey_S, true)) { ui.menuAction = "save"; return; }
     if (key(ImGuiKey_S, true, true)) { ui.menuAction = "saveas"; return; }
     if (key(ImGuiKey_Q, true)) { ui.requestQuit = true; return; }
-    if (key(ImGuiKey_W, true)) { app.newComp(); ui.graph.needsFrame = true; return; }
+    if (key(ImGuiKey_W, true)) { ui.dropOpenComp = kNewComp; return; }
     if (typing) return;  // everything else would steal keystrokes from text fields
 
     if (key(ImGuiKey_Z, true)) { app.undo(); return; }

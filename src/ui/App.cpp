@@ -35,6 +35,46 @@ namespace fs = std::filesystem;
 
 namespace strata::ui {
 
+// Write a file so that a crash (or a full disk) part-way through never leaves it half written:
+// into a temporary file next to it, then swapped in. If the swap can't be done (a file locked
+// on a network share), the file is written in place as before.
+bool writeFileAtomic(const std::string& path, const std::string& text, std::string* err) {
+    const std::string tmp = path + ".saving";
+    {
+        std::ofstream f(tmp, std::ios::binary);
+        if (f) {
+            f << text;
+            f.flush();
+        }
+        if (!f) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            std::ofstream g(path, std::ios::binary);  // (a folder that can't take a new file)
+            g << text;
+            g.flush();
+            if (!g && err) *err = "cannot write " + path;
+            return (bool)g;
+        }
+    }
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {  // (on some systems a rename won't replace a file)
+        std::error_code ec2;
+        fs::remove(path, ec2);
+        fs::rename(tmp, path, ec);
+    }
+    if (ec) {
+        std::error_code ec2;
+        fs::remove(tmp, ec2);
+        std::ofstream g(path, std::ios::binary);
+        g << text;
+        g.flush();
+        if (!g && err) *err = "cannot write " + path + ": " + ec.message();
+        return (bool)g;
+    }
+    return true;
+}
+
 App::App() {
     resetEngine();
     newComp();
@@ -72,6 +112,7 @@ App::App() {
 }
 
 App::~App() {
+    if (autosaveThread_.joinable()) autosaveThread_.join();
     trackCancel_ = true;
     if (track_.joinable()) track_.join();
     {
@@ -351,6 +392,7 @@ void App::loadSettings() {
             playbackCacheGB = j.value("playback_cache_gb", playbackCacheGB);
             askMatchProject = j.value("ask_match_project", askMatchProject);
             uncPaths = j.value("unc_paths", uncPaths);
+            autosaveSecs = j.value("autosave_seconds", autosaveSecs);
             if (j.contains("ui_theme") && j["ui_theme"].is_string()) {  // ("theme" was written by every save before: ignored)
                 themeName = j["ui_theme"].get<std::string>();
                 themeChosen = true;
@@ -390,13 +432,13 @@ void App::saveSettings() {
     j["playback_cache_gb"] = playbackCacheGB;
     j["ask_match_project"] = askMatchProject;
     j["unc_paths"] = uncPaths;
+    j["autosave_seconds"] = autosaveSecs;
     if (themeChosen) j["ui_theme"] = themeName;
     j["recent_files"] = recentFiles;
     j["gpu"] = gpu::enabled();
     if (cacheDirSetting.empty()) j.erase("cache_dir");
     else j["cache_dir"] = cacheDirSetting;
-    std::ofstream out(settingsPath);
-    out << j.dump(2);
+    writeFileAtomic(settingsPath, j.dump(2), nullptr);
 }
 
 void App::setCacheDir(const std::string& dir) {
@@ -429,6 +471,7 @@ void App::resetEngine() {
     EngineOptions o;
     o.cacheBytes = size_t(3) << 30;  // the viewer keeps up to 3 GiB of tiles
     engine_ = std::make_unique<Engine>(o);
+    engine_->setProfile(profiling_);  // (a new engine keeps the Performance panel going)
 }
 
 void App::message(const std::string& m) {
@@ -557,7 +600,8 @@ void App::applyEdits() {
         engine_->clearMemo();  // (a Viewer's A pipe redirects; nothing else changed)
         if (auxEngine_) auxEngine_->clearMemo();
         if (cleanAfterApply_) dirty = false;
-        cleanAfterApply_ = false;
+        if (dirtyAfterApply_) dirty = true;
+        cleanAfterApply_ = dirtyAfterApply_ = false;
         l.unlock();
         syncViewer();  // (outside the comp lock: it may ask for a render)
         requestView();
@@ -575,8 +619,8 @@ void App::applyEdits() {
         ++infoGen_;
         chanFresh_.clear();
     }
-    dirty = !cleanAfterApply_;
-    cleanAfterApply_ = false;
+    dirty = !cleanAfterApply_ || dirtyAfterApply_;  // (a recovered autosave loads unsaved)
+    cleanAfterApply_ = dirtyAfterApply_ = false;
     l.unlock();
     syncViewer();
     requestView();
@@ -985,10 +1029,24 @@ void App::workerLoop() {
             ViewResult r;
             bool cancelled = false;
             uint64_t eg = editGen_;
+            const bool prof = profiling_;
+            if (prof) engine_->resetProfile();
             try {
                 r = renderView(*engine_, nodeName, compare, f, sc, region);
                 passMs_[{nodeName, sc}] = r.ms;
                 if (sc == target) lastMs_ = r.ms;
+                if (prof && sc == target) {  // the Performance panel's numbers for this render
+                    std::lock_guard<std::mutex> l(perfM_);
+                    perf_.node = nodeName;
+                    perf_.frame = f;
+                    perf_.scale = sc;
+                    perf_.ms = r.ms;
+                    perf_.nodes = engine_->profile();
+                    perf_.peakThreads = engine_->profileThreads();
+                    perf_.threads = engine_->threads();
+                    perf_.cache = engine_->cacheStats();
+                    ++perf_.serial;
+                }
             } catch (const RenderCancelled&) {
                 cancelled = true;
                 // Remember it was slow, so the next request starts with a preview.
@@ -3017,6 +3075,7 @@ bool App::newComp() {
     undo_.clear();
     redo_.clear();
     dirty = false;
+    lastAutosave_ = steadySeconds();
     return true;
 }
 
@@ -3047,15 +3106,7 @@ void App::clearRecent() {
     saveSettings();
 }
 
-bool App::open(const std::string& path, std::string* err) {
-    crash::crumb("open comp " + path);
-    std::shared_ptr<Comp> loaded;
-    try {
-        loaded = Comp::loadFile(path);
-    } catch (const std::exception& e) {
-        if (err) *err = e.what();
-        return false;
-    }
+void App::adoptComp(std::shared_ptr<Comp> loaded) {
     for (auto& w : loaded->warnings) message("warning: " + w);
     edit([this, loaded](Comp&) mutable {
         comp.reset(new Comp());
@@ -3086,28 +3137,145 @@ bool App::open(const std::string& path, std::string* err) {
                 }
         ensureViewer(*comp, viewed);
     });
+}
+
+bool App::open(const std::string& path, std::string* err) {
+    crash::crumb("open comp " + path);
+    std::shared_ptr<Comp> loaded;
+    try {
+        loaded = Comp::loadFile(path);
+    } catch (const std::exception& e) {
+        if (err) *err = e.what();
+        return false;
+    }
+    adoptComp(loaded);
     compPath = absolutePath(path);
     undo_.clear();
     redo_.clear();
     dirty = false;
+    lastAutosave_ = steadySeconds();
     addRecent(compPath);
     message("opened " + compPath);
+    checkAutosave();
     return true;
+}
+
+void App::setProfiling(bool on) {
+    profiling_ = on;
+    if (engine_) engine_->setProfile(on);
+}
+
+App::PerfSnapshot App::perfSnapshot() {
+    std::lock_guard<std::mutex> l(perfM_);
+    PerfSnapshot p = perf_;
+    if (engine_) p.cache = engine_->cacheStats();  // (current)
+    return p;
 }
 
 bool App::save(const std::string& path, std::string* err) {
     json j = comp->toJson();
-    std::ofstream f(path);
-    if (!f) {
-        if (err) *err = "cannot write " + path;
+    if (!writeFileAtomic(path, j.dump(2) + "\n", err)) {
+        if (err && err->empty()) *err = "cannot write " + path;
         return false;
     }
-    f << j.dump(2) << "\n";
+    const std::string before = compPath;
     compPath = absolutePath(path);
     comp->scriptPath = compPath;  // the Slate's filename / version
     dirty = false;
+    // the autosaves are out of date now (the untitled one too, once an untitled comp is saved)
+    std::error_code ec;
+    if (autosaveThread_.joinable()) autosaveThread_.join();
+    fs::remove(autosavePath(before), ec);
+    fs::remove(autosavePath(compPath), ec);
+    lastAutosave_ = steadySeconds();
     addRecent(compPath);
     message("saved " + compPath);
+    return true;
+}
+
+// ---- autosave
+
+std::string App::autosavePath(const std::string& forComp) const {
+    const fs::path dir = (settingsPath.empty() ? fs::path(brand::configDir()) : fs::path(settingsPath).parent_path()) / "autosave";
+    if (forComp.empty()) return (dir / "untitled.weld").string();
+    uint64_t h = 1469598103934665603ull;  // FNV-1a of the path: the same name on every run and platform
+    for (unsigned char ch : forComp) h = (h ^ ch) * 1099511628211ull;
+    char hex[20];
+    std::snprintf(hex, sizeof hex, "%012llx", (unsigned long long)(h & 0xffffffffffffull));
+    return (dir / (fs::path(forComp).stem().string() + "-" + hex + ".weld")).string();
+}
+
+void App::tickAutosave(bool userBusy) {
+    if (!dirty || autosaveSecs <= 0 || userBusy || autosaveBusy_) return;
+    const double now = steadySeconds();
+    if (lastAutosave_ == 0) lastAutosave_ = now;
+    if (now - lastAutosave_ < autosaveSecs) return;
+    lastAutosave_ = now;
+    // Serialise here (the UI thread owns the comp; this is quick), write on a thread (the disk may not be).
+    json j = comp->toJson();
+    j["autosave_of"] = compPath;
+    std::string text = j.dump(1) + "\n", path = autosavePath(compPath);
+    if (autosaveThread_.joinable()) autosaveThread_.join();
+    autosaveBusy_ = true;
+    autosaveThread_ = std::thread([this, text = std::move(text), path] {
+        std::error_code ec;
+        fs::create_directories(fs::path(path).parent_path(), ec);
+        std::string err;
+        if (!writeFileAtomic(path, text, &err)) crash::crumb("autosave failed: " + err);
+        autosaveBusy_ = false;
+    });
+}
+
+void App::discardAutosave() {
+    if (autosaveThread_.joinable()) autosaveThread_.join();
+    std::error_code ec;
+    fs::remove(autosavePath(compPath), ec);
+    if (recovery.original == compPath) recovery = {};
+}
+
+void App::checkAutosave() {
+    recovery = {};
+    const std::string a = autosavePath(compPath);
+    std::error_code ec;
+    if (!fs::exists(a, ec)) return;
+    const auto ta = fs::last_write_time(a, ec);
+    if (ec) return;
+    if (!compPath.empty()) {
+        const auto tc = fs::last_write_time(compPath, ec);
+        if (!ec && tc >= ta) {  // saved since: the autosave is old news
+            fs::remove(a, ec);
+            return;
+        }
+    }
+    recovery.autosave = a;
+    recovery.original = compPath;
+    recovery.minutesOld = std::chrono::duration<double>(fs::file_time_type::clock::now() - ta).count() / 60.0;
+}
+
+bool App::recoverAutosave(std::string* err) {
+    const Recovery r = recovery;
+    recovery = {};
+    if (r.autosave.empty()) return false;
+    std::shared_ptr<Comp> loaded;
+    try {
+        std::ifstream f(r.autosave);
+        json j = json::parse(f);
+        // relative paths are relative to the script's folder, not the autosave's
+        const fs::path base = r.original.empty() ? fs::current_path() : fs::path(r.original).parent_path();
+        loaded = Comp::fromJson(j, base);
+        loaded->scriptPath = r.original;
+    } catch (const std::exception& e) {
+        if (err) *err = std::string("the autosave could not be read: ") + e.what();
+        return false;
+    }
+    adoptComp(loaded);
+    compPath = r.original;
+    undo_.clear();
+    redo_.clear();
+    dirty = true;  // not saved yet: the recovered work is in the autosave only
+    dirtyAfterApply_ = true;  // (and stays so once the load is applied)
+    lastAutosave_ = steadySeconds();
+    message("recovered the autosave of " + (r.original.empty() ? std::string("an untitled comp") : r.original) + " (not saved yet)");
     return true;
 }
 

@@ -577,12 +577,16 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
       <div class="sec-head"><span class="eyebrow">When something's off</span><h2>Settings &amp; troubleshooting</h2></div>
       <p><strong>Edit › Preferences › Appearance</strong> picks the look: <strong>Graphite</strong> (neutral grey, amber; the default), <strong>Forge</strong> (warm charcoal, orange), <strong>Midnight</strong> (blue-black, teal) or <strong>Neutral</strong> (true mid grey, for colour-critical work). The change is immediate and is remembered.</p>
       <p><strong>Edit › Preferences</strong> also holds the cache folder (disk cache, BlenderRender frames, AI job files) with sizes and Clear buttons, the playback RAM cache, <strong>Use the GPU</strong>, network-drive handling, and the offer to match the project to the first Read.</p>
+      <h3>Autosave and recovery</h3>
+      <p>While a comp has unsaved changes, Welder copies it to an autosave every 30 seconds (set under <strong>Edit › Preferences › Autosave</strong>; 0 turns it off). It waits while you drag, and writes in the background. Saving removes the autosave, and so does choosing <strong>Don't save</strong>. If Welder closes before you save, opening the script again offers the autosave: <strong>Recover</strong> opens it (unsaved, under the script's name, so <kbd>Ctrl</kbd><kbd>S</kbd> keeps it), <strong>Discard</strong> deletes it, <strong>Not now</strong> keeps it for later. An untitled comp's autosave is offered when Welder starts. Saving itself writes to a temporary file and then swaps it in, so a crash during a save never leaves a half-written script. New, Close Comp and Open ask before throwing away unsaved changes.</p>
+      <h3>Performance</h3>
+      <p><strong>Viewer › Performance</strong> shows where the time goes on your machine: the editor's own frame times (with a graph, and which part of the slowest recent frame took longest), memory, the GPU, the viewer's last full render with each node's share of it, threads, and the tile cache. <strong>Copy report</strong> puts it all on the clipboard as text, ready to paste into a bug report.</p>
       <div class="table-wrap"><table>
         <tr><th>What</th><th>Where</th></tr>
         <tr><td>Panel layout</td><td><code>{{CFG}}{{S}}layout.ini</code></td></tr>
         <tr><td>Settings, recent files</td><td><code>{{CFG}}{{S}}settings.json</code></td></tr>
         <tr><td>Studio defaults · gizmos</td><td><code>{{CFG}}{{S}}studio.json</code> · <code>{{CFG}}{{S}}gizmos</code></td></tr>
-        <tr><td>Crash reports</td><td><code>{{CFG}}{{S}}crashes</code></td></tr>
+        <tr><td>Crash reports · autosaves</td><td><code>{{CFG}}{{S}}crashes</code> · <code>{{CFG}}{{S}}autosave</code></td></tr>
         <tr><td>Disk cache · AI tools</td><td><code>{{CACHEDIR}}</code> · <code>{{MLDIR}}</code></td></tr>
       </table></div>
       <div class="table-wrap"><table>
@@ -593,7 +597,8 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <tr><td>.nk import does nothing</td><td>Unzip the python zip into the same folder, or install Python 3</td></tr>
         <tr><td>Red node after import</td><td>Its class wasn't translated; Messages says why</td></tr>
         <tr><td>Red expression knob</td><td>Hover it for the error</td></tr>
-        <tr><td>Welder crashed</td><td>On the next start it offers the report; send the <code>.txt</code></td></tr>
+        <tr><td>Welder crashed</td><td>On the next start it offers the report; send the <code>.txt</code>. Opening the script again offers its autosave</td></tr>
+        <tr><td>The editor feels slow</td><td><strong>Viewer › Performance</strong>, then <strong>Copy report</strong> and send it</td></tr>
       </table></div>
       <footer>Welder is open source. Environment variables: <code>WELDER_CACHE_DIR</code>, <code>WELDER_GIZMO_PATH</code>, <code>OFX_PLUGIN_PATH</code>, <code>WELDER_RESET_WORKSPACE=1</code>.</footer>
     </section>
