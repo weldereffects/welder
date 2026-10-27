@@ -956,6 +956,35 @@ int main(int argc, char** argv) {
                         std::sscanf(arg.c_str(), "%f,%f,%f,%f", &drag[0], &drag[1], &drag[2], &drag[3]);
                         tio.AddMousePosEvent(drag[0], drag[1]);
                         dragging = true;
+                    } else if (what == "play" || what == "stop") {  // playback on / off
+                        app.playDir = 1;
+                        app.playing = what == "play";
+                    } else if (what == "add") {  // a new node (as the Tab menu makes one)
+                        createNode(app, ui, arg);
+                        std::printf("KEYS add %s at frame %d (playing %d)\n", arg.c_str(), frameCount, (int)app.playing);
+                    } else if (what == "pos") {  // where a node is, and how many nodes there are
+                        Node* n = app.node(arg);
+                        std::printf("KEYS pos %s %s, %zu nodes, frame %d, playing %d, comp frame %g, edits pending %d\n", arg.c_str(),
+                                    n ? (std::to_string(n->ui.value("x", 0.0)) + "," + std::to_string(n->ui.value("y", 0.0))).c_str() : "(none)",
+                                    app.comp->nodes.size(), frameCount, (int)app.playing, app.frame, (int)app.editsPending());
+                        std::string sel;
+                        for (auto& x : app.selection) sel += x + " ";
+                        std::printf("KEYS   selected [%s] hover panel '%s' mouse %.0f,%.0f popup %d hoveredWin %s\n", sel.c_str(), ui.hoverPanel.c_str(), tio.MousePos.x, tio.MousePos.y, (int)ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId), GImGui->HoveredWindow ? GImGui->HoveredWindow->Name : "-");
+                    } else if (what == "dragnode") {  // dragnode=Node,dx,dy: drag a node by its middle, dx / dy in screen pixels
+                        char nm[128] = {};
+                        float dx = 0, dy = 0;
+                        std::sscanf(arg.c_str(), "%127[^,],%f,%f", nm, &dx, &dy);
+                        if (Node* n = app.node(nm)) {
+                            const GraphState& g = ui.graph;
+                            const float gx = n->ui.value("x", 0.0f) + 15, gy = n->ui.value("y", 0.0f) + 8;  // (its left end: the middle is its output port when zoomed out)
+                            drag[0] = g.canvasOrigin.x + (gx - g.pan.x) * g.zoom;
+                            drag[1] = g.canvasOrigin.y + (gy - g.pan.y) * g.zoom;
+                            drag[2] = drag[0] + dx, drag[3] = drag[1] + dy;
+                            tio.AddMousePosEvent(drag[0], drag[1]);
+                            dragging = true;
+                            std::printf("KEYS dragnode %s from %.0f,%.0f (zoom %.2f origin %.0f,%.0f pan %.0f,%.0f)\n", nm, drag[0], drag[1], g.zoom,
+                                        g.canvasOrigin.x, g.canvasOrigin.y, g.pan.x, g.pan.y);
+                        }
                     }
                 } else if (k == 1 && what == "key" && held != ImGuiKey_None) {
                     tio.AddKeyEvent(held, true);
@@ -968,7 +997,7 @@ int main(int argc, char** argv) {
                     tio.AddMouseButtonEvent(0, true);
                 } else if (what == "click" && k == 4) {
                     tio.AddMouseButtonEvent(0, false);
-                } else if (what == "drag" && dragging) {
+                } else if ((what == "drag" || what == "dragnode") && dragging) {
                     if (k == 2) tio.AddMouseButtonEvent(0, true);
                     else if (k > 2 && k < 10) {
                         const float u = (k - 2) / 7.0f;

@@ -37,7 +37,8 @@ struct State {
     bool on = false;
     std::vector<std::string> items;
     size_t idx = 0;
-    enum Phase { Settle, Open, Wait, Play, Autosave, Done } phase = Settle;
+    enum Phase { Settle, Open, Wait, Play, PlayEdit, Autosave, Done } phase = Settle;
+    size_t nodesBefore = 0;
     int sub = 0, frames = 0, quiet = 0, played = 0;
     double t0 = 0, stepT0 = 0;
     float worst = 0, worstAll = 0;
@@ -225,7 +226,67 @@ int tick(App& app, UiState& ui, float lastFrameMs) {
                         now - s.stepT0, s.worst);
             s.quiet = 0;
             if (++s.idx < s.items.size()) s.phase = State::Open;
-            else s.phase = State::Autosave, s.sub = 0;
+            else s.phase = State::PlayEdit, s.sub = 0;
+        }
+        break;
+    }
+    case State::PlayEdit: {
+        // Editing during playback: a node added while the comp plays shows up straight away
+        // (the edit must not wait for playback to stop).
+        std::string script;
+        for (auto& it : s.items)
+            if (isScript(it) && fs::path(it).extension() != ".nk") {
+                script = it;
+                break;
+            }
+        if (script.empty()) {
+            s.phase = State::Autosave, s.sub = 0;
+            break;
+        }
+        switch (s.sub) {
+        case 0: {
+            doing("editing during playback: opening " + fs::path(script).filename().string());
+            std::string err;
+            app.dirty = false;
+            if (!app.open(script, &err)) fail("could not open " + script + ": " + err);
+            app.applyEdits();
+            s.quiet = 0;
+            s.sub = 1;
+            break;
+        }
+        case 1:
+            if (settledFrames(3)) {
+                app.playDir = 1;
+                app.playing = true;
+                s.stepT0 = now;
+                s.sub = 2;
+            }
+            break;
+        case 2:
+            doing("editing during playback: playing");
+            if (now - s.stepT0 > 2.0) {  // well into playback, read-ahead running
+                s.nodesBefore = app.comp->nodes.size();
+                createNode(app, ui, "Blur");
+                s.stepT0 = now;
+                s.sub = 3;
+            }
+            break;
+        case 3: {
+            doing("editing during playback: waiting for the new node");
+            const bool in = app.comp->nodes.size() > s.nodesBefore && !app.editsPending();
+            if (in || now - s.stepT0 > 10) {
+                const double lat = now - s.stepT0;
+                std::printf("SMOKE edit during playback: the new node appeared after %.2f s (playing: %s)\n", lat,
+                            app.playing ? "yes" : "no");
+                if (!in) fail("a node added during playback never appeared");
+                else if (lat > 0.5) fail("a node added during playback took too long to appear");
+                if (!app.playing) fail("playback stopped");
+                app.playing = false;
+                app.dirty = false;
+                s.phase = State::Autosave, s.sub = 0;
+            }
+            break;
+        }
         }
         break;
     }

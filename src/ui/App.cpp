@@ -76,6 +76,7 @@ bool writeFileAtomic(const std::string& path, const std::string& text, std::stri
 }
 
 App::App() {
+    uiThread_ = std::this_thread::get_id();
     resetEngine();
     newComp();
     dirty = false;
@@ -258,7 +259,7 @@ void App::texLoop() {
         const std::string nodeName = thumb ? name.substr(std::strlen(kThumb)) : name;
         crash::crumb(std::string(thumb ? "postage stamp of " : "texture of ") + nodeName + " at frame " + std::to_string(f));
         {
-            std::shared_lock<std::shared_timed_mutex> cl(compM);
+            auto cl = readComp();
             Node* n = comp ? comp->find(nodeName) : nullptr;
             if (!n) {
                 std::lock_guard<std::mutex> l(texM_);
@@ -341,7 +342,7 @@ void App::infoLoop() {
         ChannelSet cs;
         NodeInfo ni;
         {
-            std::shared_lock<std::shared_timed_mutex> cl(compM);
+            auto cl = readComp();
             Node* n = comp ? comp->find(name) : nullptr;
             try {
                 if (n) {
@@ -571,8 +572,59 @@ bool App::shouldCancelPass() const {
     return passIsRefine_ || nowMs() - passStartMs_ > 120;
 }
 
+uint64_t App::viewStamp(Engine& eng, Node* n, Node* b, double f, double sc) {
+    if (!n || !comp) return 0;
+    eng.setScale(sc);
+    uint64_t h = hashCombine(eng.hash(n, f), b ? eng.hash(b, f) : 0x51ab);
+    const Comp& c = *comp;
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%d %d %.6g %.6g %.6g %.6g %d %.6g", c.format.width, c.format.height, c.format.pixelAspect, c.firstFrame,
+                  c.lastFrame, c.fps, (int)c.project.proxyMode, c.project.proxyScale);
+    h = hashString(buf, h);
+    for (const std::string* s : {&c.project.projectDir, &c.project.ocioConfig, &c.project.workingSpace, &c.project.integerSpace, &c.scriptPath})
+        h = hashString(*s, h);
+    return hashString(c.baseDir.string(), h);
+}
+
+void App::revalidateFrames() {
+    // Called with the comp locked for writing: no render is using engine_ now.
+    const uint64_t before = editGen_.load();
+    ++editGen_;
+    std::lock_guard<std::mutex> l(resM_);
+    if (frameCache_.empty()) return;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(15);  // (a long cache: the rest re-render)
+    int kept = 0;
+    for (auto& [key, cf] : frameCache_) {
+        if (cf.gen != before || !cf.content) continue;
+        if (std::chrono::steady_clock::now() > until) break;
+        Node* n = comp->find(key.first);
+        Node* b = cf.compare.empty() ? nullptr : comp->find(cf.compare);
+        if (!n || (!cf.compare.empty() && !b)) continue;
+        try {
+            if (viewStamp(*engine_, n, b, key.second, cf.scale) == cf.content) {
+                cf.gen = editGen_;
+                ++kept;
+            }
+        } catch (...) {
+        }
+    }
+    if (std::getenv("STRATA_DEBUG_AHEAD")) std::fprintf(stderr, "edit: kept %d of %zu cached frames\n", kept, frameCache_.size());
+}
+
+std::shared_lock<std::shared_timed_mutex> App::readComp() {
+    if (std::this_thread::get_id() != uiThread_ && editsWaiting_) {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        while (editsWaiting_ && !quit_ && std::chrono::steady_clock::now() < until)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return std::shared_lock<std::shared_timed_mutex>(compM);
+}
+
 void App::applyEdits() {
-    if (pending_.empty()) return;
+    if (pending_.empty()) {
+        editsWaiting_ = false;
+        return;
+    }
     std::unique_lock<std::shared_timed_mutex> l(compM, std::try_to_lock);
     if (!l.owns_lock()) {
         // A render is reading the comp. Never wait for it: let a quick pass finish
@@ -613,7 +665,7 @@ void App::applyEdits() {
     for (auto& e : aheadEngines_) e->clearMemo();
     if (auxEngine_) auxEngine_->clearMemo();
     if (diskEngine_) diskEngine_->clearMemo();
-    ++editGen_;  // cached viewer frames are stale now
+    revalidateFrames();  // cached viewer frames are stale now, unless the edit didn't touch what they show
     {
         std::lock_guard<std::mutex> il(infoM_);
         ++infoGen_;
@@ -883,7 +935,7 @@ Box App::viewBox(const Format& fmt, const Box& d, double sc, const Box& region) 
 
 bool App::diskHasView(const std::string& nodeName, double f, double sc, const Box& region) {
     if (!disk_) return false;
-    std::shared_lock<std::shared_timed_mutex> cl(compM);
+    auto cl = readComp();
     Node* n = comp ? comp->find(nodeName) : nullptr;
     if (!n) return false;
     try {
@@ -902,7 +954,7 @@ ViewResult App::renderView(Engine& eng, const std::string& nodeName, const std::
     r.node = nodeName;
     r.frame = f;
     r.scale = sc;
-    std::shared_lock<std::shared_timed_mutex> cl(compM);
+    auto cl = readComp();
     eng.resetCancel();
     Node* n = comp ? comp->find(nodeName) : nullptr;
     if (!n) return r;
@@ -920,6 +972,7 @@ ViewResult App::renderView(Engine& eng, const std::string& nodeName, const std::
             r.nodeB = compare;
             if (!show.empty()) r.imageB = renderCached(eng, b, f, show, nullptr);
         }
+        r.content = viewStamp(eng, n, !r.nodeB.empty() ? comp->find(r.nodeB) : nullptr, f, sc);
         r.bbox = d.empty() ? d
                            : Box((int)std::floor(d.x1 / sc), (int)std::floor(d.y1 / sc), (int)std::ceil(d.x2 / sc),
                                  (int)std::ceil(d.y2 / sc));
@@ -1092,7 +1145,7 @@ void App::storeFrame(const ViewResult& r, uint64_t gen, double scale, const Box&
         frameCache_.erase(it);
         frameLru_.erase(std::remove(frameLru_.begin(), frameLru_.end(), key), frameLru_.end());
     }
-    frameCache_[key] = {r, gen, scale, region, compare, bytes};
+    frameCache_[key] = {r, gen, scale, region, compare, bytes, r.content};
     frameLru_.push_back(key);
     frameBytes_ += bytes;
     const size_t budget = cacheBudgetMB << 20;
@@ -1913,7 +1966,7 @@ void App::patchLoop() {
         }
         ImagePtr im;
         try {
-            std::shared_lock<std::shared_timed_mutex> cl(compM);
+            auto cl = readComp();
             Node* n = comp ? comp->find(rq.tracker) : nullptr;
             Node* src = n ? n->input(0) : nullptr;
             if (src) {

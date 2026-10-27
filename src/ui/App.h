@@ -48,6 +48,7 @@ struct ViewResult {
     double ms = 0;
     bool fromDisk = false;  // read back from the disk cache
     uint64_t serial = 0;    // increments with each finished render
+    uint64_t content = 0;   // what it shows (the node and all upstream, B, the project): see App::viewStamp
 };
 
 struct TrackStatus {
@@ -446,6 +447,7 @@ private:
         Box region;
         std::string compare;
         size_t bytes = 0;
+        uint64_t content = 0;  // ViewResult::content: an edit that leaves it the same keeps the frame
     };
     std::map<std::pair<std::string, int>, CachedFrame> frameCache_;  // (node, frame), guarded by resM_
     std::deque<std::pair<std::string, int>> frameLru_;
@@ -483,6 +485,15 @@ private:
     std::atomic<bool> passIsRefine_{false};
     std::atomic<bool> passIsPreview_{false};
     std::atomic<bool> editsWaiting_{false};
+    // A render thread's read lock on the comp. While edits are waiting it first gives way (up to a
+    // quarter second), so a stream of renders (playback's read-ahead) can't keep an edit out:
+    // nodes added or changed during playback show up at once. (The UI thread never waits here.)
+    std::shared_lock<std::shared_timed_mutex> readComp();
+    // The content of a viewer image (under the comp lock): the node's hash (its knobs and everything
+    // upstream, at that scale), B's when comparing, and the project settings images depend on.
+    uint64_t viewStamp(Engine& eng, Node* n, Node* b, double f, double sc);
+    void revalidateFrames();  // after an edit (exclusive lock held): cached frames it didn't change stay
+    std::thread::id uiThread_;
     std::atomic<int64_t> passStartMs_{0};
     std::atomic<double> lastMs_{0};
     std::map<std::pair<std::string, double>, double> passMs_;  // (node, scale) -> last ms (worker only)
