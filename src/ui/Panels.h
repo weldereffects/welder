@@ -14,14 +14,37 @@
 
 namespace strata::ui {
 
-// Theme colours drawn by hand (outside ImGui's style): the node graph canvas, the viewer's
-// surround, and the selection / highlight accent. Set by applyTheme().
+// Themes (ui/Theme.cpp): the ImGui style plus the colours Welder draws by hand. applyTheme()
+// sets both; theme() holds the hand-drawn ones (ImU32) and the fonts.
 struct ThemeColors {
-    unsigned int canvas = 0xFF1F1E1E;   // IM_COL32(30, 30, 31, 255)
-    unsigned int viewerBg = 0xFF1A1A1A; // IM_COL32(26, 26, 26, 255)
-    unsigned int accent = 0xFF46C4FF;   // IM_COL32(255, 196, 70, 255)
+    std::string name = "forge";
+    float uiScale = 1.0f;               // the display's content scale (set once at start)
+    unsigned int canvas = 0xFF1F1E1E;   // node graph background
+    unsigned int viewerBg = 0xFF1A1A1A; // around the image
+    unsigned int accent = 0xFF46C4FF;   // selection, the active thing
+    unsigned int accentDim = 0x4646C4FF;
+    unsigned int card = 0xFF3A3A3A;     // grouped knobs, toolbar segments
+    unsigned int cardBorder = 0xFF1C1C1C;
+    unsigned int frame = 0xFF242424;
+    unsigned int grid = 0xFF303030;     // graph dots
+    unsigned int tile = 0xFF383838;     // node tile body
+    unsigned int tileText = 0xFFEAEAEA;
+    unsigned int text = 0xFFD6D6D6, muted = 0xFF8C8C8C, value = 0xFFF0F0F0;
+    unsigned int icon = 0xFFC0C0C0;     // toolbar line icons
+    unsigned int segment = 0xFF242424, segmentOn = 0xFF484848;
+    unsigned int bg = 0xFF282828;
+    ImFont* regular = nullptr;  // labels, menus (the default font)
+    ImFont* medium = nullptr;   // values, names, headers
+    ImFont* small = nullptr;    // uppercase section headers, captions
 };
 ThemeColors& theme();
+// the theme's accent at an alpha (0-255)
+inline unsigned int themeAccent(int alpha = 255) { return (theme().accent & 0x00FFFFFFu) | ((unsigned int)alpha << 24); }
+const std::vector<std::string>& themeNames();
+std::string themeLabel(const std::string& name);
+// A node category's line icon, centred on c, about 2s across.
+void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float s, unsigned int col);
+void applyTheme(const std::string& name);  // also re-reads STRATA_PREVIEW_THEME (screenshots)
 
 struct ViewerState {
     unsigned int tex = 0;
@@ -330,7 +353,8 @@ struct UiState {
     std::map<std::string, ViewerState> otherViewers;
     std::string hoverViewer;      // the Viewer node of the viewer panel under the mouse
     std::string activateNext;     // a click in this viewer's panel: make it active next frame
-    int splitViewers = 0;         // Viewer menu: 1 lay the viewer panels side by side, 2 stacked
+    int splitViewers = 0;
+    std::string pendingTheme;     // Preferences > Theme: applied before the next frame         // Viewer menu: 1 lay the viewer panels side by side, 2 stacked
     std::string maximized;        // currently maximized panel
     bool showShortcuts = false;
     bool showAbout = false;

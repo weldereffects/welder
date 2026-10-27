@@ -5,19 +5,19 @@
 #include <cmath>
 
 #include "imgui_internal.h"
+#include "Panels.h"
 
 namespace strata::ui::kit {
 
 namespace {
 
-constexpr ImU32 kAccent = IM_COL32(232, 168, 64, 255);
-constexpr ImU32 kTrack = IM_COL32(26, 26, 26, 255);
-constexpr ImU32 kFill = IM_COL32(78, 78, 78, 255);
-constexpr ImU32 kTick = IM_COL32(88, 88, 88, 255);
-constexpr ImU32 kHandle = IM_COL32(150, 150, 150, 255);
-constexpr ImU32 kHandleHot = IM_COL32(190, 190, 190, 255);
-constexpr ImU32 kCard = IM_COL32(43, 43, 43, 255);
-constexpr ImU32 kLine = IM_COL32(68, 68, 68, 255);
+#define kAccent (themeAccent())  // the theme's accent
+// colours from the theme (ui/Theme.cpp)
+#define kTrack (theme().frame)
+#define kHandle (theme().text)
+#define kHandleHot (theme().value)
+#define kCard (theme().card)
+#define kLine (theme().cardBorder)
 
 struct Card {
     ImVec2 start;
@@ -52,7 +52,7 @@ void rowLabel(const char* text, const char* tip) {
     ImGui::AlignTextToFramePadding();
     const float room = labelWidth() - ImGui::GetCursorPosX() - 6;
     const ImVec2 ts = ImGui::CalcTextSize(text);
-    ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(200, 200, 200, 255));
+    ImGui::PushStyleColor(ImGuiCol_Text, theme().muted);
     if (ts.x <= room) ImGui::TextUnformatted(text);
     else {  // too long for the column: cut with "...", the whole name on hover
         ImVec2 p = ImGui::GetCursorScreenPos();
@@ -94,6 +94,14 @@ bool takeAltClick() {
 bool valueField(const char* id, double* v, float width, const char* prefix, bool isInt, double speed, double lo, double hi) {
     const double before = *v;
     ImGui::SetNextItemWidth(width);
+    if (theme().medium) ImGui::PushFont(theme().medium, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme().value);
+    struct Pop {
+        ~Pop() {
+            ImGui::PopStyleColor();
+            if (theme().medium) ImGui::PopFont();
+        }
+    } pop;
     bool changed;
     const ImGuiSliderFlags fl = ImGuiSliderFlags_NoRoundToFormat;
     if (isInt) {
@@ -103,7 +111,11 @@ bool valueField(const char* id, double* v, float width, const char* prefix, bool
                                     hi > lo ? &ihi : nullptr, "%d", fl);
         if (changed) *v = iv;
     } else {
-        changed = ImGui::DragScalar(id, ImGuiDataType_Double, v, (float)speed, nullptr, nullptr, "%.4g", fl);
+        // two decimals when they say it exactly (1.00, 0.50), otherwise the significant digits (0.0035, 12345.6)
+        const double a = std::fabs(*v);
+        const bool whole = a >= 10 && a < 1e7 && *v == std::round(*v);  // 1350, not 1350.00
+        const bool twoDp = a < 1e5 && std::fabs(*v * 100 - std::round(*v * 100)) < 1e-7;
+        changed = ImGui::DragScalar(id, ImGuiDataType_Double, v, (float)speed, nullptr, nullptr, whole ? "%.0f" : twoDp ? "%.2f" : "%.4g", fl);
     }
     if (altClickItem()) {  // Alt+click: a keyframe, not an edit
         *v = before;
@@ -136,21 +148,18 @@ bool tickSlider(const char* id, double* v, double lo, double hi, float width, bo
         }
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float ty = std::round(p.y + h * 0.62f);  // track centre
-    // ticks above the track
-    const int n = std::clamp((int)((x1 - x0) / 9), 4, 40);
-    for (int i = 0; i <= n; ++i) {
-        const float x = std::round(x0 + (x1 - x0) * i / n) + 0.5f;
-        const bool major = i == 0 || i == n || (n % 4 == 0 && i % (n / 4) == 0);
-        dl->AddLine(ImVec2(x, ty - h * (major ? 0.45f : 0.33f)), ImVec2(x, ty - h * 0.2f), kTick, 1);
-    }
-    dl->AddRectFilled(ImVec2(x0 - 2, ty - 2), ImVec2(x1 + 2, ty + 2), kTrack, 2);
+    const float ty = std::round(p.y + h * 0.5f);  // track centre
+    const float th = std::max(2.0f, std::round(h * 0.09f));  // half the track's thickness
+    dl->AddRectFilled(ImVec2(x0 - 2, ty - th), ImVec2(x1 + 2, ty + th), kTrack, th);
     const double t = toT(*v, lo, hi, log);
     const float hx = x0 + (float)t * (x1 - x0);
-    if (lo >= 0 && t > 0) dl->AddRectFilled(ImVec2(x0 - 2, ty - 2), ImVec2(hx, ty + 2), kFill, 2);
-    const float hh = std::round(h * 0.62f);
-    dl->AddRectFilled(ImVec2(hx - hw * 0.5f, ty - hh * 0.5f), ImVec2(hx + hw * 0.5f, ty + hh * 0.5f),
-                      active ? kAccent : hot ? kHandleHot : kHandle, 3);
+    // the fill: from the low end, or from zero when the range spans it
+    const float zx = lo < 0 && hi > 0 ? x0 + (float)toT(0, lo, hi, log) * (x1 - x0) : x0 - 2;
+    if (std::fabs(hx - zx) > 0.5f)
+        dl->AddRectFilled(ImVec2(std::min(zx, hx), ty - th), ImVec2(std::max(zx, hx), ty + th), active || hot ? kAccent : themeAccent(200), th);
+    const float r = std::round(h * 0.27f);
+    dl->AddCircleFilled(ImVec2(hx, ty), r + 1, IM_COL32(0, 0, 0, 90), 20);  // a soft edge
+    dl->AddCircleFilled(ImVec2(hx, ty), r, active ? kAccent : hot ? kHandleHot : kHandle, 20);
     if (active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     return changed;
 }
@@ -166,7 +175,7 @@ bool checkbox(const char* label, bool* v, const char* tip) {
     const bool hot = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     ImVec2 a(p.x, p.y + (h - box) * 0.5f), b(a.x + box, a.y + box);
-    dl->AddRectFilled(a, b, hot ? IM_COL32(48, 48, 48, 255) : IM_COL32(32, 32, 32, 255), 3);
+    dl->AddRectFilled(a, b, hot ? ImGui::GetColorU32(ImGuiCol_FrameBgHovered) : ImGui::GetColorU32(ImGuiCol_FrameBg), 4);
     if (*v) {  // the accent tick
         const float s = box;
         ImVec2 q[3] = {ImVec2(a.x + s * 0.22f, a.y + s * 0.52f), ImVec2(a.x + s * 0.42f, a.y + s * 0.72f),
@@ -206,7 +215,7 @@ bool iconButton(const char* id, Icon icon, bool on, const char* tip) {
     bool r = ImGui::InvisibleButton(id, ImVec2(h, h));
     const bool hot = ImGui::IsItemHovered();
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const ImU32 col = on ? kAccent : hot ? IM_COL32(150, 200, 255, 255) : IM_COL32(90, 160, 235, 255);
+    const ImU32 col = on || hot ? kAccent : theme().icon;
     const ImVec2 c(p.x + h * 0.5f, p.y + h * 0.5f);
     const float s = h * 0.5f, t = std::max(1.5f, h * 0.075f);
     switch (icon) {
@@ -269,12 +278,14 @@ bool beginCard(const char* id, const char* title) {
         const bool hot = ImGui::IsItemHovered();
         ImGui::PopID();
         ImDrawList* dl = w->DrawList;
-        const ImU32 col = hot ? IM_COL32(220, 220, 220, 255) : IM_COL32(165, 165, 165, 255);
-        const float a = h * 0.18f;
+        const ImU32 col = hot ? theme().text : theme().muted;
+        const float a = h * 0.14f;
         ImVec2 c(p.x + a + 1, p.y + h * 0.5f);
         if (open) dl->AddTriangleFilled(ImVec2(c.x - a, c.y - a * 0.6f), ImVec2(c.x + a, c.y - a * 0.6f), ImVec2(c.x, c.y + a * 0.7f), col);
         else dl->AddTriangleFilled(ImVec2(c.x - a * 0.6f, c.y - a), ImVec2(c.x - a * 0.6f, c.y + a), ImVec2(c.x + a * 0.7f, c.y), col);
-        dl->AddText(ImVec2(p.x + a * 2 + 8, p.y + ImGui::GetStyle().FramePadding.y), col, t.c_str());
+        ImFont* f = theme().small ? theme().small : ImGui::GetFont();
+        const float fs = theme().small ? f->LegacySize : ImGui::GetFontSize();
+        dl->AddText(f, fs, ImVec2(p.x + a * 2 + 8, p.y + (h - fs) * 0.5f), col, t.c_str());
     }
     return open;
 }
@@ -289,10 +300,10 @@ void endCard() {
     const float y1 = ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y + 4;
     if (cd.split) {
         w->DrawList->ChannelsSetCurrent(0);
-        w->DrawList->AddRectFilled(cd.start, ImVec2(cd.x1, y1), kCard, 6);
+        w->DrawList->AddRectFilled(cd.start, ImVec2(cd.x1, y1), kCard, 8);
         w->DrawList->ChannelsMerge();
     } else  // the draw list is already split (a table): an outline instead of a fill behind
-        w->DrawList->AddRect(cd.start, ImVec2(cd.x1, y1), kLine, 6);
+        w->DrawList->AddRect(cd.start, ImVec2(cd.x1, y1), kLine, 8);
     ImGui::Dummy(ImVec2(0, 4));
 }
 

@@ -2237,7 +2237,7 @@ void keyerRangeGraph(Ctx& c) {
     for (int i = 0; i < 4; ++i) {
         const bool lit = hot == i || (hot == 4 && (i == 1 || i == 2)) || (hot == 5 && i < 2) || (hot == 6 && i > 1);
         const float r = lit ? 4.5f : 3.5f;
-        dl->AddRectFilled(ImVec2(hp[i].x - r, hp[i].y - r), ImVec2(hp[i].x + r, hp[i].y + r), lit ? IM_COL32(255, 196, 70, 255) : IM_COL32(200, 230, 200, 255));
+        dl->AddRectFilled(ImVec2(hp[i].x - r, hp[i].y - r), ImVec2(hp[i].x + r, hp[i].y + r), lit ? themeAccent(255) : IM_COL32(200, 230, 200, 255));
         dl->AddText(ImVec2(hp[i].x - 3, i == 0 || i == 3 ? hp[i].y - 20 : hp[i].y - 9 - ImGui::GetFontSize() * 0.9f + 8),
                     IM_COL32(170, 170, 170, 200), hn[i]);
     }
@@ -2880,10 +2880,15 @@ void buttonAction(Ctx& c, const std::string& action) {
 // holds the knobs up to the next divider; "@card" opens one with no title; an
 // untitled divider is a line.
 void drawKnobs(Ctx& c, const NodeDef& def, const std::string& tab) {
-    bool card = false, open = true;
+    bool card = false, open = true, started = false;
     int n = 0;
     for (auto& k : def.knobs) {
         if (k.tab != tab || !whenOk(c.node, def, k)) continue;
+        if (!started && k.type != Knob::Divider && !kit::inCard()) {  // the knobs before the first section: a card of their own
+            card = true;
+            open = kit::beginCard("##cardlead", "");
+        }
+        started = true;
         if (k.type == Knob::Divider) {
             if (card) kit::endCard();
             card = false;
@@ -2992,12 +2997,24 @@ void nodeTab(Ctx& c) {
 
 void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
     ImGui::PushID(n->name.c_str());
-    ImU32 cc = categoryColor(categoryOf(n->type));
-    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertU32ToFloat4(cc & 0x90FFFFFF));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::ColorConvertU32ToFloat4(cc & 0xB0FFFFFF));
-    bool open = ImGui::CollapsingHeader((n->name + "  (" + n->type + ")###hdr").c_str(), keepOpen,
-                                        ImGuiTreeNodeFlags_DefaultOpen);
+    // the header: a card with the category colour as a strip down its left side, the name in
+    // the medium weight, the type muted after it
+    const ImU32 cc = categoryColor(categoryOf(n->type));
+    ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertU32ToFloat4(theme().card));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+    ImGui::PushFont(theme().medium, 0.0f);
+    bool open = ImGui::CollapsingHeader((n->name + "###hdr").c_str(), keepOpen, ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopFont();
     ImGui::PopStyleColor(2);
+    {
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(mn, ImVec2(mn.x + 3, mx.y), cc, 2.0f, ImDrawFlags_RoundCornersLeft);
+        const float nameW = theme().medium ? theme().medium->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, n->name.c_str()).x
+                                           : ImGui::CalcTextSize(n->name.c_str()).x;
+        const float x = mn.x + ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.x * 3 + nameW + 8;  // (where ImGui puts a framed header's label)
+        dl->AddText(ImVec2(x, mn.y + ImGui::GetStyle().FramePadding.y), theme().muted, n->type.c_str());
+    }
     if (!open) {
         ImGui::PopID();
         return;

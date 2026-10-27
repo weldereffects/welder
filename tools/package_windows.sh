@@ -72,7 +72,7 @@ cp "$BUILD"/welder_ui.exe "$STAGE/bin/"
 if [ -d "$NCNN_WIN/lib" ] && [ -f "$NCNN_WIN/lib/cmake/ncnn/ncnnConfig.cmake" ]; then
   mkdir -p "$STAGE/bin/models" && cp -r "$ROOT/models/rife" "$STAGE/bin/models/rife"
 fi
-mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/imgui/fonts/Roboto-Medium.ttf" "$STAGE/bin/fonts/"
+mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/fonts/"Roboto-*.ttf "$ROOT/third_party/fonts/LICENSE-Roboto.txt" "$STAGE/bin/fonts/"
 [ -d "$BUILD/ofx-test-plugins" ] && cp -r "$BUILD/ofx-test-plugins" "$STAGE/ofx-test-plugins" && rm -rf "$STAGE/ofx-test-plugins/.glstub"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
 # Python for the .nk importer (File > Import, pasting nodes copied in another .nk app)

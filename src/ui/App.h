@@ -187,6 +187,7 @@ public:
     static constexpr size_t kMaxRecent = 10;
     void addRecent(const std::string& path);
     void clearRecent();
+    std::string themeName = "forge";  // the setting: Preferences > Theme (ui/Theme.cpp)
     bool uncPaths = true;         // the setting: mapped drive paths (S:\\...) become \\\\server\\share\\... (core/NetPath.h)
     bool askMatchProject = true;  // the setting: offer to match the project to a new script's first Read
     bool matchArmed = false;      // this script has had no media yet (the first Read's file brings the offer)

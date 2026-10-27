@@ -273,27 +273,25 @@ void drawMenuBar(App& app, UiState& ui) {
 
 // ------------------------------------------------------------------ toolbar
 
-// A vector icon for each node category (drawn, so it is sharp at any UI scale),
-// centred on c, about 2s across, in col.
-static void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float s, ImU32 col, ImU32 bg) {
-    const float t = std::max(1.5f, s * 0.13f);  // line weight
+// A line icon for each node category (drawn, so it is sharp at any UI scale): one stroke
+// weight, outlines only, centred on c, about 2s across, in col.
+void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float s, ImU32 col) {
+    const float t = std::max(1.25f, s * 0.11f);  // line weight
+    const float rr = s * 0.14f;                  // corner radius
     auto P = [&](float x, float y) { return ImVec2(c.x + x * s, c.y + y * s); };
+    auto poly = [&](std::initializer_list<ImVec2> q, bool closed) {
+        dl->AddPolyline(q.begin(), (int)q.size(), col, closed ? ImDrawFlags_Closed : 0, t);
+    };
     if (cat == "Image") {  // a picture: frame, mountains, sun
-        dl->AddRect(P(-1, -0.8f), P(1, 0.8f), col, s * 0.12f, 0, t);
-        dl->AddTriangleFilled(P(-0.8f, 0.62f), P(-0.25f, -0.15f), P(0.3f, 0.62f), col);
-        dl->AddTriangleFilled(P(0.05f, 0.62f), P(0.42f, 0.12f), P(0.82f, 0.62f), col);
-        dl->AddCircleFilled(P(0.5f, -0.38f), s * 0.2f, col);
+        dl->AddRect(P(-1, -0.8f), P(1, 0.8f), col, rr, 0, t);
+        poly({P(-0.8f, 0.6f), P(-0.25f, -0.05f), P(0.12f, 0.35f), P(0.4f, 0.1f), P(0.8f, 0.6f)}, false);
+        dl->AddCircle(P(0.45f, -0.35f), s * 0.17f, col, 0, t);
     } else if (cat == "Draw") {  // a pencil
-        const ImVec2 a = P(-0.75f, 0.75f), b = P(0.62f, -0.62f);
-        dl->AddLine(P(-0.42f, 0.42f), b, col, s * 0.42f);
-        dl->AddTriangleFilled(a, P(-0.57f, 0.27f), P(-0.27f, 0.57f), col);
-        dl->AddLine(P(0.4f, -0.4f), P(0.5f, -0.5f), bg, std::max(1.0f, t * 0.8f) * 2.2f);  // ferrule gap
-        dl->AddLine(P(0.28f, -0.68f), P(0.68f, -0.28f), bg, std::max(1.0f, t * 0.6f));
+        poly({P(-0.85f, 0.85f), P(-0.75f, 0.45f), P(0.45f, -0.75f), P(0.75f, -0.45f), P(-0.45f, 0.75f)}, true);
+        dl->AddLine(P(0.25f, -0.55f), P(0.55f, -0.25f), col, t);
     } else if (cat == "Time") {  // a clock
         dl->AddCircle(c, s * 0.9f, col, 0, t);
-        dl->AddLine(c, P(0, -0.58f), col, t);
-        dl->AddLine(c, P(0.42f, 0.2f), col, t);
-        dl->AddCircleFilled(c, t * 0.8f, col);
+        poly({P(0, -0.55f), c, P(0.4f, 0.25f)}, false);
     } else if (cat == "Channel") {  // three overlapping channels (R, G, B)
         const float r = s * 0.5f;
         dl->AddCircle(P(0, -0.36f), r, col, 0, t);
@@ -302,11 +300,11 @@ static void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float
     } else if (cat == "Color") {  // a paint drop
         const ImVec2 o = P(0, 0.28f);
         const float r = s * 0.62f;
-        dl->PathArcTo(o, r, -0.35f, 3.14159f + 0.35f, 20);  // the round bottom
-        dl->PathLineTo(P(0, -0.98f));                       // up to the tip
-        dl->PathFillConvex(col);
-        dl->PathArcTo(o, r * 0.62f, 0.35f, 1.2f, 8);  // a highlight on the lower right
-        dl->PathStroke(bg, 0, t);
+        dl->PathArcTo(o, r, -0.35f, 3.14159f + 0.35f, 20);
+        dl->PathLineTo(P(0, -0.98f));
+        dl->PathStroke(col, ImDrawFlags_Closed, t);
+        dl->PathArcTo(o, r * 0.55f, 0.35f, 1.25f, 8);
+        dl->PathStroke(col, 0, t);
     } else if (cat == "Filter") {  // a blur: a sharp step softened into a bell curve
         ImVec2 pts[25];
         for (int i = 0; i < 25; ++i) {
@@ -314,80 +312,78 @@ static void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float
             pts[i] = P(x, 0.62f - 1.25f * std::exp(-x * x * 4.5f));
         }
         dl->AddPolyline(pts, 25, col, 0, t);
-        dl->AddLine(P(-1, 0.75f), P(1, 0.75f), col, t);
+        dl->AddLine(P(-1, 0.8f), P(1, 0.8f), col, t);
     } else if (cat == "Keyer") {  // a key
-        dl->AddCircle(P(-0.5f, 0), s * 0.38f, col, 0, t * 1.15f);
-        dl->AddLine(P(-0.12f, 0), P(0.95f, 0), col, t * 1.15f);
-        dl->AddLine(P(0.55f, 0), P(0.55f, 0.36f), col, t * 1.15f);
-        dl->AddLine(P(0.85f, 0), P(0.85f, 0.3f), col, t * 1.15f);
+        dl->AddCircle(P(-0.5f, 0), s * 0.38f, col, 0, t);
+        dl->AddLine(P(-0.12f, 0), P(0.95f, 0), col, t);
+        dl->AddLine(P(0.55f, 0), P(0.55f, 0.36f), col, t);
+        dl->AddLine(P(0.85f, 0), P(0.85f, 0.3f), col, t);
     } else if (cat == "Merge") {  // two layers over each other
-        dl->AddRect(P(-0.9f, -0.9f), P(0.35f, 0.35f), col, s * 0.1f, 0, t);
-        dl->AddRectFilled(P(-0.35f, -0.35f), P(0.9f, 0.9f), col, s * 0.1f);
+        dl->AddRect(P(-0.9f, -0.9f), P(0.35f, 0.35f), col, rr, 0, t);
+        dl->AddRect(P(-0.35f, -0.35f), P(0.9f, 0.9f), col, rr, 0, t);
     } else if (cat == "Transform") {  // move: arrows in four directions
-        dl->AddLine(P(-0.62f, 0), P(0.62f, 0), col, t);
-        dl->AddLine(P(0, -0.62f), P(0, 0.62f), col, t);
-        const float h = 0.32f;
-        dl->AddTriangleFilled(P(0, -1), P(h, -0.6f), P(-h, -0.6f), col);
-        dl->AddTriangleFilled(P(0, 1), P(-h, 0.6f), P(h, 0.6f), col);
-        dl->AddTriangleFilled(P(-1, 0), P(-0.6f, -h), P(-0.6f, h), col);
-        dl->AddTriangleFilled(P(1, 0), P(0.6f, h), P(0.6f, -h), col);
+        dl->AddLine(P(-0.9f, 0), P(0.9f, 0), col, t);
+        dl->AddLine(P(0, -0.9f), P(0, 0.9f), col, t);
+        const float h = 0.28f, e = 0.92f, b = 0.62f;
+        poly({P(-h, -b), P(0, -e), P(h, -b)}, false);
+        poly({P(-h, b), P(0, e), P(h, b)}, false);
+        poly({P(-b, -h), P(-e, 0), P(-b, h)}, false);
+        poly({P(b, -h), P(e, 0), P(b, h)}, false);
     } else if (cat == "Stylize") {  // sparkles
         auto star = [&](float x, float y, float r) {
             const float k = 0.28f;
-            ImVec2 q[8] = {P(x, y - r), P(x + r * k, y - r * k), P(x + r, y), P(x + r * k, y + r * k),
-                           P(x, y + r), P(x - r * k, y + r * k), P(x - r, y), P(x - r * k, y - r * k)};
-            dl->AddConvexPolyFilled(q, 8, col);
+            poly({P(x, y - r), P(x + r * k, y - r * k), P(x + r, y), P(x + r * k, y + r * k), P(x, y + r), P(x - r * k, y + r * k),
+                  P(x - r, y), P(x - r * k, y - r * k)},
+                 true);
         };
-        star(-0.2f, 0.15f, 0.85f);
-        star(0.62f, -0.6f, 0.4f);
+        star(-0.2f, 0.15f, 0.8f);
+        star(0.62f, -0.6f, 0.36f);
     } else if (cat == "3D") {  // a cube
         const ImVec2 top = P(0, -0.95f), l = P(-0.85f, -0.48f), r = P(0.85f, -0.48f), m = P(0, -0.02f);
         const ImVec2 bl = P(-0.85f, 0.5f), br = P(0.85f, 0.5f), b = P(0, 0.97f);
-        ImVec2 face[4] = {top, r, m, l};
-        dl->AddConvexPolyFilled(face, 4, col);
-        dl->AddLine(l, bl, col, t);
-        dl->AddLine(bl, b, col, t);
-        dl->AddLine(b, br, col, t);
-        dl->AddLine(br, r, col, t);
+        poly({top, r, br, b, bl, l}, true);
+        poly({l, m, r}, false);
         dl->AddLine(m, b, col, t);
     } else if (cat == "Value") {  // a graph: axes and a wave
-        dl->AddLine(P(-0.9f, -0.9f), P(-0.9f, 0.9f), col, t);
-        dl->AddLine(P(-0.9f, 0.9f), P(0.95f, 0.9f), col, t);
+        poly({P(-0.9f, -0.9f), P(-0.9f, 0.9f), P(0.95f, 0.9f)}, false);
         ImVec2 pts[21];
         for (int i = 0; i < 21; ++i) {
             const float x = -0.75f + 1.6f * i / 20;
             pts[i] = P(x, 0.05f - 0.55f * std::sin((x + 0.75f) * 4.2f));
         }
-        dl->AddPolyline(pts, 21, col, 0, t * 1.1f);
+        dl->AddPolyline(pts, 21, col, 0, t);
     } else if (cat == "AI") {  // a small neural network
         const ImVec2 in[3] = {P(-0.75f, -0.65f), P(-0.75f, 0), P(-0.75f, 0.65f)};
         const ImVec2 hid[2] = {P(0.05f, -0.35f), P(0.05f, 0.35f)};
         const ImVec2 out = P(0.8f, 0);
+        const float r = s * 0.17f;
+        auto edge = [&](ImVec2 a, ImVec2 b) {  // stop at the circles' rims
+            const float dx = b.x - a.x, dy = b.y - a.y, d = std::sqrt(dx * dx + dy * dy);
+            if (d > 2 * r) dl->AddLine(ImVec2(a.x + dx / d * r, a.y + dy / d * r), ImVec2(b.x - dx / d * r, b.y - dy / d * r), col, t * 0.8f);
+        };
         for (auto& a : in)
-            for (auto& h : hid) dl->AddLine(a, h, col, t * 0.7f);
-        for (auto& h : hid) dl->AddLine(h, out, col, t * 0.7f);
-        for (auto& a : in) dl->AddCircleFilled(a, s * 0.17f, col);
-        for (auto& h : hid) dl->AddCircleFilled(h, s * 0.19f, col);
-        dl->AddCircleFilled(out, s * 0.21f, col);
+            for (auto& h : hid) edge(a, h);
+        for (auto& h : hid) edge(h, out);
+        for (auto& a : in) dl->AddCircle(a, r, col, 0, t);
+        for (auto& h : hid) dl->AddCircle(h, r, col, 0, t);
+        dl->AddCircle(out, r, col, 0, t);
     } else if (cat == "Other") {  // a grid of tiles
-        const float g = 0.14f;
+        const float g = 0.16f;
         for (int j = 0; j < 2; ++j)
             for (int i = 0; i < 2; ++i) {
                 const float x0 = -0.85f + i * (0.85f + g), y0 = -0.85f + j * (0.85f + g);
-                dl->AddRectFilled(P(x0, y0), P(x0 + 0.85f - g, y0 + 0.85f - g), col, s * 0.12f);
+                dl->AddRect(P(x0, y0), P(x0 + 0.85f - g, y0 + 0.85f - g), col, rr, 0, t);
             }
-    } else if (cat == "MoGraph") {  // a screen with a glitched bar and a waveform
-        dl->AddRect(P(-1, -0.75f), P(1, 0.75f), col, s * 0.15f, 0, t);
-        dl->AddRectFilled(P(-0.55f, -0.45f), P(0.75f, -0.2f), col);
-        dl->AddRectFilled(P(-0.75f, -0.15f), P(0.3f, 0.05f), col);
+    } else if (cat == "MoGraph") {  // a screen with a waveform
+        dl->AddRect(P(-1, -0.75f), P(1, 0.75f), col, rr, 0, t);
         ImVec2 w[7];
-        for (int i = 0; i < 7; ++i) w[i] = P(-0.75f + i * 0.25f, 0.42f + ((i & 1) ? -0.16f : 0.12f));
-        dl->AddPolyline(w, 7, col, 0, t * 0.8f);
+        for (int i = 0; i < 7; ++i) w[i] = P(-0.75f + i * 0.25f, ((i & 1) ? -0.3f : 0.3f));
+        dl->AddPolyline(w, 7, col, 0, t);
     } else if (cat == "OFX") {  // a plug
-        dl->AddRectFilled(P(-0.55f, -0.3f), P(0.55f, 0.35f), col, s * 0.15f);
-        dl->AddLine(P(-0.28f, -0.3f), P(-0.28f, -0.85f), col, t * 1.2f);
-        dl->AddLine(P(0.28f, -0.3f), P(0.28f, -0.85f), col, t * 1.2f);
-        dl->AddLine(P(0, 0.35f), P(0, 0.95f), col, t * 1.4f);
+        dl->AddRect(P(-0.55f, -0.3f), P(0.55f, 0.35f), col, rr, 0, t);
+        dl->AddLine(P(-0.28f, -0.3f), P(-0.28f, -0.85f), col, t);
+        dl->AddLine(P(0.28f, -0.3f), P(0.28f, -0.85f), col, t);
+        dl->AddLine(P(0, 0.35f), P(0, 0.95f), col, t);
     } else {
         dl->AddCircle(c, s * 0.8f, col, 0, t);
     }
@@ -405,25 +401,28 @@ void drawToolbar(App& app, UiState& ui) {
     float w = ImGui::GetContentRegionAvail().x;
     for (auto& cat : categories()) {
         if (cat == "OFX" && ui.ofxPlugins.empty()) continue;
-        ImU32 c = categoryColor(cat);
-        ImVec4 cv = ImGui::ColorConvertU32ToFloat4(c);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(cv.x * 0.55f, cv.y * 0.55f, cv.z * 0.55f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(cv.x * 0.8f, cv.y * 0.8f, cv.z * 0.8f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, cv);
-        if (ImGui::Button(("##" + cat).c_str(), ImVec2(w, w))) ImGui::OpenPopup(("tb_" + cat).c_str());
+        // flat buttons: a line icon, a soft tile when hovered, an accent bar while its menu is open
+        const std::string pop = "tb_" + cat;
+        const bool open = ImGui::IsPopupOpen(pop.c_str());
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgActive));
+        if (ImGui::Button(("##" + cat).c_str(), ImVec2(w, w))) ImGui::OpenPopup(pop.c_str());
         ImGui::PopStyleColor(3);
-        {  // the category's icon, a light tint of its colour (lighter still when hovered)
+        {
             const bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
-            const float k = hot ? 0.75f : 0.5f;
-            const ImU32 ic = ImGui::ColorConvertFloat4ToU32(ImVec4(cv.x + (1 - cv.x) * k, cv.y + (1 - cv.y) * k, cv.z + (1 - cv.z) * k, 1));
-            const ImVec4 bgv = ImGui::IsItemActive() ? cv : hot ? ImVec4(cv.x * 0.8f, cv.y * 0.8f, cv.z * 0.8f, 1)
-                                                               : ImVec4(cv.x * 0.55f, cv.y * 0.55f, cv.z * 0.55f, 1);
             const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
-            categoryIcon(ImGui::GetWindowDrawList(), cat, ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f), (mx.x - mn.x) * 0.3f, ic,
-                         ImGui::ColorConvertFloat4ToU32(bgv));
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            if (open) {
+                dl->AddRectFilled(mn, mx, ImGui::GetColorU32(ImGuiCol_FrameBgActive), ImGui::GetStyle().FrameRounding);
+                const float bw = std::max(2.0f, theme().uiScale * 3.0f);
+                dl->AddRectFilled(ImVec2(mn.x, mn.y + 4), ImVec2(mn.x + bw, mx.y - 4), themeAccent(), bw * 0.5f);
+            }
+            const ImU32 ic = open ? themeAccent() : hot ? theme().text : theme().icon;
+            categoryIcon(dl, cat, ImVec2((mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f), (mx.x - mn.x) * 0.27f, ic);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", cat.c_str());
-        if (ImGui::BeginPopup(("tb_" + cat).c_str())) {
+        if (ImGui::BeginPopup(pop.c_str())) {
             ImGui::TextDisabled("%s", cat.c_str());
             ImGui::Separator();
             if (cat == "OFX") {
@@ -567,6 +566,21 @@ static void drawPreferences(App& app, UiState& ui) {
         sizes = sizing.get();
         haveSizes = true;
     }
+    ImGui::SeparatorText("Appearance");
+    kit::rowLabel("theme");
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::BeginCombo("##theme", themeLabel(app.themeName).c_str())) {
+        for (auto& t : themeNames())
+            if (ImGui::Selectable(themeLabel(t).c_str(), t == app.themeName)) {
+                app.themeName = t;
+                ui.pendingTheme = t;  // applied between frames
+                app.saveSettings();
+            }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Forge: warm charcoal, orange accent (the default)\nGraphite: neutral greys, amber accent\n"
+                          "Midnight: cool blue-black, teal accent\nNeutral: true mid grey, for judging colour");
     ImGui::SeparatorText("New scripts");
     if (kit::checkbox("Offer to match the project to the first Read", &app.askMatchProject,
                       "When a new script's first Read gets its media, ask whether to set the project's frame range and resolution to it"))

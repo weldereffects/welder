@@ -396,6 +396,7 @@ if(STRATA_BUILD_UI)
   src/ui/Viewer3D.cpp
   src/ui/TransformTool.cpp
   src/ui/KnobHandles.cpp
+  src/ui/Theme.cpp
   src/ui/FlowPaintTool.cpp
   src/ui/TrackMaskTool.cpp
   src/ui/AppML.cpp
@@ -412,7 +413,8 @@ if(STRATA_BUILD_UI)
   add_custom_command(TARGET welder_ui POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:welder_ui>/fonts
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/third_party/imgui/fonts/Roboto-Medium.ttf $<TARGET_FILE_DIR:welder_ui>/fonts/)
+            ${CMAKE_SOURCE_DIR}/third_party/fonts/Roboto-Medium.ttf ${CMAKE_SOURCE_DIR}/third_party/fonts/Roboto-Regular.ttf
+            ${CMAKE_SOURCE_DIR}/third_party/fonts/LICENSE-Roboto.txt $<TARGET_FILE_DIR:welder_ui>/fonts/)
 endif()
 
 # Retime quality / speed check (not part of ctest): build/retime_bench [w h]

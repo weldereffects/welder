@@ -18,7 +18,7 @@ namespace strata::ui {
 
 namespace {
 
-constexpr ImU32 kAccent = IM_COL32(232, 168, 64, 255);
+#define kAccent (themeAccent())  // the theme's accent
 constexpr ImU32 kKey = IM_COL32(90, 170, 255, 255);
 constexpr ImU32 kCache = IM_COL32(80, 200, 110, 230);
 

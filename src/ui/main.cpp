@@ -77,113 +77,6 @@ Options parse(int argc, char** argv) {
 
 std::string configDir() { return brand::configDir(); }
 
-void applyTheme() {
-    ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowRounding = 0;
-    s.FrameRounding = 2;
-    s.GrabRounding = 2;
-    s.TabRounding = 2;
-    s.PopupRounding = 2;
-    s.ScrollbarRounding = 2;
-    s.WindowBorderSize = 1;
-    s.FrameBorderSize = 0;
-    s.WindowPadding = ImVec2(8, 6);
-    s.FramePadding = ImVec2(6, 3);
-    s.ItemSpacing = ImVec2(6, 4);
-    s.IndentSpacing = 14;
-    s.ScrollbarSize = 12;
-    s.DockingSeparatorSize = 3;
-    ImVec4* c = s.Colors;
-    auto rgb = [](int r, int g, int b, float a = 1.0f) { return ImVec4(r / 255.f, g / 255.f, b / 255.f, a); };
-    const ImVec4 accent = rgb(232, 168, 64);
-    c[ImGuiCol_Text] = rgb(214, 214, 214);
-    c[ImGuiCol_TextDisabled] = rgb(130, 130, 130);
-    c[ImGuiCol_WindowBg] = rgb(50, 50, 50);
-    c[ImGuiCol_ChildBg] = rgb(50, 50, 50);
-    c[ImGuiCol_PopupBg] = rgb(44, 44, 44, 0.98f);
-    c[ImGuiCol_Border] = rgb(28, 28, 28);
-    c[ImGuiCol_FrameBg] = rgb(36, 36, 36);
-    c[ImGuiCol_FrameBgHovered] = rgb(46, 46, 46);
-    c[ImGuiCol_FrameBgActive] = rgb(56, 56, 56);
-    c[ImGuiCol_TitleBg] = rgb(40, 40, 40);
-    c[ImGuiCol_TitleBgActive] = rgb(46, 46, 46);
-    c[ImGuiCol_MenuBarBg] = rgb(42, 42, 42);
-    c[ImGuiCol_ScrollbarBg] = rgb(40, 40, 40);
-    c[ImGuiCol_ScrollbarGrab] = rgb(80, 80, 80);
-    c[ImGuiCol_CheckMark] = accent;
-    c[ImGuiCol_SliderGrab] = rgb(150, 150, 150);
-    c[ImGuiCol_SliderGrabActive] = accent;
-    c[ImGuiCol_Button] = rgb(70, 70, 70);
-    c[ImGuiCol_ButtonHovered] = rgb(88, 88, 88);
-    c[ImGuiCol_ButtonActive] = rgb(105, 105, 105);
-    c[ImGuiCol_Header] = rgb(72, 72, 72);
-    c[ImGuiCol_HeaderHovered] = rgb(86, 86, 86);
-    c[ImGuiCol_HeaderActive] = rgb(96, 96, 96);
-    c[ImGuiCol_Separator] = rgb(30, 30, 30);
-    c[ImGuiCol_Tab] = rgb(42, 42, 42);
-    c[ImGuiCol_TabHovered] = rgb(70, 70, 70);
-    c[ImGuiCol_TabSelected] = rgb(58, 58, 58);
-    c[ImGuiCol_TabSelectedOverline] = accent;
-    c[ImGuiCol_TabDimmed] = rgb(40, 40, 40);
-    c[ImGuiCol_TabDimmedSelected] = rgb(52, 52, 52);
-    c[ImGuiCol_DockingPreview] = ImVec4(accent.x, accent.y, accent.z, 0.5f);
-    c[ImGuiCol_TextSelectedBg] = ImVec4(accent.x, accent.y, accent.z, 0.35f);
-    c[ImGuiCol_NavHighlight] = accent;
-    c[ImGuiCol_ResizeGripActive] = accent;
-
-    // Look-development previews of other themes (STRATA_PREVIEW_THEME=graphite|midnight|forge|neutral);
-    // the default above is unchanged without it.
-    const char* pv = std::getenv("STRATA_PREVIEW_THEME");
-    if (!pv || !*pv) return;
-    const std::string t = pv;
-    struct P {
-        ImVec4 bg, panel, frame, frameHi, button, buttonHi, header, title, border, text, textDim, accent;
-        unsigned int canvas, viewerBg;
-        float round;
-    } p{};
-    auto u = [](int r, int g, int b) { return (unsigned int)IM_COL32(r, g, b, 255); };
-    if (t == "graphite") {  // the current look, refined: more contrast between layers, softer corners
-        p = {rgb(38, 38, 40), rgb(46, 46, 49), rgb(30, 30, 32), rgb(40, 40, 43), rgb(62, 62, 66), rgb(78, 78, 83), rgb(64, 64, 68),
-             rgb(34, 34, 36), rgb(24, 24, 26), rgb(222, 222, 224), rgb(128, 128, 134), rgb(240, 172, 60), u(27, 27, 29), u(20, 20, 21), 4};
-    } else if (t == "midnight") {  // cool blue-black, teal accent
-        p = {rgb(20, 25, 36), rgb(26, 33, 47), rgb(15, 19, 28), rgb(28, 36, 52), rgb(40, 52, 74), rgb(54, 70, 98), rgb(42, 54, 78),
-             rgb(17, 22, 32), rgb(9, 12, 18), rgb(212, 224, 242), rgb(118, 134, 162), rgb(61, 219, 217), u(13, 18, 27), u(9, 12, 19), 5};
-    } else if (t == "forge") {  // warm charcoal, molten orange: the welding brand
-        p = {rgb(32, 26, 22), rgb(42, 34, 28), rgb(24, 19, 16), rgb(38, 30, 25), rgb(66, 50, 38), rgb(92, 66, 46), rgb(74, 54, 40),
-             rgb(27, 21, 18), rgb(12, 9, 8), rgb(240, 228, 214), rgb(156, 136, 116), rgb(255, 122, 26), u(24, 19, 16), u(16, 12, 10), 4};
-    } else if (t == "neutral") {  // colour-critical mid grey, no tinted chrome, a quiet blue accent
-        p = {rgb(64, 64, 64), rgb(72, 72, 72), rgb(52, 52, 52), rgb(60, 60, 60), rgb(90, 90, 90), rgb(104, 104, 104), rgb(88, 88, 88),
-             rgb(58, 58, 58), rgb(44, 44, 44), rgb(230, 230, 230), rgb(150, 150, 150), rgb(110, 170, 230), u(56, 56, 56), u(64, 64, 64), 2};
-    } else {
-        return;
-    }
-    c[ImGuiCol_WindowBg] = c[ImGuiCol_ChildBg] = p.panel;
-    c[ImGuiCol_PopupBg] = ImVec4(p.bg.x, p.bg.y, p.bg.z, 0.98f);
-    c[ImGuiCol_MenuBarBg] = c[ImGuiCol_TitleBg] = c[ImGuiCol_Tab] = c[ImGuiCol_TabDimmed] = c[ImGuiCol_ScrollbarBg] = p.title;
-    c[ImGuiCol_TitleBgActive] = c[ImGuiCol_TabDimmedSelected] = p.bg;
-    c[ImGuiCol_TabSelected] = p.panel;
-    c[ImGuiCol_Border] = c[ImGuiCol_Separator] = p.border;
-    c[ImGuiCol_FrameBg] = p.frame;
-    c[ImGuiCol_FrameBgHovered] = c[ImGuiCol_FrameBgActive] = p.frameHi;
-    c[ImGuiCol_Button] = p.button;
-    c[ImGuiCol_ButtonHovered] = c[ImGuiCol_ButtonActive] = p.buttonHi;
-    c[ImGuiCol_Header] = p.header;
-    c[ImGuiCol_HeaderHovered] = c[ImGuiCol_HeaderActive] = p.buttonHi;
-    c[ImGuiCol_Text] = p.text;
-    c[ImGuiCol_TextDisabled] = p.textDim;
-    c[ImGuiCol_ScrollbarGrab] = p.button;
-    for (ImGuiCol k : {ImGuiCol_CheckMark, ImGuiCol_SliderGrabActive, ImGuiCol_TabSelectedOverline, ImGuiCol_NavHighlight, ImGuiCol_ResizeGripActive})
-        c[k] = p.accent;
-    c[ImGuiCol_SliderGrab] = p.textDim;
-    c[ImGuiCol_DockingPreview] = ImVec4(p.accent.x, p.accent.y, p.accent.z, 0.5f);
-    c[ImGuiCol_TextSelectedBg] = ImVec4(p.accent.x, p.accent.y, p.accent.z, 0.35f);
-    s.FrameRounding = s.GrabRounding = s.TabRounding = s.PopupRounding = s.ScrollbarRounding = p.round;
-    s.FramePadding = ImVec2(7, 4);
-    theme().canvas = p.canvas;
-    theme().viewerBg = p.viewerBg;
-    theme().accent = ImGui::ColorConvertFloat4ToU32(p.accent);
-}
-
 // classic default: viewer top-left with the timeline under it, node graph
 // below, properties on the right, node toolbar on the far left.
 void buildLayout(ImGuiID dock, ImVec2 size) {
@@ -289,7 +182,7 @@ bool savePng(const std::string& path, int w, int h) {
 
 std::string findFont(const std::string& exeDir) {
     for (fs::path p : {fs::path(exeDir) / "fonts", fs::path(exeDir) / ".." / "fonts", fs::path(exeDir) / ".." / "Resources" / "fonts",
-                       fs::path(STRATA_SOURCE_DIR) / "third_party" / "imgui" / "fonts"}) {
+                       fs::path(STRATA_SOURCE_DIR) / "third_party" / "fonts", fs::path(STRATA_SOURCE_DIR) / "third_party" / "imgui" / "fonts"}) {
         std::error_code ec;
         if (fs::exists(p / "Roboto-Medium.ttf", ec)) return (p / "Roboto-Medium.ttf").string();
     }
@@ -361,8 +254,6 @@ int main(int argc, char** argv) {
         std::error_code ec;
         fs::rename(iniPath, iniPath + ".bak", ec);  // kept beside it, just in case
     }
-    applyTheme();
-
     App app;
     app.exeDir = fs::path(absolutePath(argv[0])).parent_path().string();
 #if defined(__APPLE__)
@@ -384,8 +275,19 @@ int main(int argc, char** argv) {
         glfwGetWindowContentScale(win, &xs, &ys);
         scale = std::max(1.0f, xs);
     }
-    if (!font.empty()) io.Fonts->AddFontFromFileTTF(font.c_str(), 15.0f * scale);
-    if (scale > 1.0f) ImGui::GetStyle().ScaleAllSizes(scale);
+    // Roboto: Regular for labels and menus (the default font), Medium for values, names and
+    // headers, a small Medium for the uppercase section headers
+    if (!font.empty()) {
+        const std::string regular = (fs::path(font).parent_path() / "Roboto-Regular.ttf").string();
+        const bool haveRegular = fs::exists(regular);
+        ImFontConfig cfg;
+        cfg.OversampleH = 2;
+        theme().regular = io.Fonts->AddFontFromFileTTF(haveRegular ? regular.c_str() : font.c_str(), 14.5f * scale, &cfg);
+        theme().medium = io.Fonts->AddFontFromFileTTF(font.c_str(), 14.5f * scale, &cfg);
+        theme().small = io.Fonts->AddFontFromFileTTF(font.c_str(), 11.5f * scale, &cfg);
+    }
+    theme().uiScale = scale;
+    applyTheme(app.themeName);
 
     ImGui_ImplGlfw_InitForOpenGL(win, true);
     ImGui_ImplOpenGL3_Init("#version 330");
@@ -461,6 +363,10 @@ int main(int argc, char** argv) {
             const int cols = std::max(1, opt.width / opt.idScan), pos = scanIdx / 3;
             ImGui::GetIO().AddMousePosEvent((float)((pos % cols) * opt.idScan + opt.idScan / 2),
                                             (float)((pos / cols) * opt.idScan + opt.idScan / 2));
+        }
+        if (!ui.pendingTheme.empty()) {  // Preferences > Theme
+            applyTheme(ui.pendingTheme);
+            ui.pendingTheme.clear();
         }
         ImGui::NewFrame();
         if (scanning && GImGui->DebugDrawIdConflictsId != 0) {

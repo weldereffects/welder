@@ -1718,13 +1718,13 @@ void drawNodeGraph(App& app, UiState& ui) {
         float sx = std::fmod(-g.pan.x * g.zoom, step), sy = std::fmod(-g.pan.y * g.zoom, step);
         if (sx < 0) sx += step;
         if (sy < 0) sy += step;
-        const ImU32 dot = IM_COL32(62, 62, 64, 255);
+        const ImU32 dot = theme().grid;
         const float r = std::max(0.8f, std::min(1.4f, 1.1f * g.zoom));
         for (float y = sy; y < sz.y; y += step)
             for (float x = sx; x < sz.x; x += step) dl->AddRectFilled(ImVec2(o.x + x - r * 0.5f, o.y + y - r * 0.5f), ImVec2(o.x + x + r * 0.5f, o.y + y + r * 0.5f), dot);
     }
 
-    ImFont* font = ImGui::GetFont();
+    ImFont* font = theme().medium ? theme().medium : ImGui::GetFont();  // names in the medium weight
     const float fs = ImGui::GetFontSize() * g.zoom;
     const bool drawText = g.zoom > 0.35f;
 
@@ -2148,36 +2148,51 @@ void drawNodeGraph(App& app, UiState& ui) {
             dl->AddCircle(c, s.x * 0.5f * g.zoom, sel ? theme().accent : IM_COL32(20, 20, 20, 255), 0, sel ? 2.0f : 1.0f);
             continue;
         }
-        // The modern look in our colours: the category colour deepened for the body, its own
-        // brighter tone for the edge, white text; rounded (time nodes: a hexagon)
+        // Header tiles: a quiet body in the theme's tile colour, the category colour as a strip
+        // along the top (and the edge, faintly), a soft accent glow when selected; time nodes
+        // keep their hexagon.
         ImVec4 bc = ImGui::ColorConvertU32ToFloat4(base);
-        const float lum = 0.3f * bc.x + 0.59f * bc.y + 0.11f * bc.z;
-        const float deep = lum > 0.45f ? 0.62f : 0.8f;  // light colours darken more, so white text reads
-        ImU32 fill = ImGui::ColorConvertFloat4ToU32(ImVec4(bc.x * deep, bc.y * deep, bc.z * deep, 1));
-        ImU32 fillTop = ImGui::ColorConvertFloat4ToU32(ImVec4(std::min(1.f, bc.x * deep * 1.1f), std::min(1.f, bc.y * deep * 1.1f), std::min(1.f, bc.z * deep * 1.1f), 1));
-        ImU32 edge = ImGui::ColorConvertFloat4ToU32(ImVec4(std::min(1.f, bc.x * 1.08f + 0.06f), std::min(1.f, bc.y * 1.08f + 0.06f), std::min(1.f, bc.z * 1.08f + 0.06f), 1));
-        const float rad = std::max(1.5f, 4.0f * g.zoom);
         const bool disabled = n->params.flag("disable", false);
-        if (disabled) {
-            fill = IM_COL32(70, 70, 70, 255);
-            fillTop = IM_COL32(78, 78, 78, 255);
-            edge = IM_COL32(110, 110, 110, 255);
+        if (disabled) bc = ImVec4(0.45f, 0.45f, 0.45f, 1);
+        ImVec4 tv = ImGui::ColorConvertU32ToFloat4(theme().tile);
+        auto mixc = [&](float k, float a) {  // the tile tinted k toward the category colour
+            return ImGui::ColorConvertFloat4ToU32(ImVec4(tv.x + (bc.x - tv.x) * k, tv.y + (bc.y - tv.y) * k, tv.z + (bc.z - tv.z) * k, a));
+        };
+        const ImU32 fill = mixc(0.12f, 1);
+        const ImU32 edge = mixc(0.55f, 1);  // also the output port
+        const ImU32 strip = ImGui::ColorConvertFloat4ToU32(bc);
+        const float rad = std::max(1.5f, 5.0f * g.zoom);
+        if (sel) {  // the glow
+            for (int k = 6; k >= 1; --k) {
+                const float e = k * 1.2f * std::max(0.7f, g.zoom);
+                dl->AddRect(ImVec2(p0.x - e, p0.y - e), ImVec2(p1.x + e, p1.y + e), themeAccent(14 + (6 - k) * 13), rad + e, 0, 1.6f);
+            }
         }
         if (hexagonal(n)) {
             const float in = (p1.y - p0.y) * 0.5f;
             ImVec2 pts[6] = {ImVec2(p0.x, (p0.y + p1.y) * 0.5f), ImVec2(p0.x + in, p0.y), ImVec2(p1.x - in, p0.y),
                              ImVec2(p1.x, (p0.y + p1.y) * 0.5f), ImVec2(p1.x - in, p1.y), ImVec2(p0.x + in, p1.y)};
             dl->AddConvexPolyFilled(pts, 6, fill);
-            dl->AddPolyline(pts, 6, sel ? theme().accent : edge, ImDrawFlags_Closed, sel ? 2.5f : 1.2f);
+            dl->AddPolyline(pts, 6, sel ? theme().accent : strip, ImDrawFlags_Closed, sel ? 2.0f : 1.5f);
         } else {
+            dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 2), ImVec2(p1.x + 1, p1.y + 2), IM_COL32(0, 0, 0, 70), rad);  // a little shadow
             dl->AddRectFilled(p0, p1, fill, rad);
-            dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p0.y + (p1.y - p0.y) * 0.45f), fillTop, rad, ImDrawFlags_RoundCornersTop);
-            if (sel) dl->AddRect(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), IM_COL32(255, 196, 70, 90), rad + 2, 0, 3.0f);
-            dl->AddRect(p0, p1, sel ? theme().accent : edge, rad, 0, sel ? 2.0f : 1.2f);
+            const float sh = std::max(2.0f, 3.5f * g.zoom);  // the header strip
+            dl->AddRectFilled(p0, ImVec2(p1.x, p0.y + sh + rad * 0.5f), strip, rad, ImDrawFlags_RoundCornersTop);
+            dl->AddRectFilled(ImVec2(p0.x, p0.y + sh), ImVec2(p1.x, p0.y + sh + rad * 0.5f + 1), fill);
+            dl->AddRect(p0, p1, sel ? theme().accent : mixc(0.3f, 1), rad, 0, sel ? 1.5f : 1.0f);
+        }
+        // the category's line icon on the left, when the name leaves room for it
+        if (drawText && g.zoom > 0.55f && !hexagonal(n) && stampHeight(n) <= 0 && n->type != "Viewer") {
+            const float ih = 7.0f * g.zoom, nameW = font->CalcTextSizeA(fs, FLT_MAX, 0, n->name.c_str()).x;
+            if ((p1.x - p0.x) - nameW >= 4 * ih + 16 * g.zoom) {
+                const float cy = subtitle(n).empty() ? (p0.y + p1.y) * 0.5f + 1 * g.zoom : p0.y + 3 * g.zoom + fs * 0.5f;
+                categoryIcon(dl, categoryOf(n->type), ImVec2(p0.x + 6 * g.zoom + ih, cy), ih * 0.85f, mixc(0.7f, 0.9f));
+            }
         }
         if (n->type == "Group")  // a container: a second frame inside
             dl->AddRect(ImVec2(p0.x + 3 * g.zoom, p0.y + 3 * g.zoom), ImVec2(p1.x - 3 * g.zoom, p1.y - 3 * g.zoom), IM_COL32(255, 255, 255, 60), rad, 0, 1.0f);
-        if (disabled) dl->AddLine(p0, p1, IM_COL32(20, 20, 20, 200), 2);
+        if (disabled) dl->AddLine(p0, p1, theme().muted, 1.5f);
         // postage stamp: the image, letterboxed in a dark inset at the top
         const float stampH = stampHeight(n) * g.zoom;
         const Stamp* stamp = stampH > 0 && g.zoom > 0.25f ? stampFor(app, n) : nullptr;
@@ -2232,7 +2247,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, n->name.c_str());
             const float ty0 = p0.y + stampH;  // the text area: under the stamp
             float cy = subtitle(n).empty() ? (ty0 + p1.y - ts.y) / 2 : ty0 + 3 * g.zoom;
-            const ImU32 nameCol = disabled ? IM_COL32(170, 170, 170, 255) : IM_COL32(250, 250, 250, 255);
+            const ImU32 nameCol = disabled ? theme().muted : theme().tileText;
             dl->AddText(font, fs, ImVec2((p0.x + p1.x - ts.x) / 2, cy), nameCol, n->name.c_str());
             std::string subAll = subtitle(n);
             float ly = cy + fs + 1;
@@ -2249,7 +2264,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                     sub += "...";
                     ss = font->CalcTextSizeA(sfs, FLT_MAX, 0, sub.c_str());
                 }
-                dl->AddText(font, sfs, ImVec2((p0.x + p1.x - ss.x) / 2, ly), IM_COL32(225, 225, 225, 200), sub.c_str());
+                dl->AddText(font, sfs, ImVec2((p0.x + p1.x - ss.x) / 2, ly), theme().muted, sub.c_str());
                 ly += sfs + 1 * g.zoom;
             }
         }
@@ -2273,7 +2288,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             const float b = std::max(11.0f, 14.0f * g.zoom);
             const ImVec2 c0(p0.x - b * 0.45f, p0.y - b * 0.45f), c1(c0.x + b, c0.y + b);
             dl->AddRectFilled(c0, c1, IM_COL32(28, 28, 30, 235), 3.0f);
-            dl->AddRect(c0, c1, IM_COL32(255, 196, 70, 230), 3.0f, 0, 1.0f);
+            dl->AddRect(c0, c1, themeAccent(230), 3.0f, 0, 1.0f);
             // an S-curve through two keys
             const float x0 = c0.x + b * 0.18f, x1 = c1.x - b * 0.18f, y0 = c1.y - b * 0.22f, y1 = c0.y + b * 0.22f;
             dl->AddBezierCubic(ImVec2(x0, y0), ImVec2(x0 + (x1 - x0) * 0.55f, y0), ImVec2(x1 - (x1 - x0) * 0.55f, y1), ImVec2(x1, y1),
@@ -2524,11 +2539,11 @@ void drawNodeGraph(App& app, UiState& ui) {
                     const ImVec2 lc(cx + sx, cy + sy);
                     if (!std::isnan(g.snapX)) {
                         const ImVec2 a = S(ImVec2(g.snapX, std::min(lc.y, g.snapXTo))), b = S(ImVec2(g.snapX, std::max(lc.y, g.snapXTo)));
-                        dl->AddLine(a, b, IM_COL32(255, 196, 70, 150), 1.0f);
+                        dl->AddLine(a, b, themeAccent(150), 1.0f);
                     }
                     if (!std::isnan(g.snapY)) {
                         const ImVec2 a = S(ImVec2(std::min(lc.x, g.snapYTo), g.snapY)), b = S(ImVec2(std::max(lc.x, g.snapYTo), g.snapY));
-                        dl->AddLine(a, b, IM_COL32(255, 196, 70, 150), 1.0f);
+                        dl->AddLine(a, b, themeAccent(150), 1.0f);
                     }
                 }
             }
@@ -2597,8 +2612,8 @@ void drawNodeGraph(App& app, UiState& ui) {
         case GraphState::Drag::Marquee: {
             ImVec2 a = g.dragStartScreen, b = io.MousePos;
             ImVec2 lo(std::min(a.x, b.x), std::min(a.y, b.y)), hi(std::max(a.x, b.x), std::max(a.y, b.y));
-            dl->AddRectFilled(lo, hi, IM_COL32(255, 196, 70, 30));
-            dl->AddRect(lo, hi, IM_COL32(255, 196, 70, 160));
+            dl->AddRectFilled(lo, hi, themeAccent(30));
+            dl->AddRect(lo, hi, themeAccent(160));
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                 ImVec2 glo = G(lo), ghi = G(hi);
                 for (auto& n : comp.nodes) {

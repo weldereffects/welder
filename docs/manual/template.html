@@ -368,7 +368,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
     <section id="viewer">
       <div class="sec-head"><span class="eyebrow">Look closer</span><h2>The Viewer</h2></div>
       <p>A viewer looks through a <strong>Viewer node</strong> in the node graph. It has ten pipes, numbered <kbd>1</kbd>–<kbd>9</kbd> and <kbd>0</kbd> like the keys. Select a node and press a number: that pipe connects to it and the viewer shows it. With nothing selected the number switches pipes, keeping zoom and position so you can flip plate and comp on the same edge; <kbd>Backspace</kbd> steps back through the connected pipes. The shown pipe (A) is orange in the graph.</p>
-      <p>The toolbar holds the <strong>A</strong> and <strong>B</strong> pipe menus and the <strong>compare</strong> mode, the <strong>layer</strong> and <strong>channel</strong> menus, the display transform, <strong>Fit</strong>, <strong>1:1</strong>, <strong>3D</strong>, and <strong>full res</strong> (off renders lighter when zoomed out).</p>
+      <p>The toolbar is in four groups, wrapping onto a second row when the panel is narrow: what is viewed (the <strong>A</strong> and <strong>B</strong> pipe menus and the <strong>compare</strong> mode); channels (the <strong>layer</strong> menu and an <strong>RGB R G B A Y</strong> switch, where clicking the shown channel again goes back to colour); display (<strong>f/stop</strong> and <strong>gamma</strong>, drag to change and double-click to reset, and the display transform); and the view (<strong>Fit</strong>, <strong>1:1</strong>, <strong>3D</strong>, and <strong>full res</strong>, which when off renders lighter while zoomed out).</p>
       <h3>Comparing A and B</h3>
       <div class="table-wrap"><table>
         <tr><th>Mode</th><th>What you see</th><th>For</th></tr>
@@ -575,7 +575,8 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
     <!-- ============================================================ -->
     <section id="help">
       <div class="sec-head"><span class="eyebrow">When something's off</span><h2>Settings &amp; troubleshooting</h2></div>
-      <p><strong>Edit › Preferences</strong> holds the cache folder (disk cache, BlenderRender frames, AI job files) with sizes and Clear buttons, the playback RAM cache, <strong>Use the GPU</strong>, network-drive handling, and the offer to match the project to the first Read.</p>
+      <p><strong>Edit › Preferences › Appearance</strong> picks the look: <strong>Forge</strong> (warm charcoal, orange; the default), <strong>Graphite</strong> (neutral grey, amber), <strong>Midnight</strong> (blue-black, teal) or <strong>Neutral</strong> (true mid grey, for colour-critical work). The change is immediate and is remembered.</p>
+      <p><strong>Edit › Preferences</strong> also holds the cache folder (disk cache, BlenderRender frames, AI job files) with sizes and Clear buttons, the playback RAM cache, <strong>Use the GPU</strong>, network-drive handling, and the offer to match the project to the first Read.</p>
       <div class="table-wrap"><table>
         <tr><th>What</th><th>Where</th></tr>
         <tr><td>Panel layout</td><td><code>{{CFG}}{{S}}layout.ini</code></td></tr>

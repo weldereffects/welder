@@ -72,11 +72,6 @@ double pickScale(float zoom, bool fullRes) {
 
 }  // namespace
 
-ThemeColors& theme() {
-    static ThemeColors t;
-    return t;
-}
-
 void viewerUpload(ViewerState& v) {
     v.dirtyTexture = false;
     v.hasB = false;
@@ -188,7 +183,7 @@ void viewerProcessCombo(App& app) {
     auto& pr = app.comp->project;
     std::string d = pr.viewerDisplay.empty() ? color::defaultDisplay(cfg) : pr.viewerDisplay;
     std::string view = pr.viewerView.empty() ? color::defaultView(cfg, d) : pr.viewerView;
-    ImGui::SetNextItemWidth(200);
+    ImGui::SetNextItemWidth(130);
     if (ImGui::BeginCombo("##viewproc", view.c_str(), ImGuiComboFlags_HeightLarge)) {
         auto set = [&](const std::string& dd, const std::string& vv) {
             app.edit([dd, vv](Comp& c) {
@@ -275,7 +270,7 @@ static void pipeCombos(App& app, Node* vn, int aPipe, int bPipe, ViewerState& v)
     const std::string vname = vn->name;
     auto list = [&](const char* id, int cur, bool isB) {
         std::string label = (isB ? "B: " : "A: ") + (cur < 0 ? std::string("none") : pipeLabel(vn, cur));
-        ImGui::SetNextItemWidth(isB ? 120 : 130);
+        ImGui::SetNextItemWidth(isB ? 100 : 130);
         if (ImGui::BeginCombo(id, label.c_str(), ImGuiComboFlags_HeightLarge)) {
             if (isB && ImGui::Selectable("none", cur < 0)) app.setViewerParam(vname, "b_pipe", -1);
             for (int k = 1; k <= 10; ++k) {
@@ -303,7 +298,7 @@ static void pipeCombos(App& app, Node* vn, int aPipe, int bPipe, ViewerState& v)
     ImGui::SameLine(0, 4);
     static const char* modes[] = {"off", "wipe", "over", "under", "minus", "difference", "side by side", "above / below"};
     const std::string cur = vn->params.str("compare", "off");
-    ImGui::SetNextItemWidth(105);
+    ImGui::SetNextItemWidth(84);
     if (ImGui::BeginCombo("##cmpmode", cur.c_str())) {
         for (const char* m : modes)
             if (ImGui::Selectable(m, cur == m)) {
@@ -370,7 +365,7 @@ static void wipeHandles(App& app, Node* vn, ViewerState& v, ImDrawList* dl, cons
     dl->AddCircleFilled(rh, 5, v.wipeDrag == 2 || (dr < 9 && !v.wipeDrag) ? hot : w);
     const std::string la = "A " + nodeA, lb = "B " + nodeB;
     const ImVec2 sa = ImGui::CalcTextSize(la.c_str());
-    dl->AddText(ImVec2(c.x - n.x * 24 - sa.x * (n.x > 0 ? 1.0f : 0.0f) + d.x * 40, c.y - n.y * 24 + d.y * 40 - 8), IM_COL32(255, 196, 70, 230), la.c_str());
+    dl->AddText(ImVec2(c.x - n.x * 24 - sa.x * (n.x > 0 ? 1.0f : 0.0f) + d.x * 40, c.y - n.y * 24 + d.y * 40 - 8), themeAccent(230), la.c_str());
     dl->AddText(ImVec2(c.x + n.x * 24 - ImGui::CalcTextSize(lb.c_str()).x * (n.x < 0 ? 1.0f : 0.0f) + d.x * 40, c.y + n.y * 24 + d.y * 40 - 8),
                 IM_COL32(90, 170, 255, 230), lb.c_str());
 }
@@ -455,16 +450,44 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         return;
     }
 
-    // ---- toolbar
-    ImGui::SetCursorPos(ImVec2(6, ImGui::GetCursorPosY() + 4));
+    // ---- toolbar: grouped segments (what's viewed | channels | display | view), status on the right
+    ImGui::SetCursorPos(ImVec2(8, ImGui::GetCursorPosY() + 6));
+    ImDrawList* tdl = ImGui::GetWindowDrawList();
+    auto segBegin = [&] {
+        tdl->ChannelsSplit(2);
+        tdl->ChannelsSetCurrent(1);
+        ImGui::BeginGroup();
+    };
+    auto segEnd = [&] {
+        ImGui::EndGroup();
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        tdl->ChannelsSetCurrent(0);
+        tdl->AddRectFilled(ImVec2(mn.x - 3, mn.y - 3), ImVec2(mx.x + 3, mx.y + 3), theme().card, 6);
+        tdl->ChannelsMerge();
+    };
+    const float gap = 12;
+    auto nextSeg = [&](float w) {  // on this row when it fits, otherwise the next
+        const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        if (ImGui::GetItemRectMax().x + gap + w < right) ImGui::SameLine(0, gap);
+        else ImGui::SetCursorPos(ImVec2(8, ImGui::GetCursorPosY() + 6));
+    };
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImGui::ColorConvertU32ToFloat4(theme().segment));
+    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(theme().segment));
+
+    segBegin();  // what's viewed
     ImGui::AlignTextToFramePadding();
-    if (active) ImGui::TextColored(ImVec4(1.0f, 0.77f, 0.27f, 1), "%s", vname.empty() ? "Viewer" : vname.c_str());
-    else ImGui::TextDisabled("%s", vname.empty() ? "Viewer" : vname.c_str());
+    ImGui::PushFont(theme().medium, 0.0f);
+    if (active) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(themeAccent()), " %s", vname.empty() ? "Viewer" : vname.c_str());
+    else ImGui::TextDisabled(" %s", vname.empty() ? "Viewer" : vname.c_str());
+    ImGui::PopFont();
     if (ImGui::IsItemHovered()) ImGui::SetTooltip(active ? "The active viewer (number keys route here)" : "Click in this viewer to make it active");
-    ImGui::SameLine(0, 10);
+    ImGui::SameLine(0, 8);
     pipeCombos(app, vn, aPipe, bPipe, v);
-    ImGui::SameLine(0, 16);
-    ImGui::SetNextItemWidth(110);
+    segEnd();
+
+    nextSeg(290);
+    segBegin();  // channels
+    ImGui::SetNextItemWidth(76);
     if (ImGui::BeginCombo("##layer", v.layer.c_str())) {
         for (auto& l : v.layers)
             if (ImGui::Selectable(l.c_str(), l == v.layer)) {
@@ -474,40 +497,82 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("layer");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(100);
-    ImGui::Combo("##channel", &v.channel, kChannelNames, 6);
-    ImGui::SameLine(0, 12);
-    ImGui::TextUnformatted("f/stop");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(110);
-    ImGui::SliderFloat("##fstop", &v.fstop, -6.0f, 6.0f, "%.1f");
+    {  // a segmented switch: RGB(A) R G B A Y
+        static const char* shortNames[] = {"RGB", "R", "G", "B", "A", "Y"};
+        static const ImU32 tints[] = {0, IM_COL32(255, 92, 92, 255), IM_COL32(110, 220, 110, 255), IM_COL32(100, 150, 255, 255),
+                                      IM_COL32(230, 230, 230, 255), IM_COL32(200, 200, 200, 255)};
+        ImGui::SameLine(0, 4);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(1, 0));
+        for (int i = 0; i < 6; ++i) {
+            if (i) ImGui::SameLine();
+            const bool on = v.channel == i;
+            ImGui::PushID(i);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(on ? theme().segmentOn : theme().segment));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(on ? (i ? tints[i] : theme().value) : theme().muted));
+            const float bw = ImGui::CalcTextSize(shortNames[i]).x + 12;
+            if (ImGui::Button(shortNames[i], ImVec2(std::max(bw, 22.0f), 0))) {
+                v.channel = on && i ? 0 : i;  // clicking the shown channel again goes back to colour
+                v.dirtyTexture = true;
+            }
+            if (on) {
+                const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+                tdl->AddLine(ImVec2(mn.x + 4, mx.y - 1), ImVec2(mx.x - 4, mx.y - 1), i ? tints[i] : themeAccent(), 2);
+            }
+            ImGui::PopStyleColor(2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", kChannelNames[i]);
+            ImGui::PopID();
+        }
+        ImGui::PopStyleVar();
+    }
+    segEnd();
+
+    nextSeg(340);
+    segBegin();  // display: exposure, gamma, the viewer transform
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled(" f/stop");
+    ImGui::SameLine(0, 4);
+    ImGui::SetNextItemWidth(52);
+    ImGui::DragFloat("##fstop", &v.fstop, 0.05f, -10.0f, 10.0f, v.fstop == 0 ? "0" : "%+.1f");
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) v.fstop = 0;
-    ImGui::SameLine(0, 12);
-    ImGui::TextUnformatted("gamma");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(90);
-    ImGui::SliderFloat("##gamma", &v.gamma, 0.2f, 4.0f, "%.2f");
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) v.gamma = 1;
-    ImGui::SameLine(0, 12);
-    viewerProcessCombo(app);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exposure in stops (double-click: 0)");
     ImGui::SameLine(0, 8);
-    ImGui::SameLine(0, 12);
+    ImGui::TextDisabled("gamma");
+    ImGui::SameLine(0, 4);
+    ImGui::SetNextItemWidth(52);
+    ImGui::DragFloat("##gamma", &v.gamma, 0.01f, 0.2f, 4.0f, "%.2f");
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) v.gamma = 1;
+    ImGui::SameLine(0, 6);
+    viewerProcessCombo(app);
+    segEnd();
+
+    nextSeg(170);
+    segBegin();  // the view
     if (ImGui::Button("Fit")) v.fitPending = true;
-    ImGui::SameLine();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the image to the viewer (F)");
+    ImGui::SameLine(0, 2);
     if (ImGui::Button("1:1")) v.zoom = 1.0f;
-    ImGui::SameLine();
+    ImGui::SameLine(0, 2);
     if (ImGui::Button("3D") && active) {
         ui.v3d.on = true;
         ui.v3d.force2D = false;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("3D view (Tab)");
-    ImGui::SameLine();
-    ImGui::Checkbox("full res", &v.fullRes);
+    ImGui::SameLine(0, 2);
+    {
+        const bool fr = v.fullRes;
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(fr ? theme().segmentOn : theme().segment));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(fr ? themeAccent() : theme().muted));
+        if (ImGui::Button("full res")) v.fullRes = !v.fullRes;
+        ImGui::PopStyleColor(2);
+    }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Off: when zoomed out, render at a lower resolution that still fills the screen (faster).\n"
                           "On: always render every pixel.");
-    ImGui::SameLine(0, 12);
+    segEnd();
+    ImGui::PopStyleColor(2);
+
+    nextSeg(120);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%d%%", (int)std::lround(v.zoom * 100));
     if (v.res.image && v.res.scale < 1.0) {
         ImGui::SameLine();
@@ -522,12 +587,13 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "PAUSED (U to update)");
     }
     if (active && app.rendering()) {
-        ImGui::SameLine(0, 16);
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "rendering...");
+        ImGui::SameLine(0, 12);
+        ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(themeAccent()), "rendering...");
     } else if (v.res.image) {
-        ImGui::SameLine(0, 16);
+        ImGui::SameLine(0, 12);
         ImGui::TextDisabled("%.0f ms", active ? app.lastRenderMs() : v.res.ms);
     }
+    ImGui::Dummy(ImVec2(0, 2));
 
     // ---- a viewer tool's own row (the Tracker's toolbar)
     if (active && activeTracker(app)) {
@@ -622,7 +688,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
             ImVec2 a0 = toScreen(b.x1 / s + off.x, b.y2 / s + off.y), a1 = toScreen(b.x2 / s + off.x, b.y1 / s + off.y);
             viewerDrawImage(dl, v.texB, a0, a1, ImVec2(0, 1), ImVec2(1, 0), dp);
             ImVec2 fa = toScreen(0, res.format.height), fb = toScreen(off.x, res.format.height + off.y);
-            dl->AddText(ImVec2(fa.x + 4, fa.y - 18), IM_COL32(255, 196, 70, 230), ("A  " + nodeA).c_str());
+            dl->AddText(ImVec2(fa.x + 4, fa.y - 18), themeAccent(230), ("A  " + nodeA).c_str());
             dl->AddText(ImVec2(fb.x + 4, fb.y - 18), IM_COL32(90, 170, 255, 230), ("B  " + nodeB).c_str());
             ImVec2 g0 = toScreen(off.x, res.format.height + off.y), g1 = toScreen(off.x + res.format.width, off.y);
             dl->AddRect(g0, g1, IM_COL32(90, 170, 255, 160));

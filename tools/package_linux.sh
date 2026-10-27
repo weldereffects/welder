@@ -51,7 +51,7 @@ for lib in libgomp.so.1; do
   [ -n "$p" ] && cp -L "$p" "$STAGE/bin/lib/"
 done
 [ "$HAVE_NCNN" = 1 ] && mkdir -p "$STAGE/bin/models" && cp -r "$ROOT/models/rife" "$STAGE/bin/models/rife"
-mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/imgui/fonts/Roboto-Medium.ttf" "$STAGE/bin/fonts/"
+mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/fonts/"Roboto-*.ttf "$ROOT/third_party/fonts/LICENSE-Roboto.txt" "$STAGE/bin/fonts/"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
 mkdir -p "$STAGE/bin/ml"
 cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/setup-ml.sh" "$STAGE/bin/ml/"
