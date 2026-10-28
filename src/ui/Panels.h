@@ -177,9 +177,9 @@ struct RotoState {
         Select, SelectSplines, SelectPoints, SelectFeather,
         AddPoints, RemovePoints, CuspPoints, SmoothPoints, OpenClose, RemoveFeather,
         Bezier, CuspedBezier, BSpline, Ellipse, Rectangle, CuspedRectangle, OpenSpline,
-        Brush, Eraser, Clone, Reveal, Blur
+        Brush, Eraser, Clone, Reveal, Blur, Sharpen, Smear, Dodge, Burn, Repair
     } tool = Tool::Bezier;
-    Tool lastOf[6] = {Tool::Select, Tool::AddPoints, Tool::Bezier, Tool::Brush, Tool::Clone, Tool::Blur};  // per toolbar group
+    Tool lastOf[7] = {Tool::Select, Tool::AddPoints, Tool::Bezier, Tool::Brush, Tool::Clone, Tool::Blur, Tool::Dodge};  // per toolbar group
     bool autokey = true;                // edits key the shape at the current frame
     // the tool settings bar: new shapes (draw tools), and how the viewer shows them (select tools)
     float newColor[4] = {1, 1, 1, 1};
@@ -204,6 +204,20 @@ struct RotoState {
     std::vector<roto::StrokePt> strokePts;
     float brushColor[4] = {1, 1, 1, 1};
     float brushSize = 25, brushHardness = 0.2f, brushOpacity = 1;
+    // new strokes' settings (the tool settings bar)
+    float brushSpacing = 0.1f, brushEffect = 1;  // effect: blur / sharpen / smear / dodge / burn strength
+    bool brushBuildUp = false;
+    bool pressureSize = true, pressureOpacity = false, pressureHardness = false;
+    int cloneTimeOffset = 0;
+    bool cloneTimeAbsolute = false;
+    std::string cloneSourceInput = "bg";              // clone: bg or bg1 (reveal: bg1 or bg)
+    std::string revealSourceInput = "bg1";
+    float cloneRotate = 0, cloneScale = 1;
+    bool cloneAlignFlow = false;
+    bool paintGrain = false;      // new paint / blur strokes get the plate's grain back  // clones from other frames warped along the optical flow
+    // tracked paint: new strokes go in a layer that follows this Tracker / PlanarTracker ("" = off)
+    std::string paintTrack;
+    bool listThisFrame = false;         // the curves list: only strokes on the current frame (cleanup has thousands)
     bool paintSingleFrame = true;       // new strokes live on the current frame only (the classic default)
     bool cloneSourceSet = false, cloneOffsetSet = false;
     ImVec2 cloneSource, cloneOffset;    // image space; offset = destination - source
@@ -502,6 +516,8 @@ Node* activeTrackMask(App& app);
 void drawTrackMaskViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
 void trackMaskClear(App& app, Node* n, bool all);
 void rotoExportPoints(App& app, UiState& ui, Node* n);
+// (UI tests) pick the Roto tool by its toolbar name ("Repair", "Brush"...); false if there's none.
+bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name);
 void addReferenceLink(App& app, Node* link, bool stabilize);
 void drawFlowPaintViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
 void drawCamTrackerViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
@@ -540,7 +556,8 @@ bool rotoHotkeys(App& app, UiState& ui);
 // what's shown, lock / keys for the selection), under the viewer toolbar while a Roto is open.
 void drawRotoToolbar(App& app, UiState& ui);
 void drawRotoPanel(App& app, UiState& ui, Node* n);
-// Roto / RotoPaint's other tabs: 1 Transform, 2 Motion Blur, 3 Shape, 4 Lifetime, 5 Tracking.
+// Roto / RotoPaint's other tabs: 1 Transform, 2 Motion Blur, 3 Shape, 4 Lifetime, 5 Tracking,
+// RotoPaint's 6 Stroke and 7 Clone.
 void drawRotoTab(App& app, UiState& ui, Node* n, int section);
 void drawSplineWarpSwitch(App& app, UiState& ui, Node* n);  // SplineWarp: edit the A or the B curves
 // Shuffle's channel-routing knobs (Properties).

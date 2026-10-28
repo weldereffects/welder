@@ -193,6 +193,12 @@ int niceStep(double minFrames) {
 }
 
 std::vector<double> openKeys(App& app) {
+    // Walking the params every frame is slow for a RotoPaint with thousands of strokes: cached
+    // until an edit lands, the comp is swapped or the open panels change.
+    static std::vector<double> cached;
+    static std::tuple<const void*, uint64_t, std::vector<std::string>> cachedFor;
+    std::tuple<const void*, uint64_t, std::vector<std::string>> key{app.comp.get(), app.compRevision(), {app.panels.begin(), app.panels.end()}};
+    if (key == cachedFor) return cached;
     std::set<double> keys;
     std::function<void(const json&)> collect = [&](const json& v) {
         if (params::isAnimated(v)) {
@@ -207,7 +213,9 @@ std::vector<double> openKeys(App& app) {
     };
     for (auto& pn : app.panels)
         if (Node* n = app.node(pn)) collect(n->params.data);
-    return {keys.begin(), keys.end()};
+    cached.assign(keys.begin(), keys.end());
+    cachedFor = std::move(key);
+    return cached;
 }
 
 }  // namespace

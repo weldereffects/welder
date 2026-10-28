@@ -522,6 +522,7 @@ void App::restore(const std::string& snap) {
             }
         }
         comp = std::move(c);
+        ++compRevision_;
         std::set<std::string> sel;
         for (auto& s : selection)
             if (comp->find(s)) sel.insert(s);
@@ -641,6 +642,7 @@ void App::applyEdits() {
     // edits that only re-route the viewers change nothing that renders: caches stay, not modified
     const bool onlyView = viewEdits_ == edits.size();
     viewEdits_ = 0;
+    ++compRevision_;
     for (auto& fn : edits) {
         try {
             if (comp) fn(*comp);
@@ -3108,6 +3110,7 @@ bool App::newComp() {
                                    {"integer", color::kSrgbTexture}, {"display", ""}, {"view", ""}}}};
     edit([this, j](Comp&) {
         comp = Comp::fromJson(j, fs::current_path());
+        ++compRevision_;
         selection.clear();
         panels.clear();
         viewed.clear();
@@ -3119,6 +3122,7 @@ bool App::newComp() {
     });
     if (!comp) {  // first call from the constructor: apply right away
         comp = Comp::fromJson(j, fs::current_path());
+        ++compRevision_;
         pending_.clear();
         viewEdits_ = 0;
         matchArmed = true;
@@ -3163,6 +3167,7 @@ void App::adoptComp(std::shared_ptr<Comp> loaded) {
     for (auto& w : loaded->warnings) message("warning: " + w);
     edit([this, loaded](Comp&) mutable {
         comp.reset(new Comp());
+        ++compRevision_;
         std::swap(*comp, *loaded);  // move the loaded comp in
         for (auto& n : comp->nodes) {
             n->comp = comp.get();

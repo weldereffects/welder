@@ -137,6 +137,8 @@ public:
     // ------------------------------------------------------------ editing
     // Queue a change to the comp. Applied before the next render.
     void edit(std::function<void(Comp&)> fn);
+    // Bumps each time queued edits are applied (with the comp's address, a cheap "has the script changed").
+    uint64_t compRevision() const { return compRevision_; }
     // Record the current state for undo (call at the start of a gesture).
     void checkpoint();
     void undo();
@@ -398,6 +400,7 @@ private:
     static Box viewBox(const Format& fmt, const Box& dod, double sc, const Box& region);
     bool diskHasView(const std::string& node, double f, double sc, const Box& region);
     bool cleanAfterApply_ = false;  // set by open/new so loading doesn't mark the comp modified
+    uint64_t compRevision_ = 0;
     bool dirtyAfterApply_ = false;  // set by recoverAutosave: the loaded comp is unsaved
     // the timeline's disk-cache line: scanned on a thread of its own (it reads every frame's
     // hash, which for a Read means its files), never on the UI thread

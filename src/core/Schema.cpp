@@ -809,7 +809,7 @@ std::vector<NodeDef> build() {
                   Width(C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic", "lanczos4"}), 110)},
                  "Bends the image so source curves (A) land on destination curves (B). Draw curves with the roto tools; "
                  "switch the panel between A and B to shape each."});
-    d.push_back({"RotoPaint", "Draw", {}, "Shapes plus paint strokes: brush, eraser, clone, reveal, blur."});
+    d.push_back({"RotoPaint", "Draw", {}, "Shapes plus paint strokes: brush, eraser, clone, reveal, repair (dust-bust), blur, sharpen, smear, dodge, burn; tracked and grain-matched paint."});
     // ---------------------------------------------------------------- Keyer
     const char* pickTip = "Press pick, then click (or drag a box) over the screen in the viewer: samples this node's input.";
     d.push_back({"ScreenKeyer", "Keyer",

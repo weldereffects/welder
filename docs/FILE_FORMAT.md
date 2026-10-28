@@ -160,10 +160,37 @@ A paint stroke (RotoPaint):
  "life": {"type": "single", "start": 1001}}
 ```
 
-`tool` is `paint`, `eraser` (restores the background), `clone` (copies the
-background from `offset` [dx, dy] away: the source is at point - offset),
-`reveal` (paints in the `bg1` input) or `blur` (a blur of the background).
-Strokes can have a `transform` and `life` like shapes.
+`tool` is one of:
+
+* `paint` (the `color`), `eraser` (restores the background)
+* `clone`: copies the background from `offset` [dx, dy] away (the source is at
+  point - offset), turned by `source_rotate` (degrees) and scaled by
+  `source_scale` about the stroke's start
+* `reveal`: paints in the `bg1` input
+* `repair` (dust-bust): the median of this frame and the frames `repair_gap`
+  (default 1) either side, each warped onto this one along the optical flow,
+  so what is on this frame only (dust, a scratch, a dropout) goes; at the ends
+  of the range it uses two frames on one side
+* `blur`, `sharpen`, `smear` (drags the picture along the stroke), `dodge`
+  (brighter), `burn` (darker), each as strong as `effect` (default 1)
+
+Clone and reveal take `source` (`bg` or `bg1`), `time_offset` and `time_mode`
+(`relative`: frames from the current one, the default; `absolute`: that
+frame), and `align`: `flow` warps the other frame onto this one along the
+optical flow, so a patch from a moving plate lines up.
+
+`grain` (paint and blur, default 0): how much of the plate's grain, measured
+around the stroke, is added back (1 matches it). `build_up` (default false):
+overlapping dabs add up. `write_on` [start, end] (0 to 1): the part of the
+stroke drawn. `pressure` {`size`, `opacity`, `hardness`}: what pen pressure
+changes (default: size).
+
+Strokes can have a `transform`, a `parent` layer and `life` like shapes.
+Tracked paint puts strokes in a layer that follows a tracker: the layer has
+`follows` (the Tracker or PlanarTracker) and `reference` (the frame it is
+still on), with the tracker's match-move baked into its `transform` keys, or
+a PlanarTracker's plane into its `matrix` keys; the strokes' points are in
+the layer's space.
 
 ### Merging
 | Node | Inputs | Params |

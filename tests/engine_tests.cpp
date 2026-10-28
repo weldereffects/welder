@@ -1839,6 +1839,129 @@ int main(int argc, char** argv) {
         CHECK_NEAR(a2[a2.size() / 8].x * 0 + std::hypot(split[1].x, split[1].y), 10, 0.05);
     });
 
+    test("rotopaint: dodge / burn / sharpen / smear, clone from another frame and turned, write-on, build-up", [] {
+        auto paintComp = [](json strokes, json bg) {
+            json r = {{"name", "P"}, {"type", "RotoPaint"}, {"inputs", {bg["name"]}}, {"params", {{"shapes", strokes}}}};
+            return comp(json::array({bg, r}));
+        };
+        auto line = [](json extra) {  // a horizontal stroke across the middle, 12 px wide
+            json s = {{"name", "S"}, {"kind", "stroke"}, {"tool", "paint"}, {"size", 12}, {"hardness", 0.9}, {"spacing", 0.1},
+                      {"points", json::array({json::array({8, 24, 1}), json::array({56, 24, 1})})}};
+            for (auto& [k, v] : extra.items()) s[k] = v;
+            return s;
+        };
+        json grey = {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {0.4, 0.4, 0.4, 1}}}}};
+        CHECK(px(render(*paintComp(json::array({line({{"tool", "dodge"}})}), grey), "P"), 32, 24, "R") > 0.45f);
+        CHECK(px(render(*paintComp(json::array({line({{"tool", "burn"}})}), grey), "P"), 32, 24, "R") < 0.35f);
+        CHECK_NEAR(px(render(*paintComp(json::array({line({{"tool", "dodge"}})}), grey), "P"), 32, 24, "A"), 1, 1e-6);  // (alpha untouched)
+        // sharpen: an edge gets more contrast
+        json edge = {{"name", "E"}, {"type", "Expression"}, {"params", {{"channel0", "rgb"}, {"expr0", "x < 32 ? 0.2 : 0.8"}}}};
+        json vline = {{"name", "V"}, {"kind", "stroke"}, {"tool", "sharpen"}, {"size", 20}, {"hardness", 0.9}, {"effect", 1.0},
+                      {"points", json::array({json::array({32, 4, 1}), json::array({32, 44, 1})})}};
+        auto sh = render(*paintComp(json::array({vline}), edge), "P");
+        CHECK(px(sh, 31, 24, "R") < 0.2f - 0.05f && px(sh, 32, 24, "R") > 0.8f + 0.05f);  // the edge's two sides pushed apart
+        // smear: the dark half dragged right into the light half
+        json smear = {{"name", "M"}, {"kind", "stroke"}, {"tool", "smear"}, {"size", 10}, {"hardness", 0.9}, {"spacing", 0.1},
+                      {"points", json::array({json::array({24, 24, 1}), json::array({44, 24, 1})})}};
+        CHECK(px(render(*paintComp(json::array({smear}), edge), "P"), 36, 24, "R") < 0.75f);
+        // clone from the previous frame: the colour comes from there
+        json anim = {{"name", "A"}, {"type", "Constant"},
+                     {"params", {{"color", {{{"keys", {{1, 0.1}, {2, 0.9}}}}, 0.5, 0.5, 1}}}}};
+        json cl = line({{"tool", "clone"}, {"offset", {0, 0}}, {"time_offset", -1}});
+        auto c2 = render(*paintComp(json::array({cl}), anim), "P", 2);
+        CHECK_NEAR(px(c2, 32, 24, "R"), 0.1, 0.02);
+        CHECK_NEAR(px(c2, 32, 4, "R"), 0.9, 1e-6);  // (outside the stroke: this frame)
+        cl["time_mode"] = "absolute";
+        cl["time_offset"] = 2;
+        CHECK_NEAR(px(render(*paintComp(json::array({cl}), anim), "P", 1), 32, 24, "R"), 0.9, 0.02);
+        // clone turned 180 degrees about the stroke's start: the left of a gradient lands on the right
+        json ramp = {{"name", "G"}, {"type", "Expression"}, {"params", {{"channel0", "rgb"}, {"expr0", "x / 64"}}}};
+        json turned = {{"name", "T"}, {"kind", "stroke"}, {"tool", "clone"}, {"size", 10}, {"hardness", 0.9}, {"source_rotate", 180},
+                       {"points", json::array({json::array({32, 24, 1}), json::array({44, 24, 1})})}};
+        CHECK(px(render(*paintComp(json::array({turned}), ramp), "P"), 42, 24, "R") < 0.4f);  // from x ~ 22
+        // write-on: only the first half is drawn
+        auto wo = render(*paintComp(json::array({line({{"color", {1, 0, 0, 1}}, {"write_on", {0.0, 0.5}}})}), grey), "P");
+        CHECK(px(wo, 20, 24, "R") > 0.9f);
+        CHECK_NEAR(px(wo, 50, 24, "R"), 0.4, 1e-6);
+        // build-up: soft dabs add up past what any one gives
+        json soft = line({{"hardness", 0.0}, {"opacity", 0.5}, {"color", {1, 1, 1, 1}}, {"spacing", 0.05}});
+        const float once = px(render(*paintComp(json::array({soft}), grey), "P"), 32, 28, "R");
+        soft["build_up"] = true;
+        CHECK(px(render(*paintComp(json::array({soft}), grey), "P"), 32, 28, "R") > once + 0.02f);
+    });
+
+    test("rotopaint: repair (dust-bust) and flow-aligned clone on a moving plate", [] {
+        // a texture sliding 3 px a frame to the right
+        json plate = {{"name", "M"}, {"type", "Expression"},
+                      {"params", {{"channel0", "rgb"}, {"expr0", "0.5 + 0.25 * sin((x - 3 * frame) * 0.35) + 0.2 * cos(y * 0.45)"}}}};
+        auto paintComp = [&](json strokes) {
+            json r = {{"name", "P"}, {"type", "RotoPaint"}, {"inputs", {"M"}}, {"params", {{"shapes", strokes}}}};
+            return comp(json::array({plate, r}), 128, 96);
+        };
+        // dust: a white blob on frame 5 only
+        json dust = {{"name", "D"}, {"kind", "stroke"}, {"tool", "paint"}, {"size", 8}, {"hardness", 0.8}, {"color", {1, 1, 1, 1}},
+                     {"life", {{"type", "single"}, {"start", 5}}}, {"points", json::array({json::array({64, 48, 1})})}};
+        json fix = {{"name", "F"}, {"kind", "stroke"}, {"tool", "repair"}, {"size", 20}, {"hardness", 0.6},
+                    {"life", {{"type", "single"}, {"start", 5}}}, {"points", json::array({json::array({64, 48, 1})})}};
+        auto clean = render(*paintComp(json::array()), "P", 5);
+        auto dirty = render(*paintComp(json::array({dust})), "P", 5);
+        auto fixed = render(*paintComp(json::array({dust, fix})), "P", 5);
+        auto err = [&](const ImagePtr& im) {
+            double e = 0;
+            for (int y = 42; y < 55; ++y)
+                for (int x = 58; x < 71; ++x) e = std::max(e, (double)std::abs(px(im, x, y, "R") - px(clean, x, y, "R")));
+            return e;
+        };
+        CHECK(err(dirty) > 0.3);
+        CHECK(err(fixed) < 0.08);
+        CHECK_NEAR(px(fixed, 10, 10, "R"), px(clean, 10, 10, "R"), 1e-6);  // (outside the brush: untouched)
+        // repair at the first frame: two frames after it (frame 0 isn't in the range)
+        json dust1 = dust, fix1 = fix;
+        dust1["life"]["start"] = 1, fix1["life"]["start"] = 1;
+        auto clean1 = render(*paintComp(json::array()), "P", 1);
+        auto fixed1 = render(*paintComp(json::array({dust1, fix1})), "P", 1);
+        CHECK_NEAR(px(fixed1, 64, 48, "R"), px(clean1, 64, 48, "R"), 0.08);
+        // clone from the frame before: plain, it's 3 px off; aligned along the flow it lines up
+        json cl = {{"name", "C"}, {"kind", "stroke"}, {"tool", "clone"}, {"size", 24}, {"hardness", 0.9}, {"offset", {0, 0}}, {"time_offset", -1},
+                   {"points", json::array({json::array({52, 48, 1}), json::array({76, 48, 1})})}};
+        auto plain = render(*paintComp(json::array({cl})), "P", 5);
+        cl["align"] = "flow";
+        auto flowed = render(*paintComp(json::array({cl})), "P", 5);
+        CHECK(err(plain) > 0.15);
+        CHECK(err(flowed) < 0.08);
+    });
+
+    test("rotopaint: grain - paint and blur get the plate's grain back", [] {
+        json plate = {{"name", "M"}, {"type", "Expression"}, {"params", {{"channel0", "rgb"}, {"expr0", "0.5 + 0.06 * (random(x, y, frame) + random(x, y, frame + 500) + random(x, y, frame + 900) - 1.5)"}}}};
+        auto paintComp = [&](json strokes) {
+            json r = {{"name", "P"}, {"type", "RotoPaint"}, {"inputs", {"M"}}, {"params", {{"shapes", strokes}}}};
+            return comp(json::array({plate, r}), 128, 96);
+        };
+        auto spread = [&](const ImagePtr& im, int x0, int y0) {  // std dev of R over a 12 x 12 patch
+            double s = 0, s2 = 0;
+            int n = 0;
+            for (int y = y0; y < y0 + 12; ++y)
+                for (int x = x0; x < x0 + 12; ++x) {
+                    const double v = px(im, x, y, "R");
+                    s += v, s2 += v * v, ++n;
+                }
+            return std::sqrt(std::max(0.0, s2 / n - (s / n) * (s / n)));
+        };
+        json st = {{"name", "S"}, {"kind", "stroke"}, {"tool", "paint"}, {"size", 40}, {"hardness", 1.0}, {"color", {0.5, 0.5, 0.5, 1}},
+                   {"points", json::array({json::array({40, 48, 1}), json::array({88, 48, 1})})}};
+        const double plateGrain = spread(render(*paintComp(json::array()), "P", 3), 58, 42);
+        CHECK(plateGrain > 0.02);
+        CHECK(spread(render(*paintComp(json::array({st})), "P", 3), 58, 42) < 0.002);  // a clean patch
+        st["grain"] = 1.0;
+        const auto g3 = render(*paintComp(json::array({st})), "P", 3), g4 = render(*paintComp(json::array({st})), "P", 4);
+        const double painted = spread(g3, 58, 42);
+        CHECK(painted > plateGrain * 0.7 && painted < plateGrain * 1.3);
+        CHECK(px(g3, 64, 48, "R") != px(g4, 64, 48, "R"));  // (it moves, like grain)
+        json bl = {{"name", "B"}, {"kind", "stroke"}, {"tool", "blur"}, {"size", 40}, {"hardness", 1.0}, {"effect", 2.0}, {"grain", 1.0},
+                   {"points", json::array({json::array({40, 48, 1}), json::array({88, 48, 1})})}};
+        CHECK(spread(render(*paintComp(json::array({bl})), "P", 3), 58, 42) > plateGrain * 0.6);
+    });
+
     test("roto: open splines, feather on / types, per-shape motion blur, replace, clip to", [] {
         auto rotoComp = [](json shapes, json extra = json::object(), json bg = nullptr) {
             json params = {{"shapes", shapes}};

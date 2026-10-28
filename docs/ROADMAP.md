@@ -22,7 +22,8 @@
 - [x] OpenColorIO 2.5 + ACES 2.0: project working space, Read/Write colour spaces, OCIO nodes (ColorSpace, Display, Look, File, CDL), GPU viewer transform, Log2Lin, .nk colour import
 - [x] Roto / RotoPaint: Bezier, B-spline, ellipse, rectangle; shape and per-point feather; shape keys; transforms; lifetimes; motion blur; paint, eraser, clone, reveal and blur strokes; .nk import
 - [x] Roto parity with the classic toolset: grouped viewer tools (select all / splines / points / feather points; add / remove / cusp / smooth points, open / close, remove feather; Bezier, cusped Bezier, B-spline, ellipse, rectangle, cusped rectangle, open spline), the tool settings bar (new-shape colour / blend / opacity / lifetime, feather link, lock, labels, hide curves / points / jack, onion skin), tabs (Roto, Transform, Motion Blur, Shape, Lifetime, Tracking), the curves table, clip to, replace, feather on / types, per-shape motion blur, locked shapes
-- [ ] RotoPaint next: dodge / burn / smear / sharpen brushes, pen pressure, layers with their own transforms, tracking data on shapes
+- [x] RotoPaint cleanup: dodge / burn / smear / sharpen brushes, layers with their own transforms, repair (dust-bust) and flow-aligned clone, grain-matched paint, tracked paint (Tracker / PlanarTracker), thousands of strokes at speed, strokes on this frame
+- [ ] RotoPaint next: pen pressure (needs tablet input beyond GLFW), AI fill for larger removals (once a model with a licence that allows it is chosen), repeating a stroke over a frame range
 - [x] Expressions: a safe subset of the classic language on any knob (= in the properties), cache-aware, renamed with their nodes
 - [x] Copy nodes from Welder in the .nk clipboard format, and export whole comps as .nk (`welder nk`)
 - [ ] Python API (pybind11) and `.weld` <-> Python round trip

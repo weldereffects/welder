@@ -3266,8 +3266,10 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
             return forceTab && t == forceTab && ImGui::GetFrameCount() < 30 ? ImGuiTabItemFlags_SetSelected : 0;
         };
         if (n->type == "Roto" || n->type == "RotoPaint") {  // the classic roto tabs
-            static const std::pair<const char*, int> kRotoTabs[] = {{"Transform", 1}, {"Motion Blur", 2}, {"Shape", 3}, {"Lifetime", 4}, {"Tracking", 5}};
-            for (auto& [label, sec] : kRotoTabs)
+            static const std::vector<std::pair<const char*, int>> kRotoTabs = {{"Transform", 1}, {"Motion Blur", 2}, {"Shape", 3}, {"Lifetime", 4}, {"Tracking", 5}};
+            static const std::vector<std::pair<const char*, int>> kPaintTabs = {{"Stroke", 6}, {"Shape", 3}, {"Clone", 7}, {"Transform", 1},
+                                                                               {"Motion Blur", 2}, {"Lifetime", 4}, {"Tracking", 5}};
+            for (auto& [label, sec] : n->type == "RotoPaint" ? kPaintTabs : kRotoTabs)
                 if (ImGui::BeginTabItem(label, nullptr, tabFlags(label))) {
                     drawRotoTab(app, ui, n, sec);
                     ImGui::EndTabItem();

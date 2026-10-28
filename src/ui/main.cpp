@@ -970,6 +970,11 @@ int main(int argc, char** argv) {
                                             it.contains("width") ? it["width"].dump().c_str() : "-", (int)it.value("locked", false),
                                             it.value("parent", std::string("-")).c_str());
                             }
+                    } else if (what == "rototool") {  // the active Roto's tool, by its toolbar name
+                        Node* rn = app.node(ui.roto.node);
+                        if (!rn || !rotoSetToolByName(app, ui, rn, arg)) std::printf("KEYS no roto tool %s\n", arg.c_str());
+                    } else if (what == "ptrack") {  // tracked paint: the Tracker new strokes follow
+                        ui.roto.paintTrack = arg;
                     } else if (what == "menu") {  // a File menu action: open, save, saveas, saveinc
                         ui.menuAction = arg;
                     } else if (what == "script") {  // the script's path, and the version prompt
@@ -1363,11 +1368,16 @@ int main(int argc, char** argv) {
             static double worst = 0;
             static int frames = 0;
             const auto t = clk::now();
-            worst = std::max(worst, std::chrono::duration<double, std::milli>(t - frameWorkStart).count());  // the frame's own work
+            static std::string worstParts;
+            if (const double w = std::chrono::duration<double, std::milli>(t - frameWorkStart).count(); w > worst) {  // the frame's own work
+                worst = w;
+                worstParts.clear();
+                for (auto& [part, ms] : ui.curParts) worstParts += " " + std::string(part) + " " + std::to_string(int(ms + 0.5f)) + ",";
+            }
             last = t;
             ++frames;
             if (t - second > std::chrono::seconds(1)) {
-                std::fprintf(stderr, "FRAMES %d/s, slowest frame's work %.0f ms\n", frames, worst);
+                std::fprintf(stderr, "FRAMES %d/s, slowest frame's work %.0f ms (%s)\n", frames, worst, worstParts.c_str());
                 second = t, worst = 0, frames = 0;
             }
         }

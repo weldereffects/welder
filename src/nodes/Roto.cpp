@@ -12,8 +12,14 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <chrono>
+#include <memory>
+#include <mutex>
 
 #include "NodeUtils.h"
+#include "Retime.h"
+#include "../core/Comp.h"
+#include "../core/Expr.h"
 
 namespace strata::roto {
 
@@ -803,48 +809,81 @@ std::vector<StrokePt> strokePoints(const json& s, double frame, const Xf& parent
     return r;
 }
 
-void rasterizeStroke(const std::vector<StrokePt>& pts, double scale, double size, double hardness, double spacing,
-                     const Region& r, std::vector<float>& cov) {
+double smoothFalloff(double t) {
+    t = std::clamp(t, 0.0, 1.0);
+    return t * t * (3 - 2 * t);
+}
+
+Brush brushOf(const json& s) {
+    Brush b;
+    b.size = s.value("size", 25.0);
+    b.hardness = s.value("hardness", 0.2);
+    b.spacing = s.value("spacing", 0.1);
+    if (s.contains("write_on") && s["write_on"].is_array() && s["write_on"].size() == 2) {
+        b.writeOn = std::clamp(s["write_on"][0].get<double>(), 0.0, 1.0);
+        b.writeOff = std::clamp(s["write_on"][1].get<double>(), b.writeOn, 1.0);
+    }
+    b.buildUp = s.value("build_up", false);
+    if (s.contains("pressure") && s["pressure"].is_object()) {
+        b.pSize = s["pressure"].value("size", true);
+        b.pOpacity = s["pressure"].value("opacity", false);
+        b.pHardness = s["pressure"].value("hardness", false);
+    }
+    return b;
+}
+
+std::vector<StrokePt> strokeDabs(const std::vector<StrokePt>& pts, double scale, const Brush& b) {
+    std::vector<StrokePt> d;
+    if (pts.empty()) return d;
+    const double step = std::max(0.5, b.spacing * b.size * scale);
+    double total = 0;
+    for (size_t i = 1; i < pts.size(); ++i) total += std::hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y) * scale;
+    const double from = b.writeOn * total, to = b.writeOff * total;
+    if (from <= 0) d.push_back({pts[0].x * scale, pts[0].y * scale, pts[0].pressure});
+    double walked = 0, next = from <= 0 ? step : from;
+    for (size_t i = 1; i < pts.size(); ++i) {
+        const double ax = pts[i - 1].x * scale, ay = pts[i - 1].y * scale, bx = pts[i].x * scale, by = pts[i].y * scale;
+        const double len = std::hypot(bx - ax, by - ay);
+        while (next <= walked + len && next <= to + 1e-9) {
+            const double t = len > 0 ? (next - walked) / len : 0;
+            d.push_back({ax + (bx - ax) * t, ay + (by - ay) * t, pts[i - 1].pressure + (pts[i].pressure - pts[i - 1].pressure) * t});
+            next += step;
+        }
+        walked += len;
+        if (walked > to) break;
+    }
+    return d;
+}
+
+void rasterizeStroke(const std::vector<StrokePt>& pts, double scale, const Brush& b, const Region& r, std::vector<float>& cov) {
     const int W = r.x2 - r.x1, H = r.y2 - r.y1;
     cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
     if (pts.empty() || W <= 0 || H <= 0) return;
-    const double rad0 = std::max(0.5, size * scale / 2);
-    const double step = std::max(0.5, spacing * size * scale);
-    hardness = std::clamp(hardness, 0.0, 0.999);
-    auto dab = [&](double cx, double cy, double pressure) {
-        double rad = rad0 * std::clamp(pressure, 0.05, 2.0);
-        int x1 = std::max(r.x1, (int)std::floor(cx - rad)), x2 = std::min(r.x2, (int)std::ceil(cx + rad) + 1);
-        int y1 = std::max(r.y1, (int)std::floor(cy - rad)), y2 = std::min(r.y2, (int)std::ceil(cy + rad) + 1);
+    const double rad0 = std::max(0.5, b.size * scale / 2);
+    for (const StrokePt& p : strokeDabs(pts, scale, b)) {
+        const double pr = std::clamp(p.pressure, 0.05, 2.0);
+        const double rad = rad0 * (b.pSize ? pr : 1.0);
+        if (p.x + rad < r.x1 || p.x - rad > r.x2 || p.y + rad < r.y1 || p.y - rad > r.y2) continue;  // (far from this region)
+        const double hard = std::clamp(b.hardness * (b.pHardness ? std::min(pr, 1.0) : 1.0), 0.0, 0.999);
+        const double op = b.pOpacity ? std::min(pr, 1.0) : 1.0;
+        const int x1 = std::max(r.x1, (int)std::floor(p.x - rad)), x2 = std::min(r.x2, (int)std::ceil(p.x + rad) + 1);
+        const int y1 = std::max(r.y1, (int)std::floor(p.y - rad)), y2 = std::min(r.y2, (int)std::ceil(p.y + rad) + 1);
         for (int y = y1; y < y2; ++y)
             for (int x = x1; x < x2; ++x) {
-                double d = std::hypot(x + 0.5 - cx, y + 0.5 - cy) / rad;
-                if (d >= 1) continue;
-                double a = d <= hardness ? 1.0 : smooth01((1 - d) / (1 - hardness), 1.0);
+                const double dd = std::hypot(x + 0.5 - p.x, y + 0.5 - p.y) / rad;
+                if (dd >= 1) continue;
+                const float a = (float)((dd <= hard ? 1.0 : smooth01((1 - dd) / (1 - hard), 1.0)) * op);
                 float& o = cov[(size_t)(y - r.y1) * W + (x - r.x1)];
-                o = std::max(o, (float)a);
+                o = b.buildUp ? o + a * (1 - o) : std::max(o, a);
             }
-    };
-    // Dabs every `step` pixels along the path.
-    double carry = 0;
-    dab(pts[0].x * scale, pts[0].y * scale, pts[0].pressure);
-    for (size_t i = 1; i < pts.size(); ++i) {
-        double ax = pts[i - 1].x * scale, ay = pts[i - 1].y * scale, bx = pts[i].x * scale, by = pts[i].y * scale;
-        double len = std::hypot(bx - ax, by - ay);
-        // Skip segments far from this region.
-        double pad = rad0 * 2 + 1;
-        if (std::max(ax, bx) + pad < r.x1 || std::min(ax, bx) - pad > r.x2 || std::max(ay, by) + pad < r.y1 ||
-            std::min(ay, by) - pad > r.y2) {
-            carry = std::fmod(carry + len, step);
-            continue;
-        }
-        double d = step - carry;
-        while (d <= len) {
-            double t = d / len;
-            dab(ax + (bx - ax) * t, ay + (by - ay) * t, pts[i - 1].pressure + (pts[i].pressure - pts[i - 1].pressure) * t);
-            d += step;
-        }
-        carry = len - (d - step);
     }
+}
+
+void rasterizeStroke(const std::vector<StrokePt>& pts, double scale, double size, double hardness, double spacing, const Region& r,
+                     std::vector<float>& cov) {
+    Brush b;
+    b.size = size, b.hardness = hardness, b.spacing = spacing;
+    rasterizeStroke(pts, scale, b, r, cov);
 }
 
 }  // namespace strata::roto
@@ -872,6 +911,41 @@ public:
     const json& items() const {
         static const json empty = json::array();
         return params.has("shapes") && params.data["shapes"].is_array() ? params.data["shapes"] : empty;
+    }
+
+    // Like Node::localHash, but of what this frame draws: a RotoPaint full of single-frame cleanup
+    // strokes would otherwise hash megabytes of strokes on other frames, every frame.
+    uint64_t localHash(double frame) const override {
+        uint64_t h = hashString(type);
+        if (comp) {
+            h = hashCombine(h, ((uint64_t)(uint32_t)comp->format.width << 32) | (uint32_t)comp->format.height);
+            h = hashBytes(&comp->format.pixelAspect, sizeof(double), h);
+            h = hashString(comp->project.ocioConfig, h);
+            h = hashString(comp->project.workingSpace, h);
+            h = hashString(comp->project.integerSpace, h);
+        }
+        bool exprs = false;
+        auto add = [&](const json& v) {
+            const std::string d = v.dump();
+            exprs = exprs || d.find("\"expr\"") != std::string::npos;
+            h = hashString(d, h);
+        };
+        for (auto& [k, v] : params.data.items()) {
+            if (k == "shapes") continue;
+            h = hashString(k, h);
+            add(v);
+        }
+        const json& its = items();
+        h = hashCombine(h, its.size());
+        for (size_t i = 0; i < its.size(); ++i) {
+            const json& it = its[i];
+            if (roto::isStroke(it) && !roto::shown(its, it, frame)) continue;  // not on this frame: no part of it
+            h = hashCombine(h, i);
+            add(it);
+        }
+        if (exprs) h = expr::hashValues(*this, frame, h);
+        if (timeDependent()) h = hashBytes(&frame, sizeof(frame), h);
+        return h;
     }
 
     bool timeDependent() const override {
@@ -910,13 +984,12 @@ public:
         Box b = input(0) ? e.dod(input(0), frame) : Box();
         const double sc = e.scale();
         auto times = sampleTimes(frame);
-        for (auto& s : items()) {
-            if (!roto::shown(items(), s, frame)) continue;
+        const auto fl = frameList(e, frame);
+        for (size_t idx = 0; idx < items().size(); ++idx) {
+            const json& s = items()[idx];
+            if (idx >= fl->shown.size() || !fl->shown[idx]) continue;
             if (roto::isStroke(s)) {
-                double rad = s.value("size", 25.0) * 0.6 + 2;
-                for (auto& p : roto::strokePoints(s, frame, roto::parentTransformAt(items(), s, frame)))
-                    b = b.unite(Box((int)std::floor((p.x - rad) * sc), (int)std::floor((p.y - rad) * sc),
-                                    (int)std::ceil((p.x + rad) * sc), (int)std::ceil((p.y + rad) * sc)));
+                if (fl->strokes[idx] && !fl->strokes[idx]->box.empty()) b = b.unite(fl->strokes[idx]->box);
                 continue;
             }
             const bool open = !s.value("closed", true);
@@ -973,7 +1046,7 @@ public:
             double size = s.value("size", 25.0);
             if (tool == "clone" && s.contains("offset") && s["offset"].is_array() && s["offset"].size() == 2)
                 pad = std::max(pad, std::hypot(s["offset"][0].get<double>(), s["offset"][1].get<double>()) + size);
-            if (tool == "blur") pad = std::max(pad, size * 0.5 + 2);
+            if (tool == "blur" || tool == "sharpen" || tool == "smear") pad = std::max(pad, size * 0.5 + 2);
         }
         return (int)std::ceil(pad * sc);
     }
@@ -1061,6 +1134,63 @@ public:
 private:
     bool paint_;
 
+    // ---- what a frame draws, worked out once and shared by all its tiles: which items are shown,
+    // and each stroke's points (through its transforms) and bounds in pixels at the render scale.
+    // Thousands of cleanup strokes cost a list lookup per tile instead of a full pass each.
+    struct StrokeDraw {
+        std::vector<roto::StrokePt> pts;
+        Box box;  // what it can touch (pixels at the scale), with the brush and its effect's reach
+        // other frames warped onto this one along the optical flow (flow-aligned clones, repair),
+        // worked out once for the whole stroke and shared by its tiles
+        mutable std::mutex alignM;
+        mutable std::vector<std::pair<std::pair<Node*, double>, ImagePtr>> aligned;
+        mutable bool grainDone = false;
+        mutable std::vector<float> grain;  // per channel of the image: the plate's grain (std dev) around the stroke
+    };
+    struct FrameList {
+        uint64_t key = 0;
+        std::vector<char> shown;               // per item
+        std::vector<std::unique_ptr<StrokeDraw>> strokes;  // per item (strokes only)
+    };
+    mutable std::mutex listM_;
+    mutable std::vector<std::shared_ptr<const FrameList>> lists_;  // a few recent frames
+
+    std::shared_ptr<const FrameList> frameList(Engine& e, double frame) const {
+        const double sc = e.scale();
+        uint64_t key = hashCombine(e.hash(const_cast<RotoNode*>(this), frame), hashBytes(&frame, sizeof frame, hashBytes(&sc, sizeof sc)));
+        {
+            std::lock_guard<std::mutex> l(listM_);
+            for (auto& f : lists_)
+                if (f->key == key) return f;
+        }
+        auto fl = std::make_shared<FrameList>();
+        fl->key = key;
+        const json& its = items();
+        fl->shown.resize(its.size(), 0);
+        fl->strokes.resize(its.size());
+        for (size_t i = 0; i < its.size(); ++i) {
+            const json& it = its[i];
+            if (!roto::shown(its, it, frame)) continue;
+            fl->shown[i] = 1;
+            if (!roto::isStroke(it)) continue;
+            auto d = std::make_unique<StrokeDraw>();
+            d->pts = roto::strokePoints(it, frame, roto::parentTransformAt(its, it, frame));
+            const std::string tool = it.value("tool", std::string("paint"));
+            double reach = it.value("size", 25.0) * 0.5 * 2.0 + 2;  // (pressure can double a dab)
+            if (tool == "smear") reach += it.value("size", 25.0);
+            double x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30;
+            for (auto& q : d->pts) x1 = std::min(x1, q.x), y1 = std::min(y1, q.y), x2 = std::max(x2, q.x), y2 = std::max(y2, q.y);
+            if (x1 <= x2)
+                d->box = Box((int)std::floor((x1 - reach) * sc), (int)std::floor((y1 - reach) * sc), (int)std::ceil((x2 + reach) * sc) + 1,
+                             (int)std::ceil((y2 + reach) * sc) + 1);
+            fl->strokes[i] = std::move(d);
+        }
+        std::lock_guard<std::mutex> l(listM_);
+        lists_.insert(lists_.begin(), fl);
+        if (lists_.size() > 8) lists_.pop_back();
+        return fl;
+    }
+
     // Draw every item over `img` (which holds the background already).
     // Shapes are evaluated at `t` (a motion-blur sample); lifetimes and strokes use the frame.
     void composite(RenderArgs& a, Image& img, const Image* bg, const Image* bg1, double t) const {
@@ -1075,15 +1205,18 @@ private:
         const bool writeRGB = outs.size() >= 3;
         const int iA = img.ch("A"), iR = img.ch("R"), iG = img.ch("G"), iB = img.ch("B");
         std::vector<float> cov;
-        for (auto& s : items()) {
-            if (!roto::shown(items(), s, a.frame)) continue;
+        const auto fl = frameList(a.engine, a.frame);
+        for (size_t idx = 0; idx < items().size(); ++idx) {
+            if (idx >= fl->shown.size() || !fl->shown[idx]) continue;
+            const json& s = items()[idx];
+            if (fl->strokes[idx] && fl->strokes[idx]->box.intersect(R).empty()) continue;  // a stroke nowhere near this tile
             const double opacity = std::clamp(params::evalScalar(s.value("opacity", json(1.0)), a.frame, 1.0), 0.0, 1.0);
             float col[4] = {1, 1, 1, 1};
             if (s.contains("color") && s["color"].is_array())
                 for (size_t k = 0; k < 4 && k < s["color"].size(); ++k)
                     col[k] = (float)params::evalScalar(s["color"][k], a.frame, 1.0);
             if (roto::isStroke(s)) {
-                paintStroke(a, img, bg, bg1, s, opacity, col, outIdx);
+                if (fl->strokes[idx]) paintStroke(a, img, bg, bg1, s, *fl->strokes[idx], opacity, col, outIdx);
                 continue;
             }
             const bool open = !s.value("closed", true);
@@ -1128,28 +1261,255 @@ private:
         }
     }
 
-    void paintStroke(RenderArgs& a, Image& img, const Image* bg, const Image* bg1, const json& s, double opacity,
+    // Where a clone / reveal stroke takes its pixels: which input, at which frame.
+    struct CloneSource {
+        Node* in = nullptr;
+        double time = 0;
+    };
+    CloneSource cloneSource(const json& s, double frame) const {
+        const std::string tool = s.value("tool", std::string("paint"));
+        const std::string src = s.value("source", std::string(tool == "reveal" ? "bg1" : "bg"));
+        CloneSource c;
+        c.in = input(src == "bg1" ? 1 : 0);
+        const double off = s.value("time_offset", 0.0);
+        c.time = s.value("time_mode", std::string("relative")) == "absolute" ? off : frame + off;
+        return c;
+    }
+
+    // Clones and reveals from other frames: the result depends on those frames too.
+    uint64_t pastHash(Engine& e, double frame) override {
+        uint64_t h = 0;
+        for (auto& s : items()) {
+            if (!roto::isStroke(s) || !roto::shown(items(), s, frame)) continue;
+            const std::string tool = s.value("tool", std::string("paint"));
+            if (tool == "repair") {
+                const auto [lo, hi] = repairFrames(s, frame);
+                if (Node* in = input(0)) h = hashCombine(h ? h : 0x9a1e, hashCombine(e.hash(in, lo), e.hash(in, hi)));
+                continue;
+            }
+            if (tool != "clone" && tool != "reveal") continue;
+            const CloneSource c = cloneSource(s, frame);
+            if (c.in && c.time != frame) h = hashCombine(h ? h : 0x9a1e, e.hash(c.in, c.time));
+        }
+        return h;
+    }
+
+    // The two frames a repair stroke compares this one with: either side, or two on one side at
+    // the ends of the comp's range (a frame outside it may be black).
+    std::pair<double, double> repairFrames(const json& s, double frame) const {
+        const double gap = std::max(1.0, s.value("repair_gap", 1.0));
+        double lo = frame - gap, hi = frame + gap;
+        if (comp && comp->lastFrame - comp->firstFrame >= 2 * gap) {
+            if (lo < comp->firstFrame) lo = frame + 2 * gap;
+            else if (hi > comp->lastFrame) hi = frame - 2 * gap;
+        }
+        return {lo, hi};
+    }
+
+    // `in` at frame `other`, warped onto the frame being drawn along the optical flow (from this frame
+    // to the other), over `box`. Moving pictures line up, so a patch from another frame fits here.
+    ImagePtr flowAligned(RenderArgs& a, Node* in, const Box& box, double other) const {
+        if (!in || box.empty()) return nullptr;
+        if (other == a.frame) return a.fetch(in, box);
+        const double sc = a.engine.scale();
+        const int margin = std::max((int)std::lround(24 * sc), std::max(box.width(), box.height()) / 2);  // (room for the motion)
+        const Box W(box.x1 - margin, box.y1 - margin, box.x2 + margin, box.y2 + margin);
+        ImagePtr curI = a.fetch(in, W, a.frame), othI = a.fetch(in, W, other);
+        if (!curI || !othI) return othI;
+        Image cur(W, othI->channels), oth(W, othI->channels);  // the whole window (black outside the data)
+        cur.copyFrom(*curI);
+        oth.copyFrom(*othI);
+        const float wts[3] = {0.3f, 0.6f, 0.1f};
+        retime::FlowOptions o;
+        o.detail = 0.5;
+        o.smoothness = 0.6;
+        const retime::Flow f = retime::estimateFlow(retime::luminance(cur, wts), retime::luminance(oth, wts), o);
+        auto out = std::make_shared<Image>(box, oth.channels);
+        const int nc = out->nch();
+        for (int y = box.y1; y < box.y2; ++y) {
+            float* o2 = out->row(y);
+            for (int x = box.x1; x < box.x2; ++x, o2 += nc) {
+                float u = 0, v = 0;
+                f.at((float)(x - W.x1), (float)(y - W.y1), u, v);
+                for (int c = 0; c < nc; ++c) o2[c] = sampleBilinear(oth, c, x + 0.5 + u, y + 0.5 + v);
+            }
+        }
+        return out;
+    }
+    // flowAligned, once per stroke (the tiles share it)
+    ImagePtr alignedFor(RenderArgs& a, const StrokeDraw& draw, Node* in, const Box& box, double other) const {
+        std::lock_guard<std::mutex> l(draw.alignM);
+        for (auto& [k, im] : draw.aligned)
+            if (k.first == in && k.second == other && im && im->bounds.intersect(box) == box) return im;
+        ImagePtr im = flowAligned(a, in, box, other);
+        draw.aligned.push_back({{in, other}, im});
+        return im;
+    }
+
+    // The plate's grain around the stroke, per channel (as `img`'s channels): the median of the spread
+    // in 8 x 8 blocks. Grain clumps over a few pixels, which a block sees whole; blocks spoiled by an
+    // edge, dust or what the stroke covers are a minority, which the median ignores. Once per stroke.
+    const std::vector<float>& grainFor(RenderArgs& a, const StrokeDraw& draw, const Image& img) const {
+        std::lock_guard<std::mutex> l(draw.alignM);
+        if (draw.grainDone) return draw.grain;
+        draw.grainDone = true;
+        draw.grain.assign(img.nch(), 0.0f);
+        Node* in = input(0);
+        if (!in) return draw.grain;
+        const int m = std::max(8, (int)std::lround(16 * a.engine.scale()));
+        const Box B(draw.box.x1 - m, draw.box.y1 - m, draw.box.x2 + m, draw.box.y2 + m);
+        ImagePtr src = a.fetch(in, B);
+        if (!src) return draw.grain;
+        const Box R = src->bounds.intersect(B);
+        constexpr int kB = 8;
+        const int nbx = R.width() / kB, nby = R.height() / kB;
+        if (nbx < 1 || nby < 1) return draw.grain;
+        const int step = std::max(1, (int)std::sqrt((double)nbx * nby / 1500.0));  // (a sample of a big stroke's blocks)
+        for (int k = 0; k < img.nch(); ++k) {
+            const std::string& cn = img.channels[k];
+            if (cn == "A") continue;
+            const int c = src->ch(cn);
+            if (c < 0) continue;
+            std::vector<float> sd;
+            for (int by = 0; by < nby; by += step)
+                for (int bx = 0; bx < nbx; bx += step) {
+                    double s1 = 0, s2 = 0;
+                    for (int y = R.y1 + by * kB; y < R.y1 + by * kB + kB; ++y)
+                        for (int x = R.x1 + bx * kB; x < R.x1 + bx * kB + kB; ++x) {
+                            const double v = src->at(x, y, c);
+                            s1 += v, s2 += v * v;
+                        }
+                    const double n = kB * kB, var = (s2 - s1 * s1 / n) / (n - 1);
+                    sd.push_back((float)std::sqrt(std::max(0.0, var)));
+                }
+            std::nth_element(sd.begin(), sd.begin() + sd.size() / 2, sd.end());
+            draw.grain[k] = sd[sd.size() / 2];
+        }
+        return draw.grain;
+    }
+    // Gaussian noise, the same for a pixel, frame and channel every time (so renders repeat).
+    static float grainNoise(int x, int y, double frame, int c) {
+        uint64_t h = hashCombine(hashCombine((uint64_t)(uint32_t)x * 0x9E3779B1u, (uint64_t)(uint32_t)y * 0x85EBCA77u),
+                                 hashCombine((uint64_t)std::llround(frame * 64), (uint64_t)c + 0x51));
+        auto u = [&](uint64_t v) { v ^= v >> 33; v *= 0xff51afd7ed558ccdULL; v ^= v >> 33; v *= 0xc4ceb9fe1a85ec53ULL; v ^= v >> 33; return (v >> 11) * (1.0 / 9007199254740992.0); };
+        const double u1 = std::max(1e-12, u(h)), u2 = u(h ^ 0xa5a5a5a5a5a5a5a5ULL);
+        return (float)(std::sqrt(-2 * std::log(u1)) * std::cos(2 * M_PI * u2));
+    }
+
+    static float sampleBilinear(const Image& im, int c, double x, double y) {  // x, y: pixel coordinates (centres at +0.5)
+        const double fx = x - 0.5, fy = y - 0.5;
+        const int x0 = (int)std::floor(fx), y0 = (int)std::floor(fy);
+        const double tx = fx - x0, ty = fy - y0;
+        auto at = [&](int xx, int yy) { return im.bounds.contains(xx, yy) ? im.at(xx, yy, c) : 0.0f; };
+        return (float)((at(x0, y0) * (1 - tx) + at(x0 + 1, y0) * tx) * (1 - ty) + (at(x0, y0 + 1) * (1 - tx) + at(x0 + 1, y0 + 1) * tx) * ty);
+    }
+
+    void paintStroke(RenderArgs& a, Image& img, const Image* bg, const Image* bg1, const json& s, const StrokeDraw& draw, double opacity,
                      const float col[4], const std::vector<int>& outIdx) const {
         const double sc = a.engine.scale();
-        const Box& R = a.region;
+        const Box R = a.region.intersect(draw.box);  // only where the stroke can reach (the tile's part of it)
+        if (R.empty()) return;
         const int nch = img.nch(), W = R.width();
+        const int rx0 = R.x1 - a.region.x1;  // (img rows start at the tile's left edge)
         const std::string tool = s.value("tool", std::string("paint"));
         const double size = s.value("size", 25.0);
-        std::vector<float> cov;
-        roto::rasterizeStroke(roto::strokePoints(s, a.frame, roto::parentTransformAt(items(), s, a.frame)), sc, size, s.value("hardness", 0.2), s.value("spacing", 0.1),
-                              {R.x1, R.y1, R.x2, R.y2}, cov);
-        int ox = 0, oy = 0;
-        if (tool == "clone" && s.contains("offset") && s["offset"].is_array() && s["offset"].size() == 2) {
-            ox = (int)std::lround(s["offset"][0].get<double>() * sc);
-            oy = (int)std::lround(s["offset"][1].get<double>() * sc);
+        const double effect = s.value("effect", 1.0);
+        const auto& pts = draw.pts;
+        const roto::Brush brush = roto::brushOf(s);
+        const int iA = img.ch("A");
+
+        if (tool == "smear") {  // drag the picture along the stroke, dab by dab
+            const auto dabs = roto::strokeDabs(pts, sc, brush);
+            const double rad0 = std::max(0.5, size * sc / 2), hard = std::clamp(brush.hardness, 0.0, 0.999);
+            for (size_t j = 1; j < dabs.size(); ++j) {
+                const auto& p = dabs[j];
+                const double dx = p.x - dabs[j - 1].x, dy = p.y - dabs[j - 1].y;
+                const double rad = rad0 * (brush.pSize ? std::clamp(p.pressure, 0.05, 2.0) : 1.0);
+                const int x1 = std::max(R.x1, (int)std::floor(p.x - rad)), x2 = std::min(R.x2, (int)std::ceil(p.x + rad) + 1);
+                const int y1 = std::max(R.y1, (int)std::floor(p.y - rad)), y2 = std::min(R.y2, (int)std::ceil(p.y + rad) + 1);
+                for (int y = y1; y < y2; ++y)
+                    for (int x = x1; x < x2; ++x) {
+                        const double dd = std::hypot(x + 0.5 - p.x, y + 0.5 - p.y) / rad;
+                        if (dd >= 1) continue;
+                        const float w = (float)((dd <= hard ? 1.0 : roto::smoothFalloff((1 - dd) / (1 - hard))) * opacity * std::clamp(effect, 0.0, 1.0));
+                        float* px = img.row(y) + (size_t)(x - a.region.x1) * nch;
+                        const double sx = x + 0.5 - dx, sy = y + 0.5 - dy;
+                        for (int k : outIdx) {
+                            const Box& T = a.region;  // (what img holds)
+                            const bool inside = sx >= T.x1 && sx < T.x2 && sy >= T.y1 && sy < T.y2;
+                            const int bc = bg ? bg->ch(img.channels[k]) : -1;
+                            const float src = inside ? sampleBilinear(img, k, sx, sy) : bc >= 0 ? sampleBilinear(*bg, bc, sx, sy) : px[k];
+                            px[k] = src * w + px[k] * (1 - w);
+                        }
+                    }
+            }
+            return;
         }
-        // Blur brush: box-blurred background for this region.
+
+        std::vector<float> cov;
+        roto::rasterizeStroke(pts, sc, brush, {R.x1, R.y1, R.x2, R.y2}, cov);
+
+        // clone / reveal: the source input at its frame, through the source transform (a translate -
+        // "offset" - and a rotate / scale about the stroke's start)
+        ImagePtr srcImg;
+        double m00 = 1, m01 = 0, m10 = 0, m11 = 1, mtx = 0, mty = 0;  // destination pixel -> source pixel
+        if (tool == "clone" || tool == "reveal") {
+            const CloneSource cs = cloneSource(s, a.frame);
+            double ox = 0, oy = 0;
+            if (tool == "clone" && s.contains("offset") && s["offset"].is_array() && s["offset"].size() == 2)
+                ox = s["offset"][0].get<double>() * sc, oy = s["offset"][1].get<double>() * sc;
+            const double rot = s.value("source_rotate", 0.0) * M_PI / 180.0, scl = std::max(1e-3, s.value("source_scale", 1.0));
+            const double px = pts.empty() ? 0 : pts[0].x * sc, py = pts.empty() ? 0 : pts[0].y * sc;
+            // source = pivot + (R S)^-1 (dest - pivot) - offset: the source region turned / scaled onto the destination
+            const double c = std::cos(-rot) / scl, sn = std::sin(-rot) / scl;
+            m00 = c, m01 = -sn, m10 = sn, m11 = c;
+            mtx = px - (m00 * px + m01 * py) - ox;
+            mty = py - (m10 * px + m11 * py) - oy;
+            if (cs.in) {
+                double bx1 = 1e30, by1 = 1e30, bx2 = -1e30, by2 = -1e30;
+                for (auto [qx, qy] : {std::pair<double, double>{R.x1, R.y1}, {R.x2, R.y1}, {R.x1, R.y2}, {R.x2, R.y2}}) {
+                    const double sx = m00 * qx + m01 * qy + mtx, sy = m10 * qx + m11 * qy + mty;
+                    bx1 = std::min(bx1, sx), by1 = std::min(by1, sy), bx2 = std::max(bx2, sx), by2 = std::max(by2, sy);
+                }
+                const Box need((int)std::floor(bx1) - 2, (int)std::floor(by1) - 2, (int)std::ceil(bx2) + 2, (int)std::ceil(by2) + 2);
+                if (s.value("align", std::string()) == "flow" && cs.time != a.frame) {
+                    // the whole stroke's source region (so tiles share one flow), warped onto this frame
+                    double wx1 = 1e30, wy1 = 1e30, wx2 = -1e30, wy2 = -1e30;
+                    const Box& D = draw.box;
+                    for (auto [qx, qy] : {std::pair<double, double>{D.x1, D.y1}, {D.x2, D.y1}, {D.x1, D.y2}, {D.x2, D.y2}}) {
+                        const double sx = m00 * qx + m01 * qy + mtx, sy = m10 * qx + m11 * qy + mty;
+                        wx1 = std::min(wx1, sx), wy1 = std::min(wy1, sy), wx2 = std::max(wx2, sx), wy2 = std::max(wy2, sy);
+                    }
+                    const Box whole((int)std::floor(wx1) - 2, (int)std::floor(wy1) - 2, (int)std::ceil(wx2) + 2, (int)std::ceil(wy2) + 2);
+                    srcImg = alignedFor(a, draw, cs.in, whole, cs.time);
+                } else {
+                    srcImg = a.fetch(cs.in, need, cs.time);
+                }
+            }
+        }
+        // repair (dust-bust): this frame and the frames either side, warped onto it; the median of
+        // the three drops what is on this frame only (dust, a scratch, a dropout) and keeps the rest
+        ImagePtr prevImg, nextImg;
+        if (tool == "repair") {
+            Node* in = input(0);
+            const auto [lo, hi] = repairFrames(s, a.frame);
+            prevImg = alignedFor(a, draw, in, draw.box, lo);
+            nextImg = alignedFor(a, draw, in, draw.box, hi);
+        }
+        // grain: paint and blur leave a clean patch on a grainy plate; put the plate's grain back
+        const double grainAmt = (tool == "paint" || tool == "blur") ? s.value("grain", 0.0) : 0.0;
+        const std::vector<float>* grain = grainAmt > 0 ? &grainFor(a, draw, img) : nullptr;
+        const bool integerShift = m00 == 1 && m11 == 1 && m01 == 0 && m10 == 0 && mtx == std::round(mtx) && mty == std::round(mty);
+
+        // blur / sharpen: a box-blurred copy of what's there
         std::vector<float> blurred;
-        if (tool == "blur" && bg) {
-            int rb = std::max(1, (int)std::lround(size * sc * 0.25));
+        if ((tool == "blur" || tool == "sharpen") && bg) {
+            int rb = std::max(1, (int)std::lround(size * sc * 0.25 * std::max(0.1, effect)));
+            if (tool == "sharpen") rb = std::max(1, (int)std::lround(size * sc * 0.08));
             blurred.assign((size_t)W * R.height() * nch, 0.0f);
             for (int y = R.y1; y < R.y2; ++y)
                 for (int x = R.x1; x < R.x2; ++x) {
+                    if (cov[(size_t)(y - R.y1) * W + (x - R.x1)] <= 0) continue;
                     float* o = &blurred[((size_t)(y - R.y1) * W + (x - R.x1)) * nch];
                     int count = 0;
                     std::vector<double> sum(outIdx.size(), 0.0);
@@ -1167,7 +1527,7 @@ private:
                 }
         }
         for (int y = R.y1; y < R.y2; ++y) {
-            float* p = img.row(y);
+            float* p = img.row(y) + (size_t)rx0 * nch;
             const float* c = &cov[(size_t)(y - R.y1) * W];
             for (int x = 0; x < W; ++x, p += nch) {
                 const float v = c[x] * (float)opacity;
@@ -1175,24 +1535,40 @@ private:
                 const int px = R.x1 + x;
                 for (int k : outIdx) {
                     const std::string& chn = img.channels[k];
+                    const bool alpha = k == iA;
                     float src;
                     if (tool == "eraser") {
                         int bc = bg ? bg->ch(chn) : -1;
                         src = bc >= 0 && bg->bounds.contains(px, y) ? bg->at(px, y, bc) : 0.0f;
-                    } else if (tool == "clone") {
-                        int bc = bg ? bg->ch(chn) : -1;
-                        int sx = px - ox, sy = y - oy;
-                        src = bc >= 0 && bg->bounds.contains(sx, sy) ? bg->at(sx, sy, bc) : 0.0f;
-                    } else if (tool == "reveal") {
-                        int bc = bg1 ? bg1->ch(chn) : -1;
-                        src = bc >= 0 && bg1->bounds.contains(px, y) ? bg1->at(px, y, bc) : 0.0f;
+                    } else if (tool == "clone" || tool == "reveal") {
+                        const int bc = srcImg ? srcImg->ch(chn) : -1;
+                        if (bc < 0) src = 0.0f;
+                        else if (integerShift) {
+                            const int sx = px + (int)mtx, sy = y + (int)mty;
+                            src = srcImg->bounds.contains(sx, sy) ? srcImg->at(sx, sy, bc) : 0.0f;
+                        } else {
+                            const double cx = px + 0.5, cy = y + 0.5;
+                            src = sampleBilinear(*srcImg, bc, m00 * cx + m01 * cy + mtx, m10 * cx + m11 * cy + mty);
+                        }
+                    } else if (tool == "repair") {
+                        const int pc = prevImg ? prevImg->ch(chn) : -1, nc2 = nextImg ? nextImg->ch(chn) : -1;
+                        const float a0 = p[k], a1 = pc >= 0 ? prevImg->at(px, y, pc) : p[k], a2 = nc2 >= 0 ? nextImg->at(px, y, nc2) : p[k];
+                        src = std::max(std::min(a0, a1), std::min(std::max(a0, a1), a2));  // the median
                     } else if (tool == "blur") {
                         src = blurred.empty() ? p[k] : blurred[((size_t)(y - R.y1) * W + x) * nch + k];
+                    } else if (tool == "sharpen") {  // the detail pushed: p + (p - blurred) * effect
+                        const float bl = blurred.empty() ? p[k] : blurred[((size_t)(y - R.y1) * W + x) * nch + k];
+                        src = alpha ? p[k] : p[k] + (p[k] - bl) * (float)effect;
+                    } else if (tool == "dodge") {  // brighter
+                        src = alpha ? p[k] : p[k] * (1.0f + 0.5f * (float)effect);
+                    } else if (tool == "burn") {  // darker
+                        src = alpha ? p[k] : p[k] * std::max(0.0f, 1.0f - 0.5f * (float)effect);
                     } else {  // paint: colour premultiplied by the brush alpha
                         src = chn == "A" ? col[3] : chn == "R" ? col[0] * col[3] : chn == "G" ? col[1] * col[3]
                               : chn == "B" ? col[2] * col[3] : 0.0f;
                     }
                     p[k] = src * v + p[k] * (1.0f - v);
+                    if (grain && !alpha && (*grain)[k] > 0) p[k] += (float)(grainAmt * v) * (*grain)[k] * grainNoise(px, y, a.frame, k);
                 }
             }
         }

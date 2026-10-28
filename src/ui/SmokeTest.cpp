@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <fstream>
 #include <thread>
 #include <vector>
 
@@ -37,7 +38,8 @@ struct State {
     bool on = false;
     std::vector<std::string> items;
     size_t idx = 0;
-    enum Phase { Settle, Open, Wait, Play, PlayEdit, Autosave, Done } phase = Settle;
+    enum Phase { Settle, Open, Wait, Play, PlayEdit, Paint, Autosave, Done } phase = Settle;
+    uint64_t contentBefore = 0, serialBefore = 0;
     size_t nodesBefore = 0;
     int sub = 0, frames = 0, quiet = 0, played = 0;
     double t0 = 0, stepT0 = 0;
@@ -240,7 +242,7 @@ int tick(App& app, UiState& ui, float lastFrameMs) {
                 break;
             }
         if (script.empty()) {
-            s.phase = State::Autosave, s.sub = 0;
+            s.phase = State::Paint, s.sub = 0;
             break;
         }
         switch (s.sub) {
@@ -283,10 +285,95 @@ int tick(App& app, UiState& ui, float lastFrameMs) {
                 if (!app.playing) fail("playback stopped");
                 app.playing = false;
                 app.dirty = false;
-                s.phase = State::Autosave, s.sub = 0;
+                s.phase = State::Paint, s.sub = 0;
             }
             break;
         }
+        }
+        break;
+    }
+    case State::Paint: {
+        // The viewer and the node stay in step: a stroke added to the viewed RotoPaint shows in the
+        // viewer straight away, stopped and while playing, and is in the node's params.
+        auto addStroke = [&](double x) {
+            json st = {{"name", "smoke" + std::to_string((int)x)}, {"kind", "stroke"}, {"tool", "paint"}, {"size", 40}, {"hardness", 0.8},
+                       {"color", {1, 0, 0, 1}}, {"points", json::array({json::array({x, 100, 1}), json::array({x + 120, 140, 1})})}};
+            app.edit([st](Comp& c) {
+                if (Node* p = c.find("SmokePaint")) p->params.data["shapes"].push_back(st);
+            });
+            s.contentBefore = app.result().content;
+            s.serialBefore = app.result().serial;
+            s.stepT0 = now;
+        };
+        // the node has `strokes` strokes and the shown picture has the newest: red in its middle
+        auto shown = [&](size_t strokes, double x) {
+            Node* p = app.node("SmokePaint");
+            const bool inNode = p && p->params.data.value("shapes", json::array()).size() == strokes;
+            const ViewResult r = app.result();
+            if (!inNode || app.editsPending() || r.serial == s.serialBefore || !r.image) return false;
+            const int ix = (int)std::floor((x + 60) * r.scale), iy = (int)std::floor(120 * r.scale);
+            const int cr = r.image->ch("R"), cg = r.image->ch("G");
+            return r.image->at(ix, iy, cr) > 0.9f && r.image->at(ix, iy, cg) < 0.2f;
+        };
+        switch (s.sub) {
+        case 0: {
+            doing("paint: opening a RotoPaint script");
+            const std::string path = (fs::path(s.tmpDir) / "paint.weld").string();
+            std::ofstream(path) << R"({"strata":1,"format":{"width":640,"height":360},"frame_range":[1,50],"fps":24,"nodes":[)"
+                                   R"({"name":"SmokeBg","type":"Noise","params":{}},)"
+                                   R"({"name":"SmokePaint","type":"RotoPaint","inputs":["SmokeBg"],"params":{"shapes":[]}},)"
+                                   R"({"name":"SmokeViewer","type":"Viewer","inputs":["SmokePaint"],"params":{}}]})";
+            std::string err;
+            app.dirty = false;
+            if (!app.open(path, &err)) {
+                fail("could not open the paint script: " + err);
+                s.phase = State::Autosave, s.sub = 0;
+                break;
+            }
+            app.applyEdits();
+            app.frame = 1;
+            app.requestView();
+            s.quiet = 0;
+            s.sub = 1;
+            break;
+        }
+        case 1:
+            doing("paint: waiting for the first render");
+            if (settledFrames(3)) {
+                addStroke(80);
+                s.sub = 2;
+            }
+            break;
+        case 2:
+        case 4: {
+            doing(s.sub == 2 ? "paint: waiting for a stroke to show" : "paint: waiting for a stroke to show while playing");
+            const bool ok = shown(s.sub == 2 ? 1 : 2, s.sub == 2 ? 80 : 300);
+            if (ok || now - s.stepT0 > 10) {
+                const double lat = now - s.stepT0;
+                std::printf("SMOKE paint%s: the stroke showed in the viewer after %.2f s\n", s.sub == 4 ? " while playing" : "", lat);
+                if (!ok) fail(s.sub == 2 ? "a stroke never showed in the viewer" : "a stroke added while playing never showed in the viewer");
+                else if (lat > 1.0) fail("a stroke took too long to show in the viewer");
+                if (s.sub == 2) {
+                    app.playDir = 1;
+                    app.playing = true;
+                    s.stepT0 = now;
+                    s.sub = 3;
+                } else {
+                    if (!app.playing) fail("playback stopped while painting");
+                    app.playing = false;
+                    app.dirty = false;
+                    s.phase = State::Autosave, s.sub = 0;
+                }
+            }
+            break;
+        }
+        case 3:
+            doing("paint: playing");
+            if (now - s.stepT0 > 1.5) {
+                addStroke(300);
+                s.sub = 4;
+            }
+            break;
         }
         break;
     }

@@ -167,7 +167,21 @@ struct StrokePt {
     double x = 0, y = 0, pressure = 1;
 };
 std::vector<StrokePt> strokePoints(const json& stroke, double frame, const Xf& parent = Xf());  // transformed
-// Brush coverage of a stroke (max of its dabs) at `scale`.
+// How a stroke's dabs are laid down (a stroke's "size", "hardness", "spacing", "write_on" [start, end]
+// as fractions of its length, "build_up", "pressure" {"size", "opacity", "hardness"}).
+struct Brush {
+    double size = 25, hardness = 0.2, spacing = 0.1;
+    double writeOn = 0, writeOff = 1;  // the part of the stroke drawn (0-1 along its length)
+    bool buildUp = false;              // overlapping dabs add up (off: the most of them)
+    bool pSize = true, pOpacity = false, pHardness = false;  // what pen pressure changes
+};
+Brush brushOf(const json& stroke);
+double smoothFalloff(double t);  // smoothstep, 0-1
+// The dabs along a stroke at `scale` (pixel positions, pressure), every `spacing * size` pixels,
+// within its write-on range.
+std::vector<StrokePt> strokeDabs(const std::vector<StrokePt>& pts, double scale, const Brush& b);
+// Brush coverage of a stroke at `scale`.
+void rasterizeStroke(const std::vector<StrokePt>& pts, double scale, const Brush& b, const Region& region, std::vector<float>& cov);
 void rasterizeStroke(const std::vector<StrokePt>& pts, double scale, double size, double hardness, double spacing,
                      const Region& region, std::vector<float>& cov);
 

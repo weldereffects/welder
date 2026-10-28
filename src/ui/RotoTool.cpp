@@ -56,7 +56,7 @@ const json& itemsOf(const Node* n) {
 }
 
 bool paintNode(const Node* n) { return n->type == "RotoPaint"; }
-bool paintTool(Tool t) { return t == Tool::Brush || t == Tool::Eraser || t == Tool::Clone || t == Tool::Reveal || t == Tool::Blur; }
+bool paintTool(Tool t) { return t >= Tool::Brush; }
 bool selectTool(Tool t) { return t == Tool::Select || t == Tool::SelectSplines || t == Tool::SelectPoints || t == Tool::SelectFeather; }
 bool pointTool(Tool t) { return t >= Tool::AddPoints && t <= Tool::RemoveFeather; }
 bool curveTool(Tool t) { return t == Tool::Bezier || t == Tool::CuspedBezier || t == Tool::BSpline || t == Tool::OpenSpline; }  // click points
@@ -73,12 +73,13 @@ int groupOf(Tool t) {
     if (selectTool(t)) return 0;
     if (pointTool(t)) return 1;
     if (t == Tool::Brush || t == Tool::Eraser) return 3;
-    if (t == Tool::Clone || t == Tool::Reveal) return 4;
-    if (t == Tool::Blur) return 5;
+    if (t == Tool::Clone || t == Tool::Reveal || t == Tool::Repair) return 4;
+    if (t == Tool::Blur || t == Tool::Sharpen || t == Tool::Smear) return 5;
+    if (t == Tool::Dodge || t == Tool::Burn) return 6;
     return 2;
 }
 const std::vector<ToolInfo>& groupTools(int g) {
-    static const std::vector<ToolInfo> groups[6] = {
+    static const std::vector<ToolInfo> groups[7] = {
         {{Tool::Select, "Select All", "Q", "Select points, tangents, feather points and whole shapes; the transform jack"},
          {Tool::SelectSplines, "Select Splines", "Q", "Select and move whole shapes"},
          {Tool::SelectPoints, "Select Points", "Q", "Select and move points and their tangents only"},
@@ -99,9 +100,15 @@ const std::vector<ToolInfo>& groupTools(int g) {
         {{Tool::Brush, "Brush", "N", "Drag to paint. Shift+drag: brush size"},
          {Tool::Eraser, "Eraser", "N", "Drag to erase paint"}},
         {{Tool::Clone, "Clone", "C", "Ctrl+click the source, then paint"},
-         {Tool::Reveal, "Reveal", "C", "Paint in the bg1 input"}},
-        {{Tool::Blur, "Blur", "X", "Paint a blur of the background"}}};
-    return groups[std::clamp(g, 0, 5)];
+         {Tool::Reveal, "Reveal", "C", "Paint in the bg1 input"},
+         {Tool::Repair, "Repair", "C", "Dust-bust: click or paint over dust, scratches or dropouts - the frames either side,\n"
+                                       "lined up along the motion, fill in what is on this frame only"}},
+        {{Tool::Blur, "Blur", "X", "Paint a blur of the background (effect: how much)"},
+         {Tool::Sharpen, "Sharpen", "X", "Paint sharper detail (effect: how much)"},
+         {Tool::Smear, "Smear", "X", "Drag the picture along the stroke"}},
+        {{Tool::Dodge, "Dodge", "D", "Paint brighter (effect: how much)"},
+         {Tool::Burn, "Burn", "D", "Paint darker (effect: how much)"}}};
+    return groups[std::clamp(g, 0, 6)];
 }
 
 // A line icon for each tool (drawn, so it is sharp at any size), centred on c, about 2s across.
@@ -178,10 +185,34 @@ void toolIcon(ImDrawList* dl, Tool t, ImVec2 c, float s, ImU32 col) {
         }
         case Tool::Clone: dl->AddRect(P(-0.7f, 0.2f), P(0.7f, 0.85f), col, 0, 0, w); dl->AddLine(P(0, 0.2f), P(0, -0.4f), col, w * 1.4f); dl->AddCircle(P(0, -0.6f), s * 0.3f, col, 0, w); break;
         case Tool::Reveal: dl->AddCircle(c, s * 0.8f, col, 0, w); dl->AddCircleFilled(c, s * 0.35f, col); break;
+        case Tool::Repair:  // a sparkle (the speck that goes away)
+            dl->AddLine(P(0, -0.9f), P(0, 0.9f), col, w);
+            dl->AddLine(P(-0.9f, 0), P(0.9f, 0), col, w);
+            dl->AddLine(P(-0.45f, -0.45f), P(0.45f, 0.45f), col, w * 0.8f);
+            dl->AddLine(P(-0.45f, 0.45f), P(0.45f, -0.45f), col, w * 0.8f);
+            break;
         case Tool::Blur:
             dl->PathArcTo(P(0, 0.3f), s * 0.55f, -0.3f, 3.14159f + 0.3f, 14);
             dl->PathLineTo(P(0, -0.9f));
             dl->PathStroke(col, ImDrawFlags_Closed, w);
+            break;
+        case Tool::Sharpen: {  // a triangle (a point)
+            ImVec2 q[3] = {P(0, -0.9f), P(0.8f, 0.7f), P(-0.8f, 0.7f)};
+            dl->AddPolyline(q, 3, col, ImDrawFlags_Closed, w);
+            break;
+        }
+        case Tool::Smear:  // a finger's swipe
+            dl->AddBezierCubic(P(-0.9f, 0.6f), P(-0.3f, 0.6f), P(0.2f, -0.6f), P(0.9f, -0.6f), col, w);
+            dl->AddCircleFilled(P(0.9f, -0.6f), s * 0.22f, col);
+            break;
+        case Tool::Dodge:  // a lollipop (the classic dodge tool)
+            dl->AddCircle(P(0, -0.35f), s * 0.45f, col, 0, w);
+            dl->AddLine(P(0, 0.1f), P(0, 0.95f), col, w * 1.4f);
+            break;
+        case Tool::Burn:  // a hand cupping light: a filled half
+            dl->AddCircle(c, s * 0.8f, col, 0, w);
+            dl->PathArcTo(c, s * 0.8f, 1.5708f, 4.712f, 12);
+            dl->PathFillConvex(col);
             break;
     }
 }
@@ -331,7 +362,7 @@ roto::V2 pivotOf(const json& s, double frame) {
 }
 
 const char* toolName(Tool t) {
-    for (int g = 0; g < 6; ++g)
+    for (int g = 0; g < 7; ++g)
         for (auto& ti : groupTools(g))
             if (ti.t == t) return ti.name;
     return "";
@@ -342,9 +373,53 @@ const char* strokeTool(Tool t) {
         case Tool::Eraser: return "eraser";
         case Tool::Clone: return "clone";
         case Tool::Reveal: return "reveal";
+        case Tool::Repair: return "repair";
         case Tool::Blur: return "blur";
+        case Tool::Sharpen: return "sharpen";
+        case Tool::Smear: return "smear";
+        case Tool::Dodge: return "dodge";
+        case Tool::Burn: return "burn";
         default: return "paint";
     }
+}
+
+// Tracked paint: a layer that follows a Tracker (its match-move, as transform keys) or a
+// PlanarTracker (its plane, as matrix keys), relative to `ref` - so it is still at `ref`.
+// Null (with the reason in `why`) when the tracker has nothing to follow.
+json followLayer(Node* tracker, double ref, std::string& why) {
+    json layer = {{"kind", "layer"}, {"name", "track_" + tracker->name}, {"visible", true}, {"follows", tracker->name}, {"reference", ref}};
+    if (tracker->type == "PlanarTracker") {
+        const json pk = tracker->params.data.value("keys", json::array());
+        const auto hr = planar::homographyAt(pk, ref);
+        if (!hr || pk.empty()) {
+            why = tracker->name + " isn't tracked on this frame";
+            return nullptr;
+        }
+        const planar::H3 hri = planar::inverse(*hr);
+        json m = json::array();
+        for (int k = 0; k < 9; ++k) m.push_back({{"keys", json::array()}, {"interp", "linear"}});
+        for (auto& key : pk) {
+            const double f = key[0].get<double>();
+            planar::H3 rel = planar::mul(*planar::homographyAt(pk, f), hri);
+            for (int k = 0; k < 9; ++k) m[k]["keys"].push_back({f, rel[k] / rel[8]});
+        }
+        layer["matrix"] = m;
+        return layer;
+    }
+    auto mm = trackerMatchMove(tracker, ref);
+    if (mm.empty()) {
+        why = tracker->name + " has no solvable tracks (turn on T, R or S)";
+        return nullptr;
+    }
+    json tx = {{"keys", json::array()}, {"interp", "linear"}}, ty = tx, rot = tx, sc = tx;
+    for (auto& [f, m] : mm) {
+        tx["keys"].push_back({f, m["translate"][0]});
+        ty["keys"].push_back({f, m["translate"][1]});
+        rot["keys"].push_back({f, m["rotate"]});
+        sc["keys"].push_back({f, m["scale"]});
+    }
+    layer["transform"] = {{"translate", {tx, ty}}, {"rotate", rot}, {"scale", {sc, sc}}, {"center", mm.front().second["center"]}};
+    return layer;
 }
 
 // Commit the Bezier / B-spline being drawn as a new shape (closed; an open spline stays open).
@@ -554,6 +629,7 @@ Disp makeDisp(const json& items, const json& s, double frame, const ViewXf& xf) 
     d.closed = s.value("closed", true);
     d.bspline = s.value("kind", std::string()) == "bspline";
     const roto::Xf parent = roto::parentTransformAt(items, s, frame);
+    if (d.stroke && !d.alive) return d;  // a stroke on another frame: nothing to draw or pick (cleanup paint has thousands)
     d.M = roto::worldTransformAt(items, s, frame);
     d.Minv = d.M.inverse();
     if (d.stroke) {
@@ -804,7 +880,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         static int menuGroup = -1;
         static ImVec2 menuAt;
         std::vector<int> groups = {0, 1, 2};
-        if (paintNode(n)) groups.insert(groups.end(), {3, 4, 5});
+        if (paintNode(n)) groups.insert(groups.end(), {3, 4, 5, 6});
         const float bw = 34, bh = 30, x = p0.x + 6;
         float y = p0.y + 6;
         const int cur = groupOf(r.tool);
@@ -1145,7 +1221,12 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Tool::Eraser:
             case Tool::Clone:
             case Tool::Reveal:
+            case Tool::Repair:
             case Tool::Blur:
+            case Tool::Sharpen:
+            case Tool::Smear:
+            case Tool::Dodge:
+            case Tool::Burn:
                 if (io.KeyShift) {
                     r.drag = Drag::BrushSize;
                     r.origBrushSize = r.brushSize;
@@ -1561,15 +1642,66 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             json pts = json::array();
             for (auto& p : r.strokePts) pts.push_back({std::round(p.x * 100) / 100, std::round(p.y * 100) / 100, p.pressure});
             const char* tool = strokeTool(r.tool);
-            std::string base = r.tool == Tool::Brush ? "Brush" : r.tool == Tool::Eraser ? "Eraser" : r.tool == Tool::Clone ? "Clone"
-                               : r.tool == Tool::Reveal ? "Reveal" : "Blur";
+            std::string base = toolName(r.tool);
             json s = {{"name", uniqueName(items, base)}, {"kind", "stroke"}, {"tool", tool}, {"points", pts},
-                      {"size", r.brushSize}, {"hardness", r.brushHardness}, {"opacity", r.brushOpacity}, {"spacing", 0.1}};
+                      {"size", r.brushSize}, {"hardness", r.brushHardness}, {"opacity", r.brushOpacity}, {"spacing", r.brushSpacing}};
             if (r.tool == Tool::Brush) s["color"] = {r.brushColor[0], r.brushColor[1], r.brushColor[2], r.brushColor[3]};
             if (r.tool == Tool::Clone) s["offset"] = {std::round(r.cloneOffset.x * 100) / 100, std::round(r.cloneOffset.y * 100) / 100};
-            if (r.paintSingleFrame) s["life"] = {{"type", "single"}, {"start", std::round(frame)}};
+            if (r.tool == Tool::Clone || r.tool == Tool::Reveal) {  // where it takes its pixels from
+                const std::string src = r.tool == Tool::Clone ? r.cloneSourceInput : r.revealSourceInput;
+                if (src != (r.tool == Tool::Clone ? "bg" : "bg1")) s["source"] = src;
+                if (r.cloneTimeOffset != 0 || r.cloneTimeAbsolute) {
+                    s["time_offset"] = r.cloneTimeOffset;
+                    if (r.cloneTimeAbsolute) s["time_mode"] = "absolute";
+                }
+                if (r.tool == Tool::Clone && r.cloneRotate != 0) s["source_rotate"] = r.cloneRotate;
+                if (r.cloneAlignFlow && (r.cloneTimeOffset != 0 || r.cloneTimeAbsolute)) s["align"] = "flow";
+                if (r.tool == Tool::Clone && r.cloneScale != 1) s["source_scale"] = r.cloneScale;
+            }
+            if (r.tool == Tool::Blur || r.tool == Tool::Sharpen || r.tool == Tool::Smear || r.tool == Tool::Dodge || r.tool == Tool::Burn)
+                s["effect"] = r.brushEffect;
+            if (r.brushBuildUp) s["build_up"] = true;
+            if (r.paintGrain && (r.tool == Tool::Brush || r.tool == Tool::Blur)) s["grain"] = 1.0;
+            if (!r.pressureSize || r.pressureOpacity || r.pressureHardness)
+                s["pressure"] = {{"size", r.pressureSize}, {"opacity", r.pressureOpacity}, {"hardness", r.pressureHardness}};
+            if (r.paintSingleFrame || r.tool == Tool::Repair)  // (a repair is always for this frame: dust is)
+                s["life"] = {{"type", "single"}, {"start", std::round(frame)}};
+            // tracked paint: into the layer that follows the track, in its space (so it moves with it)
+            json newLayer;
+            Node* tracker = r.paintTrack.empty() ? nullptr : app.node(r.paintTrack);
+            if (!r.paintTrack.empty() && (!tracker || (tracker->type != "Tracker" && tracker->type != "PlanarTracker"))) {
+                app.message("tracked paint: " + r.paintTrack + " isn't a Tracker any more - painting untracked");
+                r.paintTrack.clear();
+                tracker = nullptr;
+            }
+            if (tracker) {
+                const std::string lname = "track_" + tracker->name;
+                const json* layer = nullptr;
+                for (auto& it : items)
+                    if (roto::isLayer(it) && it.value("name", std::string()) == lname) layer = &it;
+                std::string why;
+                if (!layer) {
+                    newLayer = followLayer(tracker, std::round(frame), why);
+                    if (newLayer.is_null()) app.message("tracked paint: " + why + " - painting untracked");
+                }
+                if (layer || !newLayer.is_null()) {
+                    json all = items;
+                    if (!newLayer.is_null()) all.push_back(newLayer);
+                    const json& L = layer ? *layer : newLayer;
+                    const roto::Xf inv = roto::worldTransformAt(all, L, frame).inverse();
+                    for (auto& q : s["points"]) {
+                        const roto::V2 v = inv.apply(q[0].get<double>(), q[1].get<double>());
+                        q[0] = std::round(v.x * 100) / 100, q[1] = std::round(v.y * 100) / 100;
+                    }
+                    s["parent"] = lname;
+                }
+            }
             app.checkpoint();
-            editShapes(app, n->name, [s](json& sh) { sh.push_back(s); });
+            editShapes(app, n->name, [s, newLayer](json& sh) {
+                if (!newLayer.is_null()) sh.push_back(newLayer);
+                sh.push_back(s);
+            });
+            if (!newLayer.is_null()) app.message("tracked paint: new layer " + newLayer["name"].get<std::string>() + " follows " + r.paintTrack);
             r.strokePts.clear();
         }
         r.drag = Drag::None;
@@ -1603,8 +1735,9 @@ bool rotoHotkeys(App& app, UiState& ui) {
     }
     if (paintNode(n)) {
         if (pressed(ImGuiKey_N)) { setTool(app, ui, n, r.tool == Tool::Brush ? Tool::Eraser : Tool::Brush); return true; }
-        if (pressed(ImGuiKey_C)) { setTool(app, ui, n, r.tool == Tool::Clone ? Tool::Reveal : Tool::Clone); return true; }
-        if (pressed(ImGuiKey_X)) { setTool(app, ui, n, Tool::Blur); return true; }
+        if (pressed(ImGuiKey_C)) { cycle(4); return true; }
+        if (pressed(ImGuiKey_X)) { cycle(5); return true; }
+        if (pressed(ImGuiKey_D)) { cycle(6); return true; }
     }
     if (r.drawing) {
         if (pressed(ImGuiKey_Enter) || pressed(ImGuiKey_KeypadEnter)) { closeDrawing(app, ui, n); return true; }
@@ -1665,7 +1798,12 @@ void drawRotoToolbar(App& app, UiState& ui) {
     const json& items = itemsOf(n);
     ImGui::PushID("rotoBar");
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(2, 4));
+    // the bar wraps onto another row when what comes next won't fit (narrow viewers, clone's many settings)
+    auto fit = [](float w) {
+        if (ImGui::GetContentRegionAvail().x < w) ImGui::NewLine();
+    };
     auto toggle = [&](const char* label, bool on, const char* tip) {
+        fit(ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2 + 4);
         ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(on ? theme().segmentOn : theme().segment));
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(on ? themeAccent() : theme().muted));
         const bool c = ImGui::Button(label);
@@ -1677,7 +1815,8 @@ void drawRotoToolbar(App& app, UiState& ui) {
     auto gap = [] {
         ImGui::SameLine(0, 12);
     };
-    auto label = [](const char* t) {
+    auto label = [&](const char* t) {
+        fit(ImGui::CalcTextSize(t).x + 64);  // (with its field)
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", t);
         ImGui::SameLine(0, 4);
@@ -1778,6 +1917,97 @@ void drawRotoToolbar(App& app, UiState& ui) {
         if (toggle("hide jack", r.hideJack, "Hide the transform jack")) r.hideJack = !r.hideJack;
         if (toggle("jack on move", !r.hideJackOnMove, "Off: the jack hides while points are being moved")) r.hideJackOnMove = !r.hideJackOnMove;
         gap();
+    }
+    if (paintTool(r.tool)) {  // the brush: what the next stroke is
+        if (r.tool == Tool::Brush) {
+            ImGui::ColorEdit4("##bcol", r.brushColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("brush colour");
+            ImGui::SameLine();
+        }
+        label("size");
+        ImGui::SetNextItemWidth(50);
+        ImGui::DragFloat("##bsize", &r.brushSize, 0.5f, 1, 2000, "%.0f");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("brush size (Shift+drag in the viewer)");
+        ImGui::SameLine();
+        label("hardness");
+        ImGui::SetNextItemWidth(42);
+        ImGui::DragFloat("##bhard", &r.brushHardness, 0.01f, 0, 1, "%.2f");
+        ImGui::SameLine();
+        label("opacity");
+        ImGui::SetNextItemWidth(42);
+        ImGui::DragFloat("##bop", &r.brushOpacity, 0.01f, 0, 1, "%.2f");
+        ImGui::SameLine();
+        if (r.tool == Tool::Blur || r.tool == Tool::Sharpen || r.tool == Tool::Smear || r.tool == Tool::Dodge || r.tool == Tool::Burn) {
+            label("effect");
+            ImGui::SetNextItemWidth(42);
+            ImGui::DragFloat("##beff", &r.brushEffect, 0.01f, 0, 4, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("how strong: blur size, sharpening, smear, brighter / darker");
+            ImGui::SameLine();
+        }
+        gap();
+        if (toggle(r.paintSingleFrame ? "this frame" : "all frames", true, "New strokes live on this frame only, or on all of them (click to switch)"))
+            r.paintSingleFrame = !r.paintSingleFrame;
+        if (toggle("build up", r.brushBuildUp, "Overlapping dabs add up (off: a stroke is as strong as its strongest dab)"))
+            r.brushBuildUp = !r.brushBuildUp;
+        if (r.tool == Tool::Brush || r.tool == Tool::Blur)
+            if (toggle("grain", r.paintGrain, "Put the plate's grain back on what the stroke paints (measured around it),\n"
+                                              "so a painted or blurred patch doesn't show as a clean spot"))
+                r.paintGrain = !r.paintGrain;
+        gap();
+        label("track");
+        ImGui::SetNextItemWidth(r.paintTrack.empty() ? 52 : 96);
+        if (kit::beginComboFlat("##ptrack", r.paintTrack.empty() ? "off" : r.paintTrack.c_str())) {
+            if (ImGui::Selectable("off", r.paintTrack.empty())) r.paintTrack.clear();
+            bool any = false;
+            for (auto& node : app.comp->nodes)
+                if (node->type == "Tracker" || node->type == "PlanarTracker") {
+                    any = true;
+                    const std::string lbl = node->name + (node->type == "PlanarTracker" ? "  (planar)" : "");
+                    if (ImGui::Selectable(lbl.c_str(), r.paintTrack == node->name)) r.paintTrack = node->name;
+                }
+            if (!any) ImGui::TextDisabled("no Tracker or PlanarTracker nodes");
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Tracked paint: new strokes go in a layer that follows this track (a Tracker's match-move,\n"
+                              "or a PlanarTracker's plane), so a fix painted once on \"all frames\" stays stuck to the plate.\n"
+                              "The layer (track_<tracker>) is made on the first stroke, still on that frame.");
+        ImGui::SameLine();
+        if (r.tool == Tool::Clone || r.tool == Tool::Reveal) {
+            gap();
+            std::string& src = r.tool == Tool::Clone ? r.cloneSourceInput : r.revealSourceInput;
+            label("from");
+            ImGui::SetNextItemWidth(52);
+            if (kit::beginComboFlat("##csrc", src.c_str())) {
+                for (const char* o : {"bg", "bg1"})
+                    if (ImGui::Selectable(o, src == o)) src = o;
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("the input it takes pixels from");
+            ImGui::SameLine();
+            label(r.cloneTimeAbsolute ? "frame" : "frame offset");
+            ImGui::SetNextItemWidth(46);
+            ImGui::DragInt("##ctime", &r.cloneTimeOffset, 0.1f, -100000, 100000, r.cloneTimeAbsolute || r.cloneTimeOffset <= 0 ? "%d" : "+%d");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(r.cloneTimeAbsolute ? "take the pixels from this frame" : "take the pixels this many frames away (-1: the frame before)");
+            ImGui::SameLine();
+            if (toggle(r.cloneTimeAbsolute ? "absolute" : "relative", r.cloneTimeAbsolute, "relative: an offset from the current frame; absolute: a fixed frame"))
+                r.cloneTimeAbsolute = !r.cloneTimeAbsolute;
+            if (r.tool == Tool::Clone) {
+                label("rotate");
+                ImGui::SetNextItemWidth(44);
+                ImGui::DragFloat("##crot", &r.cloneRotate, 0.5f, -360, 360, "%.0f");
+                ImGui::SameLine();
+                label("scale");
+                ImGui::SetNextItemWidth(40);
+                ImGui::DragFloat("##cscale", &r.cloneScale, 0.005f, 0.05f, 20, "%.2f");
+                ImGui::SameLine();
+                if (toggle("reset source", false, "Ctrl+click in the viewer sets the source again")) r.cloneSourceSet = r.cloneOffsetSet = false;
+                if (toggle("align", r.cloneAlignFlow,
+                           "Cloning from another frame: line its picture up with this one along the motion (optical flow),\n"
+                           "so a patch from a moving plate fits. Only with a frame offset (or an absolute frame)."))
+                    r.cloneAlignFlow = !r.cloneAlignFlow;
+            }
+        }
     }
     if (!paintTool(r.tool)) {
         if (toggle("onion", r.onion, "Onion skin: the shapes a few frames back (red) and ahead (green)")) r.onion = !r.onion;
@@ -1893,6 +2123,17 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
         }
     };
     walk("", 1);
+    // strokes on this frame (cleanup paint: a stroke or two per frame over thousands of frames)
+    std::vector<int> onFrame;
+    if (paint)
+        for (int i = 0; i < (int)items.size(); ++i)
+            if (roto::isStroke(items[i]) && roto::alive(items[i], frame) && items[i].contains("life") &&
+                items[i]["life"].is_object() && items[i]["life"].value("type", std::string("all")) != "all")
+                onFrame.push_back(i);  // (strokes on every frame aren't this frame's)
+    if (paint && r.listThisFrame)
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const std::pair<int, int>& rw) {
+                       return roto::isStroke(items[rw.first]) && !roto::alive(items[rw.first], frame);  // (all-frame strokes stay)
+                   }), rows.end());
     // move item `from` onto row item `to`: into it (a layer) or above it, beside it
     auto moveItem = [&](int from, int to, bool into) {
         if (from == to || from < 0 || to < 0) return;
@@ -1916,6 +2157,38 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
     };
 
     ImGui::SeparatorText(paint ? "curves and strokes" : "curves");
+    if (paint) {
+        char lbl[64];
+        std::snprintf(lbl, sizeof lbl, "this frame only (%zu)##thisframe", onFrame.size());
+        kit::checkbox(lbl, &r.listThisFrame);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("List only the strokes painted for this frame (with the shapes, layers and strokes on every frame)");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(onFrame.empty());
+        if (ImGui::SmallButton("select##frame")) {
+            r.sel.clear();
+            r.fsel.clear();
+            for (int i : onFrame)
+                for (int pi = 0; pi < (int)items[i].value("points", json::array()).size(); ++pi) r.sel.insert({i, pi});
+            r.curShape = onFrame.back();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Select every stroke on this frame");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("delete##frame")) {
+            app.checkpoint();
+            const std::vector<int> gone = onFrame;
+            editShapes(app, name, [gone](json& sh) {
+                for (auto it = gone.rbegin(); it != gone.rend(); ++it)
+                    if (*it < (int)sh.size()) sh.erase(sh.begin() + *it);
+            });
+            app.message("deleted " + std::to_string(gone.size()) + " stroke(s) on frame " + std::to_string((int)std::round(frame)));
+            r.curShape = -1;
+            r.sel.clear();
+            r.fsel.clear();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete every stroke on this frame (undo brings them back)");
+        ImGui::EndDisabled();
+    }
     const float rowH = ImGui::GetFrameHeight();
     const float tableH = std::clamp((float)(rows.size() + 2) * (rowH + 2) + 6, rowH * 4, rowH * 14);
     const ImGuiTableFlags tf = ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
@@ -1941,7 +2214,14 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         if (ImGui::Selectable("Root##root", r.curShape < 0, ImGuiSelectableFlags_SpanAllColumns)) select(-1);
-        for (auto& [i, depth] : rows) {
+        ImGuiListClipper clipper;  // only the rows in view (a cleanup RotoPaint can have thousands)
+        clipper.Begin((int)rows.size(), rowH + ImGui::GetStyle().CellPadding.y * 2);
+        if (renaming >= 0)
+            for (int ri = 0; ri < (int)rows.size(); ++ri)
+                if (rows[ri].first == renaming) clipper.IncludeItemByIndex(ri);
+        while (clipper.Step())
+        for (int ri = clipper.DisplayStart; ri < clipper.DisplayEnd; ++ri) {
+            const int i = rows[ri].first, depth = rows[ri].second;
             const json& s = items[i];
             const bool layer = roto::isLayer(s), stroke = roto::isStroke(s);
             ImGui::PushID(i);
@@ -2581,6 +2861,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
     if (section == 3 || (combined && section == 0)) {  // the shape's own settings
         if (combined && cs >= 0) ImGui::SeparatorText("shape");
         if (cs < 0 || layer) noShape("Select a shape to see its settings.");
+        else if (stroke && paint && !combined) noShape("A paint stroke: its settings are on the Stroke tab.");
         else if (stroke) {
             number("opacity", "opacity", 1.0, 0, 1, "%.3f");
             row("tool");
@@ -2802,6 +3083,140 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                               "or of every shape), over the comp's frame range - where the points are drawn,\n"
                               "through the shape's transform, its matrix and every layer it's in.");
     }
+    if (section == 6) {  // RotoPaint's Stroke tab: the selected stroke's brush
+        if (!stroke) noShape("Select a stroke (in the curves list, or click it in the viewer).");
+        else {
+            row("brush");
+            const std::string tool = s.value("tool", std::string("paint"));
+            ImGui::SetNextItemWidth(120);
+            if (kit::beginComboFlat("##stool", tool.c_str())) {
+                for (const char* o : {"paint", "eraser", "clone", "reveal", "repair", "blur", "sharpen", "smear", "dodge", "burn"})
+                    if (ImGui::Selectable(o, tool == o)) {
+                        app.checkpoint();
+                        itemSet("tool", o);
+                    }
+                ImGui::EndCombo();
+            }
+            number("opacity", "opacity", 1.0, 0, 1, "%.3f");
+            number("size", "size", 25.0, 1, 2000, "%.0f px", true);
+            number("hardness", "hardness", 0.2, 0, 1, "%.2f");
+            number("spacing", "spacing", 0.1, 0.01f, 2, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Dabs every this many brush sizes along the stroke");
+            if (tool == "blur" || tool == "sharpen" || tool == "smear" || tool == "dodge" || tool == "burn") number("effect", "effect", 1.0, 0, 4, "%.2f");
+            if (tool == "paint" || tool == "blur") {
+                number("grain", "grain", 0.0, 0, 2, "%.2f");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("How much of the plate's grain (measured around the stroke) goes back on it; 1 matches it");
+            }
+            if (tool == "repair") {
+                number("frames away", "repair_gap", 1.0, 1, 10, "%.0f");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The frames it compares with, this many either side (two after / before at the ends of the range).\n"
+                                      "Raise it for dust or damage that lasts more than one frame.");
+            }
+            if (tool == "paint") {
+                row("color");
+                float col[4] = {1, 1, 1, 1};
+                if (s.contains("color") && s["color"].is_array())
+                    for (size_t k = 0; k < 4 && k < s["color"].size(); ++k) col[k] = (float)params::evalScalar(s["color"][k], frame, 1);
+                bool ch = ImGui::ColorEdit4("##col", col, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+                if (ImGui::IsItemActivated()) app.checkpoint();
+                if (ch) itemSet("color", json::array({col[0], col[1], col[2], col[3]}));
+            }
+            row("build up");
+            bool bu = s.value("build_up", false);
+            if (kit::checkbox("##bu", &bu)) {
+                app.checkpoint();
+                itemSet("build_up", bu);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overlapping dabs add up (off: as strong as the strongest dab)");
+            row("write on");
+            {
+                float wo[2] = {0, 1};
+                if (s.contains("write_on") && s["write_on"].is_array() && s["write_on"].size() == 2)
+                    wo[0] = s["write_on"][0].get<float>(), wo[1] = s["write_on"][1].get<float>();
+                ImGui::SetNextItemWidth(220);
+                const bool ch = ImGui::DragFloat2("##wo", wo, 0.005f, 0, 1, "%.3f");
+                if (ImGui::IsItemActivated()) app.checkpoint();
+                if (ch) itemSet("write_on", json::array({std::clamp(wo[0], 0.0f, 1.0f), std::clamp(std::max(wo[0], wo[1]), 0.0f, 1.0f)}));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("start, end: the part of the stroke drawn (0 to 1 along it); key them to write it on");
+            }
+            row("pressure alters");
+            {
+                json pr = s.value("pressure", json::object());
+                bool ps = pr.value("size", true), po = pr.value("opacity", false), ph = pr.value("hardness", false);
+                bool ch = kit::checkbox("size##ps", &ps);
+                ImGui::SameLine();
+                ch |= kit::checkbox("opacity##po", &po);
+                ImGui::SameLine();
+                ch |= kit::checkbox("hardness##ph", &ph);
+                if (ch) {
+                    app.checkpoint();
+                    itemSet("pressure", {{"size", ps}, {"opacity", po}, {"hardness", ph}});
+                }
+            }
+        }
+    }
+
+    if (section == 7) {  // RotoPaint's Clone tab: where a clone / reveal stroke takes its pixels
+        const std::string tool = stroke ? s.value("tool", std::string("paint")) : std::string();
+        if (tool != "clone" && tool != "reveal") noShape("Select a clone or reveal stroke. (New strokes: the settings above the viewer.)");
+        else {
+            row("source");
+            const std::string src = s.value("source", std::string(tool == "reveal" ? "bg1" : "bg"));
+            ImGui::SetNextItemWidth(90);
+            if (kit::beginComboFlat("##csource", src.c_str())) {
+                for (const char* o : {"bg", "bg1"})
+                    if (ImGui::Selectable(o, src == o)) {
+                        app.checkpoint();
+                        itemSet("source", o);
+                    }
+                ImGui::EndCombo();
+            }
+            row("time offset");
+            int to = (int)s.value("time_offset", 0.0);
+            ImGui::SetNextItemWidth(90);
+            const bool ch = ImGui::DragInt("##ctoff", &to, 0.1f);
+            if (ImGui::IsItemActivated()) app.checkpoint();
+            if (ch) itemSet("time_offset", to);
+            ImGui::SameLine();
+            const std::string mode = s.value("time_mode", std::string("relative"));
+            ImGui::SetNextItemWidth(90);
+            if (kit::beginComboFlat("##ctmode", mode.c_str())) {
+                for (const char* o : {"relative", "absolute"})
+                    if (ImGui::Selectable(o, mode == o)) {
+                        app.checkpoint();
+                        itemSet("time_mode", o);
+                    }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("relative: frames away from the current one; absolute: that frame");
+            row("align");
+            {
+                bool al = s.value("align", std::string()) == "flow";
+                if (kit::checkbox("along the motion##calign", &al)) {
+                    app.checkpoint();
+                    itemSet("align", al ? json("flow") : json(""));
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("From another frame: its picture lined up with this one along the optical flow,\n"
+                                      "so a patch from a moving plate fits (slower to render)");
+            }
+            if (tool == "clone") {
+                row("translate");
+                float off[2] = {0, 0};
+                if (s.contains("offset") && s["offset"].is_array() && s["offset"].size() == 2)
+                    off[0] = s["offset"][0].get<float>(), off[1] = s["offset"][1].get<float>();
+                ImGui::SetNextItemWidth(220);
+                const bool c2 = ImGui::DragFloat2("##coff", off, 0.5f);
+                if (ImGui::IsItemActivated()) app.checkpoint();
+                if (c2) itemSet("offset", json::array({off[0], off[1]}));
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("from the source to where it's painted, in pixels");
+                number("rotate", "source_rotate", 0.0, -360, 360, "%.1f deg", true);
+                number("scale", "source_scale", 1.0, 0.05f, 20, "%.3f", true);
+            }
+        }
+    }
+
     if (section > 0 && !combined) {  // the curves list under every tab, to pick what the tab works on
         ImGui::Spacing();
         rotoCurvesTable(app, ui, n);
@@ -2815,6 +3230,16 @@ void drawRotoPanel(App& app, UiState& ui, Node* n) {
 }
 
 void drawRotoTab(App& app, UiState& ui, Node* n, int section) { rotoSection(app, ui, n, section, false); }
+
+bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name) {
+    for (int g = 0; g < 7; ++g)
+        for (auto& ti : groupTools(g))
+            if (name == ti.name) {
+                setTool(app, ui, n, ti.t);
+                return true;
+            }
+    return false;
+}
 
 // The panel's "points -> Tracker" (for the UI test).
 void rotoExportPoints(App& app, UiState& ui, Node* n) {
