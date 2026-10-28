@@ -946,6 +946,8 @@ int main(int argc, char** argv) {
                         else if (kk.size() == 1 && kk[0] >= 'a' && kk[0] <= 'z') held = (ImGuiKey)(ImGuiKey_A + (kk[0] - 'a'));
                         else if (kk == "grave") held = ImGuiKey_GraveAccent;
                         else if (kk == "backspace") held = ImGuiKey_Backspace;
+                        else if (kk == "end") held = ImGuiKey_End;
+                        else if (kk == "enter") held = ImGuiKey_Enter;
                         if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
                         if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
                     } else if (what == "click") {
@@ -956,6 +958,8 @@ int main(int argc, char** argv) {
                         std::sscanf(arg.c_str(), "%f,%f,%f,%f", &drag[0], &drag[1], &drag[2], &drag[3]);
                         tio.AddMousePosEvent(drag[0], drag[1]);
                         dragging = true;
+                    } else if (what == "type") {  // text typed into the focused field
+                        tio.AddInputCharactersUTF8(arg.c_str());
                     } else if (what == "menu") {  // a File menu action: open, save, saveas, saveinc
                         ui.menuAction = arg;
                     } else if (what == "script") {  // the script's path, and the version prompt

@@ -103,6 +103,23 @@ std::string versionPath(const std::string& path, int number) {
     return (p.parent_path() / (stem + p.extension().string())).string();
 }
 
+// The script's path with its version ("v001") replaced by `text` ("v002_tp"); an unversioned name
+// gets "_<text>". Characters a file name can't hold are left out.
+std::string customVersionPath(const std::string& path, std::string text) {
+    std::string clean;
+    for (char c : text)
+        if (!std::strchr("\\/:*?\"<>|", c) && (unsigned char)c >= 32) clean += c;
+    while (!clean.empty() && (clean.back() == ' ' || clean.back() == '.')) clean.pop_back();
+    if (clean.size() > 5 && clean.substr(clean.size() - 5) == ".weld") clean.resize(clean.size() - 5);
+    if (clean.empty()) return "";
+    const fs::path p(path);
+    std::string stem = p.stem().string();
+    const Version v = findVersion(stem);
+    if (v.pos == std::string::npos) stem += "_" + clean;
+    else stem = stem.substr(0, v.pos - 1) + clean + stem.substr(v.pos + v.len);  // (from the "v")
+    return (p.parent_path() / (stem + p.extension().string())).string();
+}
+
 // Save Incremental (Alt+Shift+S): the comp saved as the next version (v001 -> v002). When that
 // one is already there, ask: overwrite it, or take the next free number.
 static void doSaveIncremental(App& app, UiState& ui) {
@@ -120,6 +137,10 @@ static void doSaveIncremental(App& app, UiState& ui) {
     while (fs::exists(versionPath(app.compPath, free), ec) && free < cur + 10000) ++free;
     ui.versionClash = next;
     ui.versionFree = versionPath(app.compPath, free);
+    // the typed option starts as the clashing version ("v002"), ready to add to
+    const std::string ns = fs::path(next).stem().string();
+    const Version nv = findVersion(ns);
+    std::snprintf(ui.versionCustom, sizeof ui.versionCustom, "%s", nv.pos == std::string::npos ? "" : ns.substr(nv.pos - 1, nv.len + 1).c_str());
 }
 
 static void doSave(App& app, UiState& ui) {
@@ -1286,6 +1307,23 @@ void drawDialogs(App& app, UiState& ui) {
             ui.versionFree.clear();
             ImGui::CloseCurrentPopup();
         }
+        // or a version of your own: "v002_tp"
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("Or type the version:");
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(160);
+        const bool enter = ImGui::InputText("##customver", ui.versionCustom, sizeof ui.versionCustom, ImGuiInputTextFlags_EnterReturnsTrue);
+        const std::string custom = customVersionPath(app.compPath, ui.versionCustom);
+        std::error_code ec;
+        const bool exists = !custom.empty() && fs::exists(custom, ec);
+        ImGui::SameLine();
+        if (custom.empty()) ImGui::BeginDisabled();
+        const std::string cname = custom.empty() ? std::string("...") : fs::path(custom).filename().string();
+        if ((ImGui::Button(((exists ? "Overwrite " : "Save as ") + cname + "##custom").c_str()) || (enter && !custom.empty())))
+            saveTo(custom);
+        if (custom.empty()) ImGui::EndDisabled();
+        if (exists) ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.3f, 1), "%s exists: saving replaces it", cname.c_str());
         ImGui::EndPopup();
     }
 

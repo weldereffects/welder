@@ -292,7 +292,7 @@ footer { margin-top: 20px; color: var(--muted); font-size: 13px; border-top: 1px
         <div class="gstep" aria-hidden="true"><div class="pipe"></div><div></div></div>
         <div class="gstep" role="listitem"><div class="gnode" style="background:#8c8c8c">Write1<small>W</small></div><p><span class="num">3</span>Press <kbd>W</kbd> and set its file, for example <code>shot_v001.####.exr</code>. Press <kbd>F5</kbd> to render all Writes, <kbd>F7</kbd> for the selected ones.</p></div>
       </div>
-      <p class="muted">Save with <kbd>Ctrl</kbd><kbd>S</kbd>. Comps are <code>.weld</code> files; <strong>File › Save Incremental</strong> (<kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd>) saves the next version: <code>shot_v001.weld</code> becomes <code>shot_v002.weld</code>, keeping the digits (an unversioned name gets <code>_v002</code>). If that version is already in the folder, it asks: overwrite it, or save as the next free number.</p>
+      <p class="muted">Save with <kbd>Ctrl</kbd><kbd>S</kbd>. Comps are <code>.weld</code> files; <strong>File › Save Incremental</strong> (<kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd>) saves the next version: <code>shot_v001.weld</code> becomes <code>shot_v002.weld</code>, keeping the digits (an unversioned name gets <code>_v002</code>). If that version is already in the folder, it asks: overwrite it, save as the next free number, or type the version yourself (<code>v002_tp</code> saves <code>shot_v002_tp.weld</code>; you are told if that name is taken too).</p>
 
       <h3>From the command line</h3>
 <!--os:win--><pre>bin\welder.exe render examples\demo.weld -f 1-24 -v

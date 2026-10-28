@@ -377,6 +377,7 @@ struct UiState {
     std::vector<std::pair<std::string, float>> curParts;
     FrameParts slowFrame;
     std::string versionClash, versionFree;  // Save Incremental: the next version exists (asks: overwrite it, or this free one)
+    char versionCustom[128] = {};           // ... or a version typed in ("v002_tp")
     std::string dropOpenComp;  // a comp to open (dropped, recent, File > Open), or kNewComp: done once unsaved changes are dealt with
     bool requestQuit = false;
     double lastPlayTime = 0;
