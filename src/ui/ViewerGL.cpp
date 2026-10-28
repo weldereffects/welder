@@ -91,8 +91,10 @@ in vec2 UV;
 in vec4 Color;
 uniform mat4 ProjMtx;
 out vec2 Frag_UV;
+out float Frag_A;
 void main() {
     Frag_UV = UV;
+    Frag_A = Color.a;  // (the image: 1; a paint preview's soft edge: less)
     gl_Position = ProjMtx * vec4(Position.xy, 0.0, 1.0);
 }
 )";
@@ -100,6 +102,7 @@ void main() {
 // The fragment shader: a header, the display function, then main().
 const char* kFSHead = R"(#version 330 core
 in vec2 Frag_UV;
+in float Frag_A;
 uniform sampler2D Texture;
 uniform float Gain;
 uniform float Gamma;
@@ -128,7 +131,7 @@ void main() {
     if (Gamma != 1.0) rgb = pow(max(rgb, vec3(0.0)), vec3(1.0 / Gamma));
     vec3 outc = clamp(OCIODisplay(vec4(rgb, 1.0)).rgb, 0.0, 1.0);
     if (Matte != 0) outc = mix(outc, vec3(1.0, 0.25, 0.25), clamp(c.a, 0.0, 1.0) * 0.5);  // M: alpha as a red overlay
-    Out_Color = vec4(outc, 1.0);
+    Out_Color = vec4(outc, Frag_A);
 }
 )";
 
@@ -309,6 +312,17 @@ void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, co
     texW = w;
     texH = h;
     failed();
+}
+
+void viewerBeginDisplay(ImDrawList* dl, unsigned int tex, const DisplayParams& d) {
+    g_params = d;
+    dl->AddCallback(bindDisplayProgram, nullptr);
+    dl->PushTexture((ImTextureID)(intptr_t)tex);
+}
+
+void viewerEndDisplay(ImDrawList* dl) {
+    dl->PopTexture();
+    dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }
 
 void viewerDrawImage(ImDrawList* dl, unsigned int tex, ImVec2 p0, ImVec2 p1, ImVec2 uv0, ImVec2 uv1,

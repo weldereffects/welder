@@ -10,6 +10,7 @@
 #include "core/Schema.h"
 #include "App.h"
 #include "nodes/Roto.h"
+#include "ViewerGL.h"
 #include "imgui.h"
 
 namespace strata::ui {
@@ -202,6 +203,10 @@ struct RotoState {
     roto::Pts drawPts;
     // Paint stroke being drawn and brush settings
     std::vector<roto::StrokePt> strokePts;
+    // a finished stroke, still previewed until the viewer's render has it (no gap, no flicker)
+    json pendingStroke;
+    uint64_t pendingSerial = 0;
+    double pendingT = 0;
     float brushColor[4] = {1, 1, 1, 1};
     float brushSize = 25, brushHardness = 0.2f, brushOpacity = 1;
     // new strokes' settings (the tool settings bar)
@@ -363,6 +368,13 @@ struct UiState {
     DopeSheetState dope;
     GraphState graph;
     RotoState roto;
+    // The active viewer's picture as drawn this frame (for previews made of its pixels: a clone stroke).
+    struct ViewerImage {
+        unsigned int tex = 0;
+        Box bounds;          // pixels (at scale) the texture covers
+        double scale = 1;
+        DisplayParams dp;
+    } viewerImage;
     PickerState picker;
     TrackerState tracker;
     PlanarState planar;

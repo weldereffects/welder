@@ -955,7 +955,7 @@ int main(int argc, char** argv) {
                         float x = 0, y = 0;
                         std::sscanf(arg.c_str(), "%f,%f", &x, &y);
                         tio.AddMousePosEvent(x, y);
-                    } else if (what == "drag") {
+                    } else if (what == "drag" || what == "hold") {  // hold: a drag that isn't let go (mid-stroke screenshots)
                         std::sscanf(arg.c_str(), "%f,%f,%f,%f", &drag[0], &drag[1], &drag[2], &drag[3]);
                         tio.AddMousePosEvent(drag[0], drag[1]);
                         dragging = true;
@@ -973,6 +973,11 @@ int main(int argc, char** argv) {
                     } else if (what == "rototool") {  // the active Roto's tool, by its toolbar name
                         Node* rn = app.node(ui.roto.node);
                         if (!rn || !rotoSetToolByName(app, ui, rn, arg)) std::printf("KEYS no roto tool %s\n", arg.c_str());
+                    } else if (what == "cloneoffset") {  // the clone's source offset (image pixels), as if Ctrl+clicked
+                        float dx = 0, dy = 0;
+                        std::sscanf(arg.c_str(), "%f,%f", &dx, &dy);
+                        ui.roto.cloneOffset = ImVec2(dx, dy);
+                        ui.roto.cloneOffsetSet = true;
                     } else if (what == "ptrack") {  // tracked paint: the Tracker new strokes follow
                         ui.roto.paintTrack = arg;
                     } else if (what == "menu") {  // a File menu action: open, save, saveas, saveinc
@@ -1032,12 +1037,12 @@ int main(int argc, char** argv) {
                     tio.AddMouseButtonEvent(0, true);
                 } else if (what == "click" && k == 4) {
                     tio.AddMouseButtonEvent(0, false);
-                } else if ((what == "drag" || what == "dragnode") && dragging) {
+                } else if ((what == "drag" || what == "dragnode" || what == "hold") && dragging) {
                     if (k == 2) tio.AddMouseButtonEvent(0, true);
                     else if (k > 2 && k < 10) {
                         const float u = (k - 2) / 7.0f;
                         tio.AddMousePosEvent(drag[0] + (drag[2] - drag[0]) * u, drag[1] + (drag[3] - drag[1]) * u);
-                    } else if (k == 10) {
+                    } else if (k == 10 && what != "hold") {
                         tio.AddMouseButtonEvent(0, false);
                         dragging = false;
                     }

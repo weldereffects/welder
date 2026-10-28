@@ -818,6 +818,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     if (!active) {
     } else if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
+        ui.viewerImage = {res.image && v.tex && !v.texBounds.empty() ? v.tex : 0u, v.texBounds, v.texScale, dp};
         drawRotoViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
     if (v.overlays) {

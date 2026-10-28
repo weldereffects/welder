@@ -383,6 +383,116 @@ const char* strokeTool(Tool t) {
     }
 }
 
+// The stroke being painted, as it will be saved (in image space, before tracked paint moves it into
+// a layer): the toolbar's settings with `r.strokePts`.
+json newStrokeJson(const RotoState& r, const json& items, double frame, bool named = true) {
+    json pts = json::array();
+    for (auto& p : r.strokePts) pts.push_back({std::round(p.x * 100) / 100, std::round(p.y * 100) / 100, p.pressure});
+    const char* tool = strokeTool(r.tool);
+    std::string base = toolName(r.tool);
+    json s = {{"name", named ? uniqueName(items, base) : base}, {"kind", "stroke"}, {"tool", tool}, {"points", pts},
+              {"size", r.brushSize}, {"hardness", r.brushHardness}, {"opacity", r.brushOpacity}, {"spacing", r.brushSpacing}};
+    if (r.tool == Tool::Brush) s["color"] = {r.brushColor[0], r.brushColor[1], r.brushColor[2], r.brushColor[3]};
+    if (r.tool == Tool::Clone) s["offset"] = {std::round(r.cloneOffset.x * 100) / 100, std::round(r.cloneOffset.y * 100) / 100};
+    if (r.tool == Tool::Clone || r.tool == Tool::Reveal) {  // where it takes its pixels from
+        const std::string src = r.tool == Tool::Clone ? r.cloneSourceInput : r.revealSourceInput;
+        if (src != (r.tool == Tool::Clone ? "bg" : "bg1")) s["source"] = src;
+        if (r.cloneTimeOffset != 0 || r.cloneTimeAbsolute) {
+            s["time_offset"] = r.cloneTimeOffset;
+            if (r.cloneTimeAbsolute) s["time_mode"] = "absolute";
+        }
+        if (r.tool == Tool::Clone && r.cloneRotate != 0) s["source_rotate"] = r.cloneRotate;
+        if (r.cloneAlignFlow && (r.cloneTimeOffset != 0 || r.cloneTimeAbsolute)) s["align"] = "flow";
+        if (r.tool == Tool::Clone && r.cloneScale != 1) s["source_scale"] = r.cloneScale;
+    }
+    if (r.tool == Tool::Blur || r.tool == Tool::Sharpen || r.tool == Tool::Smear || r.tool == Tool::Dodge || r.tool == Tool::Burn)
+        s["effect"] = r.brushEffect;
+    if (r.brushBuildUp) s["build_up"] = true;
+    if (r.paintGrain && (r.tool == Tool::Brush || r.tool == Tool::Blur)) s["grain"] = 1.0;
+    if (!r.pressureSize || r.pressureOpacity || r.pressureHardness)
+        s["pressure"] = {{"size", r.pressureSize}, {"opacity", r.pressureOpacity}, {"hardness", r.pressureHardness}};
+    if (r.paintSingleFrame || r.tool == Tool::Repair)  // (a repair is always for this frame: dust is)
+        s["life"] = {{"type", "single"}, {"start", std::round(frame)}};
+    return s;
+}
+
+// The live preview of a stroke being painted (the classic paint feedback): a mesh over the stroke
+// whose vertices carry the brush's coverage, worked out as the renderer does it (soft edge, spacing,
+// pressure, no dab pile-up). A clone shows the viewer's own pixels from its source - through the
+// viewer's display transform, so they match - and a brush its colour; tools whose result needs a
+// render (reveal, repair, blur, sharpen, smear, eraser) show where they act, lightly, until it lands.
+void drawStrokePreview(ImDrawList* dl, const ViewXf& xf, const UiState& ui, const json& s) {
+    const auto pts = roto::strokePoints(s, 0);
+    if (pts.empty() || xf.zoom <= 0) return;
+    const roto::Brush brush = roto::brushOf(s);
+    const double size = s.value("size", 25.0), opacity = std::clamp(s.value("opacity", 1.0), 0.0, 1.0);
+    const std::string tool = s.value("tool", std::string("paint"));
+    const double reach = size + 2;  // (pressure can double a dab)
+    double x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30;
+    for (auto& q : pts) x1 = std::min(x1, q.x), y1 = std::min(y1, q.y), x2 = std::max(x2, q.x), y2 = std::max(y2, q.y);
+    x1 -= reach, y1 -= reach, x2 += reach, y2 += reach;
+    // the coverage grid: a vertex every ~3 screen pixels (coarser for a huge stroke)
+    double g = xf.zoom / 3.0;
+    while ((x2 - x1) * (y2 - y1) * g * g > 90000) g *= 0.8;
+    const int gx1 = (int)std::floor(x1 * g), gy1 = (int)std::floor(y1 * g), gx2 = (int)std::ceil(x2 * g) + 1, gy2 = (int)std::ceil(y2 * g) + 1;
+    const int W = gx2 - gx1, H = gy2 - gy1;
+    if (W < 2 || H < 2) return;
+    std::vector<float> cov;
+    roto::rasterizeStroke(pts, g, brush, {gx1, gy1, gx2, gy2}, cov);
+    if ((int)cov.size() != W * H) return;
+    auto at = [&](int i, int j) { return cov[(size_t)j * W + i]; };
+
+    // what each vertex shows
+    const auto& vi = ui.viewerImage;
+    const bool textured = tool == "clone" && vi.tex && !vi.bounds.empty();
+    // clone: destination -> source (rotate / scale about the stroke's start, then the offset), as the renderer
+    double m00 = 1, m01 = 0, m10 = 0, m11 = 1, mtx = 0, mty = 0;
+    if (textured) {
+        double ox = 0, oy = 0;
+        if (s.contains("offset") && s["offset"].is_array() && s["offset"].size() == 2) ox = s["offset"][0].get<double>(), oy = s["offset"][1].get<double>();
+        const double rot = s.value("source_rotate", 0.0) * M_PI / 180.0, scl = std::max(1e-3, s.value("source_scale", 1.0));
+        const double c = std::cos(-rot) / scl, sn = std::sin(-rot) / scl;
+        m00 = c, m01 = -sn, m10 = sn, m11 = c;
+        mtx = pts[0].x - (m00 * pts[0].x + m01 * pts[0].y) - ox;
+        mty = pts[0].y - (m10 * pts[0].x + m11 * pts[0].y) - oy;
+    }
+    float cr = 1, cg = 1, cb = 1, ca = 0.3f;  // (what the tools without a picture here show)
+    if (tool == "paint" && s.contains("color") && s["color"].is_array() && s["color"].size() >= 4) {
+        cr = std::clamp(s["color"][0].get<float>(), 0.f, 1.f), cg = std::clamp(s["color"][1].get<float>(), 0.f, 1.f);
+        cb = std::clamp(s["color"][2].get<float>(), 0.f, 1.f), ca = std::clamp(s["color"][3].get<float>(), 0.f, 1.f);
+    } else if (tool == "burn") {
+        cr = cg = cb = 0, ca = 0.35f;
+    } else if (tool == "dodge") {
+        ca = 0.35f;
+    } else if (textured) {
+        ca = 1;
+    }
+    const ImVec2 white = ImGui::GetDrawListSharedData()->TexUvWhitePixel;
+    if (textured) viewerBeginDisplay(dl, vi.tex, vi.dp);
+    for (int j = 0; j + 1 < H; ++j)
+        for (int i = 0; i + 1 < W; ++i) {
+            const float c00 = at(i, j), c10 = at(i + 1, j), c11 = at(i + 1, j + 1), c01 = at(i, j + 1);
+            if (c00 <= 0 && c10 <= 0 && c11 <= 0 && c01 <= 0) continue;
+            dl->PrimReserve(6, 4);
+            const ImDrawIdx base = (ImDrawIdx)dl->_VtxCurrentIdx;
+            const int ci[4] = {i, i + 1, i + 1, i}, cj[4] = {j, j, j + 1, j + 1};
+            const float cv[4] = {c00, c10, c11, c01};
+            for (int k = 0; k < 4; ++k) {
+                const double ix = (gx1 + ci[k] + 0.5) / g, iy = (gy1 + cj[k] + 0.5) / g;  // image coordinates
+                ImVec2 uv = white;
+                if (textured) {
+                    const double sx = (m00 * ix + m01 * iy + mtx) * vi.scale, sy = (m10 * ix + m11 * iy + mty) * vi.scale;
+                    uv = ImVec2((float)((sx - vi.bounds.x1) / vi.bounds.width()), (float)((sy - vi.bounds.y1) / vi.bounds.height()));
+                }
+                const float a = std::clamp(cv[k] * (float)opacity * ca, 0.f, 1.f);
+                dl->PrimWriteVtx(xf.toScreen(ix, iy), uv, ImGui::ColorConvertFloat4ToU32(ImVec4(cr, cg, cb, a)));
+            }
+            dl->PrimWriteIdx(base), dl->PrimWriteIdx((ImDrawIdx)(base + 1)), dl->PrimWriteIdx((ImDrawIdx)(base + 2));
+            dl->PrimWriteIdx(base), dl->PrimWriteIdx((ImDrawIdx)(base + 2)), dl->PrimWriteIdx((ImDrawIdx)(base + 3));
+        }
+    if (textured) viewerEndDisplay(dl);
+}
+
 // Tracked paint: a layer that follows a Tracker (its match-move, as transform keys) or a
 // PlanarTracker (its plane, as matrix keys), relative to `ref` - so it is still at `ref`.
 // Null (with the reason in `why`) when the tracker has nothing to follow.
@@ -1128,17 +1238,14 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             }
         }
     }
+    // the stroke being painted, live; then, once let go, until the viewer's render has it
     if (r.drag == Drag::Paint && !r.strokePts.empty()) {
-        std::vector<roto::V2> line;
-        for (auto& p : r.strokePts) {
-            ImVec2 s = xf.toScreen(p.x, p.y);
-            line.push_back({s.x, s.y});
-        }
-        if (line.size() == 1) line.push_back({line[0].x + 0.5, line[0].y});
-        ImU32 c = r.tool == Tool::Brush ? IM_COL32((int)(std::clamp(r.brushColor[0], 0.f, 1.f) * 255), (int)(std::clamp(r.brushColor[1], 0.f, 1.f) * 255),
-                                                   (int)(std::clamp(r.brushColor[2], 0.f, 1.f) * 255), 110)
-                                        : IM_COL32(255, 255, 255, 70);
-        polyline(dl, line, c, false, std::max(1.0f, r.brushSize * xf.zoom));
+        drawStrokePreview(dl, xf, ui, newStrokeJson(r, items, frame, false));
+    } else if (!r.pendingStroke.is_null()) {
+        const ViewResult& res = app.result();
+        const bool landed = res.serial != r.pendingSerial && !app.rendering() && !app.editsPending();
+        if (landed || ImGui::GetTime() - r.pendingT > 5.0) r.pendingStroke = json();
+        else drawStrokePreview(dl, xf, ui, r.pendingStroke);
     }
 
     // ---- mouse press
@@ -1639,33 +1746,10 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                     for (int pi = 0; pi < (int)ds[si].ctrlS.size(); ++pi) r.sel.insert({si, pi});
             }
         } else if (r.drag == Drag::Paint && !r.strokePts.empty()) {
-            json pts = json::array();
-            for (auto& p : r.strokePts) pts.push_back({std::round(p.x * 100) / 100, std::round(p.y * 100) / 100, p.pressure});
-            const char* tool = strokeTool(r.tool);
-            std::string base = toolName(r.tool);
-            json s = {{"name", uniqueName(items, base)}, {"kind", "stroke"}, {"tool", tool}, {"points", pts},
-                      {"size", r.brushSize}, {"hardness", r.brushHardness}, {"opacity", r.brushOpacity}, {"spacing", r.brushSpacing}};
-            if (r.tool == Tool::Brush) s["color"] = {r.brushColor[0], r.brushColor[1], r.brushColor[2], r.brushColor[3]};
-            if (r.tool == Tool::Clone) s["offset"] = {std::round(r.cloneOffset.x * 100) / 100, std::round(r.cloneOffset.y * 100) / 100};
-            if (r.tool == Tool::Clone || r.tool == Tool::Reveal) {  // where it takes its pixels from
-                const std::string src = r.tool == Tool::Clone ? r.cloneSourceInput : r.revealSourceInput;
-                if (src != (r.tool == Tool::Clone ? "bg" : "bg1")) s["source"] = src;
-                if (r.cloneTimeOffset != 0 || r.cloneTimeAbsolute) {
-                    s["time_offset"] = r.cloneTimeOffset;
-                    if (r.cloneTimeAbsolute) s["time_mode"] = "absolute";
-                }
-                if (r.tool == Tool::Clone && r.cloneRotate != 0) s["source_rotate"] = r.cloneRotate;
-                if (r.cloneAlignFlow && (r.cloneTimeOffset != 0 || r.cloneTimeAbsolute)) s["align"] = "flow";
-                if (r.tool == Tool::Clone && r.cloneScale != 1) s["source_scale"] = r.cloneScale;
-            }
-            if (r.tool == Tool::Blur || r.tool == Tool::Sharpen || r.tool == Tool::Smear || r.tool == Tool::Dodge || r.tool == Tool::Burn)
-                s["effect"] = r.brushEffect;
-            if (r.brushBuildUp) s["build_up"] = true;
-            if (r.paintGrain && (r.tool == Tool::Brush || r.tool == Tool::Blur)) s["grain"] = 1.0;
-            if (!r.pressureSize || r.pressureOpacity || r.pressureHardness)
-                s["pressure"] = {{"size", r.pressureSize}, {"opacity", r.pressureOpacity}, {"hardness", r.pressureHardness}};
-            if (r.paintSingleFrame || r.tool == Tool::Repair)  // (a repair is always for this frame: dust is)
-                s["life"] = {{"type", "single"}, {"start", std::round(frame)}};
+            json s = newStrokeJson(r, items, frame);
+            r.pendingStroke = s;  // (shown until the render has it)
+            r.pendingSerial = app.result().serial;
+            r.pendingT = ImGui::GetTime();
             // tracked paint: into the layer that follows the track, in its space (so it moves with it)
             json newLayer;
             Node* tracker = r.paintTrack.empty() ? nullptr : app.node(r.paintTrack);

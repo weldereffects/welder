@@ -32,4 +32,9 @@ void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, co
 void viewerDrawImage(ImDrawList* dl, unsigned int tex, ImVec2 p0, ImVec2 p1, ImVec2 uv0, ImVec2 uv1,
                      const DisplayParams& d);
 
+// Draw primitives with `tex` through the display transform (vertex alpha is the coverage): the
+// calls between Begin and End use it. For previews made of the viewer's own pixels (a clone stroke).
+void viewerBeginDisplay(ImDrawList* dl, unsigned int tex, const DisplayParams& d);
+void viewerEndDisplay(ImDrawList* dl);
+
 }  // namespace strata::ui
