@@ -114,7 +114,7 @@ and `invert_mask`.
 | Radial | – | `center`, `radius`, `softness`, `color`, `format` |
 | Noise | bg (optional: its format; `mix` blends over it) | `type` (`perlin`, `value`, `blocky`, `turbulence`, `ridged`, `hybrid`, `blistered`, `gas`, `wavy`, `electro`, `plasma`, `cells f1`, `cells f2`, `cell edges`, `voronoi`, `crackle`, `dents`, `dots`, `random`), `seed`; fractal: `octaves` (4, fractional), `lacunarity` (2), `gain` (0.5), `nyquist` (true: drop octaves finer than 2 px), `distortion` (domain warp, in noise sizes), `distortion_scale`; per type: `jitter`, `metric` (`euclidean`, `manhattan`, `chebyshev`), `sharpness`, `waves`, `density`; placement: `size` (350 px), `scale` [x, y], `rotate`, `translate`, `center`; animation: `zoffset` (evolution), `speed` (evolution per frame), `drift` [x, y] px per frame, `loop` (frames per seamless cycle, with a speed); output: `low` / `high` (remap), `clip`, `brightness`, `contrast`, `gamma`, `invert`, `color_mode` (`grey`, `rgb`: three noises), `color0` / `color1` (low / high colour), `alpha` (`1`, `noise` (premultiplied), `colour`, `0`), `mix`, `format` |
 | Ramp | bg (optional) | `p0`, `p1`, `color0` (at p0, default transparent black), `color` (at p1), `type` (`linear`, `smooth0`, `smooth1`, `smooth`), `shape` (`linear`, `radial`, `angular`, `diamond`), `repeat` (`none`, `repeat`, `mirror`), `format` |
-| Roto | `bg` (optional) | `shapes` (below), `output` (`alpha`, `rgba`, `rgb`; default `alpha`), `premultiply`, `motionblur` (samples, 0 = off), `shutter` (frames, 0.5), `shutter_offset` (`centred`, `start`, `end`) |
+| Roto | `bg` (optional) | `shapes` (below), `output` (`alpha`, `rgba`, `rgb`; default `alpha`), `premultiply`, `clip_to` (`no clip`, `bbox`, `format`, `union bbox`, `intersection bbox`), `replace` (the output channels start empty), `motionblur` (samples, 0 = off), `shutter` (frames, 0.5), `shutter_offset` (`centred`, `start`, `end`) |
 | RotoPaint | `bg`, `bg1` (reveal source) | as Roto, default output `rgba`; `shapes` may also hold paint strokes |
 
 Roto `shapes` are drawn first to last (the last is on top). A shape:
@@ -143,6 +143,14 @@ Roto `shapes` are drawn first to last (the last is on top). A shape:
   like other params.
 * `life.type` is `all`, `single` (frame `start`), `range`, `to` (up to `end`)
   or `from` (from `start`).
+* `"closed": false` makes an open spline: the curve drawn as a line `width`
+  pixels wide (default 10), with `feather` as a soft edge beyond it.
+* `feather_on` (default true) switches the shape and point feathers off;
+  `feather_type` is the falloff's curve: `linear`, `smooth` (the default),
+  `smooth0` / `smooth1` (eased at the outer / inner end only).
+* `motionblur` (default true): false keeps the shape sharp while the node's
+  motion blur blurs the others. `locked` (default false) keeps it from being
+  picked or edited in the viewer (a locked layer locks what's in it).
 
 A paint stroke (RotoPaint):
 

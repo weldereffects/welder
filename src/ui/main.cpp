@@ -948,6 +948,7 @@ int main(int argc, char** argv) {
                         else if (kk == "backspace") held = ImGuiKey_Backspace;
                         else if (kk == "end") held = ImGuiKey_End;
                         else if (kk == "enter") held = ImGuiKey_Enter;
+                        else if (kk == "delete") held = ImGuiKey_Delete;
                         if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
                         if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
                     } else if (what == "click") {
@@ -960,6 +961,15 @@ int main(int argc, char** argv) {
                         dragging = true;
                     } else if (what == "type") {  // text typed into the focused field
                         tio.AddInputCharactersUTF8(arg.c_str());
+                    } else if (what == "shapes") {  // a Roto's items: name kind closed points (and flags)
+                        if (Node* rn = app.node(arg))
+                            for (auto& it : rn->params.data.value("shapes", json::array())) {
+                                const size_t np = it.contains("points") ? it["points"].size() : it.contains("anim") && !it["anim"].empty() ? it["anim"][0][1].size() : 0;
+                                std::printf("KEYS shape %s %s closed %d points %zu width %s locked %d parent %s\n", it.value("name", std::string("?")).c_str(),
+                                            it.value("kind", std::string("?")).c_str(), (int)it.value("closed", true), np,
+                                            it.contains("width") ? it["width"].dump().c_str() : "-", (int)it.value("locked", false),
+                                            it.value("parent", std::string("-")).c_str());
+                            }
                     } else if (what == "menu") {  // a File menu action: open, save, saveas, saveinc
                         ui.menuAction = arg;
                     } else if (what == "script") {  // the script's path, and the version prompt

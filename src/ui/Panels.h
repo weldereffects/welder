@@ -171,8 +171,29 @@ struct GraphState {
 
 // Roto / RotoPaint tools in the viewer (active while such a node's properties are open).
 struct RotoState {
-    enum class Tool { Select, Bezier, BSpline, Ellipse, Rectangle, Brush, Eraser, Clone, Reveal, Blur } tool = Tool::Bezier;
+    // The viewer's roto tools, in groups as on the toolbar (each group remembers its last tool):
+    // select (Q cycles), point tools, shapes (V cycles), and RotoPaint's brushes.
+    enum class Tool {
+        Select, SelectSplines, SelectPoints, SelectFeather,
+        AddPoints, RemovePoints, CuspPoints, SmoothPoints, OpenClose, RemoveFeather,
+        Bezier, CuspedBezier, BSpline, Ellipse, Rectangle, CuspedRectangle, OpenSpline,
+        Brush, Eraser, Clone, Reveal, Blur
+    } tool = Tool::Bezier;
+    Tool lastOf[6] = {Tool::Select, Tool::AddPoints, Tool::Bezier, Tool::Brush, Tool::Clone, Tool::Blur};  // per toolbar group
     bool autokey = true;                // edits key the shape at the current frame
+    // the tool settings bar: new shapes (draw tools), and how the viewer shows them (select tools)
+    float newColor[4] = {1, 1, 1, 1};
+    std::string newBlend = "over", newLife = "all";
+    float newOpacity = 1, newWidth = 10;  // (width: open splines)
+    bool onion = false;
+    float onionAmount = 0.5f;
+    int onionFrames = 3;
+    int showPoints = 0;                 // 0 on selection, 1 always
+    bool featherLink = true;            // moving a point takes its feather point with it
+    bool labelPoints = false, hideCurves = false, hidePoints = false, hideJack = false, hideJackOnMove = false;
+    std::set<std::pair<int, int>> fsel; // selected feather points (Select Feather Points)
+    int flyGroup = -1;                  // toolbar: the group being pressed (held: its menu opens)
+    double flyPress = 0;
     std::string node;                   // node the selection belongs to
     std::set<std::pair<int, int>> sel;  // selected (item, point)
     int curShape = -1;                  // item shown in the properties panel
@@ -187,7 +208,7 @@ struct RotoState {
     bool cloneSourceSet = false, cloneOffsetSet = false;
     ImVec2 cloneSource, cloneOffset;    // image space; offset = destination - source
     // Mouse drags
-    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize } drag = Drag::None;
+    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize, FeatherPts } drag = Drag::None;
     ImVec2 dragStartImg, dragStartScreen;
     std::map<int, roto::Pts> orig;      // shape -> control points when the drag started
     std::map<int, json> origStroke;     // stroke -> points when the drag started
@@ -515,7 +536,12 @@ void drawTrackerPanel(App& app, UiState& ui, Node* n);
 std::vector<std::pair<double, json>> trackerMatchMove(Node* tracker, double ref);
 void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
 bool rotoHotkeys(App& app, UiState& ui);
+// The viewer's roto tool settings row (new shapes' colour / blend / opacity / lifetime, onion skin,
+// what's shown, lock / keys for the selection), under the viewer toolbar while a Roto is open.
+void drawRotoToolbar(App& app, UiState& ui);
 void drawRotoPanel(App& app, UiState& ui, Node* n);
+// Roto / RotoPaint's other tabs: 1 Transform, 2 Motion Blur, 3 Shape, 4 Lifetime, 5 Tracking.
+void drawRotoTab(App& app, UiState& ui, Node* n, int section);
 void drawSplineWarpSwitch(App& app, UiState& ui, Node* n);  // SplineWarp: edit the A or the B curves
 // Shuffle's channel-routing knobs (Properties).
 void drawShufflePanel(App& app, UiState& ui, Node* n);

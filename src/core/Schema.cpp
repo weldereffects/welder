@@ -801,7 +801,7 @@ std::vector<NodeDef> build() {
                   C("method", "method", "max", {"max", "plus", "average", "screen"})},
                  "Earlier frames trail behind the current one, each weaker by the falloff."});
     // ---------------------------------------------------------------- Draw
-    d.push_back({"Roto", "Draw", {}, "Bezier, B-spline, ellipse and rectangle shapes, drawn in the viewer."});
+    d.push_back({"Roto", "Draw", {}, "Bezier, B-spline, ellipse, rectangle and open-spline shapes, drawn in the viewer; layers, keys, feathers, motion blur."});
     d.push_back({"SplineWarp", "Transform",
                  {F("mix", "mix", 1, 0, 1, "0: no warp, 1: the A curves all the way onto the B curves"),
                   B("invert", "invert (B onto A)", false),

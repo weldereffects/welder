@@ -3142,7 +3142,7 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
         shown.insert("shapes");
     } else if (n->type == "Roto" || n->type == "RotoPaint") {
         drawRotoPanel(app, ui, n);
-        for (const char* k : {"shapes", "output", "premultiply", "motionblur", "shutter", "shutter_offset"}) shown.insert(k);
+        for (const char* k : {"shapes", "output", "premultiply", "motionblur", "shutter", "shutter_offset", "clip_to", "replace"}) shown.insert(k);
     } else if (n->type == "Shuffle") {
         drawShufflePanel(app, ui, n);
         for (const char* k : {"mapping", "in1", "in2", "in1_input", "in2_input", "out1", "out2", "new_layers"}) shown.insert(k);
@@ -3265,6 +3265,14 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
         auto tabFlags = [&](const std::string& t) {
             return forceTab && t == forceTab && ImGui::GetFrameCount() < 30 ? ImGuiTabItemFlags_SetSelected : 0;
         };
+        if (n->type == "Roto" || n->type == "RotoPaint") {  // the classic roto tabs
+            static const std::pair<const char*, int> kRotoTabs[] = {{"Transform", 1}, {"Motion Blur", 2}, {"Shape", 3}, {"Lifetime", 4}, {"Tracking", 5}};
+            for (auto& [label, sec] : kRotoTabs)
+                if (ImGui::BeginTabItem(label, nullptr, tabFlags(label))) {
+                    drawRotoTab(app, ui, n, sec);
+                    ImGui::EndTabItem();
+                }
+        }
         for (auto& t : extraTabs)
             if (ImGui::BeginTabItem(t.c_str(), nullptr, tabFlags(t))) {
                 drawKnobs(c, *def, t);

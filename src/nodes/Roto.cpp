@@ -512,15 +512,18 @@ std::vector<int> stepsOf(const Pts& pts, bool closed, double scale) {
     return st;
 }
 
-double smooth01(double t, double falloff) {
+// The feather's falloff curve, 0 at the outer edge to 1 inside: linear; smooth (eased at both
+// ends); smooth0 / smooth1 (eased at the outer / inner end only). Then raised to `falloff`.
+double smooth01(double t, double falloff, int type = kFeatherSmooth) {
     t = std::clamp(t, 0.0, 1.0);
-    double s = t * t * (3 - 2 * t);
+    double s = type == kFeatherLinear ? t : type == kFeatherSmooth0 ? t * t : type == kFeatherSmooth1 ? 1 - (1 - t) * (1 - t)
+                                                                                                      : t * t * (3 - 2 * t);
     return falloff != 1.0 && falloff > 0 ? std::pow(s, falloff) : s;
 }
 
 // Triangle with per-vertex alpha, max-composited into cov.
 void rasterTriangle(const V2& p0, const V2& p1, const V2& p2, double a0, double a1, double a2, const Region& r,
-                    double falloff, std::vector<float>& cov) {
+                    double falloff, std::vector<float>& cov, int type) {
     double area = (p1.x - p0.x) * (p2.y - p0.y) - (p2.x - p0.x) * (p1.y - p0.y);
     if (std::fabs(area) < 1e-9) return;
     int x1 = std::max(r.x1, (int)std::floor(std::min({p0.x, p1.x, p2.x})));
@@ -536,7 +539,7 @@ void rasterTriangle(const V2& p0, const V2& p1, const V2& p2, double a0, double 
             double w1 = ((p2.x - cx) * (p0.y - cy) - (p0.x - cx) * (p2.y - cy)) / area;
             double w2 = 1 - w0 - w1;
             if (w0 < -1e-9 || w1 < -1e-9 || w2 < -1e-9) continue;
-            float v = (float)smooth01(w0 * a0 + w1 * a1 + w2 * a2, falloff);
+            float v = (float)smooth01(w0 * a0 + w1 * a1 + w2 * a2, falloff, type);
             float& o = cov[(size_t)(y - r.y1) * W + (x - r.x1)];
             o = std::max(o, v);
         }
@@ -626,7 +629,7 @@ Pts rectangle(double x1, double y1, double x2, double y2) {
 
 // ------------------------------------------------------------------ rasterising
 
-void rasterize(const std::vector<V2>& poly, const Region& r, double feather, double falloff, std::vector<float>& cov) {
+void rasterize(const std::vector<V2>& poly, const Region& r, double feather, double falloff, std::vector<float>& cov, int type) {
     const int W = r.x2 - r.x1, H = r.y2 - r.y1;
     cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
     const size_t n = poly.size();
@@ -685,18 +688,19 @@ void rasterize(const std::vector<V2>& poly, const Region& r, double feather, dou
             const double sd = inside ? md : -md;  // signed distance to the edge, positive inside
             double a;
             if (f == 0.0) a = std::clamp(sd + 0.5, 0.0, 1.0);
-            else if (f > 0) a = smooth01((sd + f) / f, falloff);  // soft edge outside the shape
-            else a = smooth01(sd / -f, falloff);                  // soft edge inside the shape
+            else if (f > 0) a = smooth01((sd + f) / f, falloff, type);  // soft edge outside the shape
+            else a = smooth01(sd / -f, falloff, type);                  // soft edge inside the shape
             out[x - r.x1] = (float)a;
         }
     }
 }
 
-void rasterizeShape(const Pts& curve, double scale, const Region& r, double feather, double falloff, std::vector<float>& cov) {
+void rasterizeShape(const Pts& curve, double scale, const Region& r, double feather, double falloff, std::vector<float>& cov,
+                    int type) {
     bool perPoint = false;
     for (auto& p : curve) perPoint = perPoint || p.fx != 0 || p.fy != 0;
     if (!perPoint) {
-        rasterize(flatten(curve, true, scale), r, feather, falloff, cov);
+        rasterize(flatten(curve, true, scale), r, feather, falloff, cov, type);
         return;
     }
     // Per-point feather: the feather curve is the curve moved by each point's
@@ -715,8 +719,8 @@ void rasterizeShape(const Pts& curve, double scale, const Region& r, double feat
     std::vector<V2> mp = flattenWith(curve, true, scale, st, &segOf, &tOf);
     std::vector<V2> fp = flattenWith(fc, true, scale, st, nullptr, nullptr);
     std::vector<float> covMain, covF;
-    rasterize(mp, r, feather, falloff, covMain);
-    rasterize(fp, r, 0, 1, covF);
+    rasterize(mp, r, feather, falloff, covMain, type);
+    rasterize(fp, r, 0, 1, covF, type);
     cov.resize(covMain.size());
     for (size_t i = 0; i < cov.size(); ++i) cov[i] = std::min(covMain[i], covF[i]);
     // Which way each point's feather goes.
@@ -738,8 +742,47 @@ void rasterizeShape(const Pts& curve, double scale, const Region& r, double feat
         // Skip slivers where the feather hasn't moved (nothing to ramp).
         if (std::hypot(mp[k].x - fp[k].x, mp[k].y - fp[k].y) < 0.05 && std::hypot(mp[k2].x - fp[k2].x, mp[k2].y - fp[k2].y) < 0.05)
             continue;
-        rasterTriangle(mp[k], mp[k2], fp[k2], a0, a1, 1 - a1, r, falloff, cov);
-        rasterTriangle(mp[k], fp[k2], fp[k], a0, 1 - a1, 1 - a0, r, falloff, cov);
+        rasterTriangle(mp[k], mp[k2], fp[k2], a0, a1, 1 - a1, r, falloff, cov, type);
+        rasterTriangle(mp[k], fp[k2], fp[k], a0, 1 - a1, 1 - a0, r, falloff, cov, type);
+    }
+}
+
+int featherType(const std::string& name) {
+    if (name == "linear") return kFeatherLinear;
+    if (name == "smooth0") return kFeatherSmooth0;
+    if (name == "smooth1") return kFeatherSmooth1;
+    return kFeatherSmooth;
+}
+
+void rasterizeOpen(const Pts& curve, double scale, const Region& r, double width, double feather, double falloff, std::vector<float>& cov,
+                   int type) {
+    const int W = r.x2 - r.x1, H = r.y2 - r.y1;
+    cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
+    if (W <= 0 || H <= 0 || curve.size() < 2) return;
+    const std::vector<V2> line = flatten(curve, false, scale);
+    const double half = std::max(0.25, width * scale * 0.5), f = std::max(0.0, feather * scale);
+    const double reach = half + (f > 0.5 ? f : 1.0);
+    // max of the coverage of each segment (a round-capped capsule), pixel by pixel near it
+    for (size_t k = 0; k + 1 < line.size(); ++k) {
+        const V2 a = line[k], b = line[k + 1];
+        const double dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+        const int x1 = std::max(r.x1, (int)std::floor(std::min(a.x, b.x) - reach)), x2 = std::min(r.x2, (int)std::ceil(std::max(a.x, b.x) + reach) + 1);
+        const int y1 = std::max(r.y1, (int)std::floor(std::min(a.y, b.y) - reach)), y2 = std::min(r.y2, (int)std::ceil(std::max(a.y, b.y) + reach) + 1);
+        for (int y = y1; y < y2; ++y) {
+            const double cy = y + 0.5;
+            float* out = &cov[(size_t)(y - r.y1) * W];
+            for (int x = x1; x < x2; ++x) {
+                const double cx = x + 0.5;
+                double t = len2 > 0 ? ((cx - a.x) * dx + (cy - a.y) * dy) / len2 : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                const double d = std::hypot(a.x + t * dx - cx, a.y + t * dy - cy);
+                double v;
+                if (f > 0.5) v = d <= half ? 1.0 : smooth01((half + f - d) / f, falloff, type);
+                else v = std::clamp(half + 0.5 - d, 0.0, 1.0);
+                float& o = out[x - r.x1];
+                o = std::max(o, (float)v);
+            }
+        }
     }
 }
 
@@ -876,7 +919,7 @@ public:
                                     (int)std::ceil((p.x + rad) * sc), (int)std::ceil((p.y + rad) * sc)));
                 continue;
             }
-            if (!s.value("closed", true)) continue;
+            const bool open = !s.value("closed", true);
             if (s.value("invert", false)) {
                 b = b.unite(format(e, frame).box());
                 continue;
@@ -884,7 +927,7 @@ public:
             double x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30;
             for (double t : times) {
                 Pts c = roto::curveAt(s, t, roto::parentTransformAt(items(), s, t));
-                for (auto& p : roto::flatten(c, true, sc)) {
+                for (auto& p : roto::flatten(c, !open, sc)) {
                     x1 = std::min(x1, p.x);
                     y1 = std::min(y1, p.y);
                     x2 = std::max(x2, p.x);
@@ -898,11 +941,27 @@ public:
                 }
             }
             if (x1 > x2) continue;
-            double pad = std::max(0.0, params::evalScalar(s.value("feather", json(0.0)), frame, 0.0)) * sc + 2;
+            double pad = (s.value("feather_on", true) ? std::max(0.0, params::evalScalar(s.value("feather", json(0.0)), frame, 0.0)) : 0.0) * sc + 2;
+            if (open) pad += params::evalScalar(s.value("width", json(10.0)), frame, 10.0) * 0.5 * sc;
             b = b.unite(Box((int)std::floor(x1 - pad), (int)std::floor(y1 - pad), (int)std::ceil(x2 + pad),
                             (int)std::ceil(y2 + pad)));
         }
-        return b;
+        return clipBox(e, frame, b, input(0) ? e.dod(input(0), frame) : Box());
+    }
+
+    // "clip to": what the output is kept within. no clip / union bbox: everything; bbox: the input's
+    // bbox; format: the format; intersection bbox: where the input's bbox and the shapes' meet.
+    std::optional<Box> clipRegion(Engine& e, double frame, const Box& inBox, const Box& shapes) {
+        const std::string c = params.str("clip_to", "no clip");
+        if (c == "bbox") return inBox;
+        if (c == "format") return format(e, frame).box();
+        if (c == "intersection bbox") return inBox.intersect(shapes);
+        return std::nullopt;
+    }
+    Box clipBox(Engine& e, double frame, const Box& all, const Box& inBox) {
+        if (params.str("clip_to", "no clip") == "no clip" || params.str("clip_to", "no clip") == "union bbox") return all;
+        auto c = clipRegion(e, frame, inBox, all);
+        return c ? all.intersect(*c) : all;
     }
 
     // Extra background needed around a region: clone sources and blur brushes.
@@ -939,6 +998,13 @@ public:
             std::vector<float> zero(out.channels.size(), 0.0f);
             out.fill(zero.data());
         }
+        if (params.flag("replace", false))  // the output channels start empty: only the shapes are in them
+            for (const auto& o : outChannels())
+                if (int k = out.ch(o); k >= 0)
+                    for (int y = R.y1; y < R.y2; ++y) {
+                        float* p = out.row(y);
+                        for (int x = 0; x < R.width(); ++x) p[(size_t)x * out.nch() + k] = 0.0f;
+                    }
         auto times = sampleTimes(a.frame);
         bool anyMoving = false;
         for (auto& s : items()) anyMoving = anyMoving || (!roto::isStroke(s) && !roto::isLayer(s));
@@ -956,6 +1022,28 @@ public:
                 for (size_t i = 0; i < acc.size(); ++i) acc[i] += tmp.data[i];
             }
             for (size_t i = 0; i < acc.size(); ++i) out.data[i] = (float)(acc[i] / times.size());
+        }
+        // clip to: outside it the output channels are what came in
+        const std::string clip = params.str("clip_to", "no clip");
+        if (clip != "no clip" && clip != "union bbox") {
+            const Box inBox = input(0) ? a.engine.dod(input(0), a.frame) : Box();
+            const Box all = dod(a.engine, a.frame);
+            if (auto cb = clipRegion(a.engine, a.frame, inBox, all)) {
+                const int nch = out.nch(), W = R.width();
+                std::vector<int> ks;
+                for (const auto& o : outChannels())
+                    if (out.ch(o) >= 0) ks.push_back(out.ch(o));
+                for (int y = R.y1; y < R.y2; ++y) {
+                    float* p = out.row(y);
+                    for (int x = 0; x < W; ++x, p += nch) {
+                        if (cb->contains(R.x1 + x, y)) continue;
+                        for (int k : ks) {
+                            const int bc = bg ? bg->ch(out.channels[k]) : -1;
+                            p[k] = bc >= 0 && bg->bounds.contains(R.x1 + x, y) ? bg->at(R.x1 + x, y, bc) : 0.0f;
+                        }
+                    }
+                }
+            }
         }
         const int iA = out.ch("A");
         const auto outs = outChannels();
@@ -998,14 +1086,23 @@ private:
                 paintStroke(a, img, bg, bg1, s, opacity, col, outIdx);
                 continue;
             }
-            if (!s.value("closed", true)) continue;
-            Pts curve = roto::curveAt(s, t, roto::parentTransformAt(items(), s, t));
-            if (curve.size() < 3) continue;
-            const double feather = params::evalScalar(s.value("feather", json(0.0)), a.frame, 0.0) * sc;
+            const bool open = !s.value("closed", true);
+            const double ts = s.value("motionblur", true) ? t : a.frame;  // a shape with its motion blur off: as on the frame
+            Pts curve = roto::curveAt(s, ts, roto::parentTransformAt(items(), s, ts));
+            if (curve.size() < (open ? 2u : 3u)) continue;
+            const bool featherOn = s.value("feather_on", true);
+            const double feather = featherOn ? params::evalScalar(s.value("feather", json(0.0)), a.frame, 0.0) * sc : 0.0;
+            if (!featherOn)
+                for (auto& p : curve) p.fx = p.fy = 0;
             const double falloff = params::evalScalar(s.value("falloff", json(1.0)), a.frame, 1.0);
+            const int ftype = roto::featherType(s.value("feather_type", std::string("smooth")));
             const bool invert = s.value("invert", false);
             const std::string blend = s.value("blend", std::string("over"));
-            roto::rasterizeShape(curve, sc, {R.x1, R.y1, R.x2, R.y2}, feather, falloff, cov);
+            if (open)
+                roto::rasterizeOpen(curve, sc, {R.x1, R.y1, R.x2, R.y2}, params::evalScalar(s.value("width", json(10.0)), a.frame, 10.0),
+                                    feather / std::max(1e-9, sc), falloff, cov, ftype);
+            else
+                roto::rasterizeShape(curve, sc, {R.x1, R.y1, R.x2, R.y2}, feather, falloff, cov, ftype);
             for (int y = R.y1; y < R.y2; ++y) {
                 float* p = img.row(y);
                 const float* c = &cov[(size_t)(y - R.y1) * W];

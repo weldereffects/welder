@@ -10,7 +10,10 @@
 //    "points": [[x, y, lx, ly, rx, ry, fx, fy], ...],          // not animated
 //    "anim": [[frame, [[x, y, lx, ly, rx, ry, fx, fy], ...]], ...],  // shape keys
 //    "transform": {"translate": [x, y], "rotate": deg, "scale": [sx, sy], "center": [x, y]},
-//    "life": {"type": "all" | "single" | "range" | "to" | "from", "start": f, "end": f}}
+//    "life": {"type": "all" | "single" | "range" | "to" | "from", "start": f, "end": f},
+//    "feather_on": true, "feather_type": "linear" | "smooth" | "smooth0" | "smooth1",
+//    "motionblur": true (false: sharp while the others blur), "locked": false (viewer only),
+//    "width": 10 (an open spline: "closed": false draws the curve as a line this wide)}
 // x, y are full-resolution pixels (origin bottom-left, y up); l / r are the
 // incoming / outgoing tangent handles and f the feather point, all relative to
 // the point. For B-splines x, y are control points and the tangents are unused.
@@ -143,12 +146,21 @@ Pts rectangle(double x1, double y1, double x2, double y2);
 struct Region {
     int x1, y1, x2, y2;
 };
+// The feather's falloff curve (a shape's "feather_type"): linear, smooth (the default), smooth0 /
+// smooth1 (eased at the outer / inner end only).
+enum { kFeatherLinear = 0, kFeatherSmooth = 1, kFeatherSmooth0 = 2, kFeatherSmooth1 = 3 };
+int featherType(const std::string& name);
 // A closed polygon (pixel coordinates), anti-aliased, with an outward
 // (feather > 0) or inward (< 0) soft edge in pixels.
-void rasterize(const std::vector<V2>& poly, const Region& region, double feather, double falloff, std::vector<float>& cov);
+void rasterize(const std::vector<V2>& poly, const Region& region, double feather, double falloff, std::vector<float>& cov,
+               int type = kFeatherSmooth);
 // A whole shape curve at `scale`: shape feather plus per-point feather.
 void rasterizeShape(const Pts& curve, double scale, const Region& region, double feather, double falloff,
-                    std::vector<float>& cov);
+                    std::vector<float>& cov, int type = kFeatherSmooth);
+// An open spline: the curve drawn as a line `width` pixels wide (full resolution) with a soft
+// edge `feather` pixels beyond it.
+void rasterizeOpen(const Pts& curve, double scale, const Region& region, double width, double feather, double falloff,
+                   std::vector<float>& cov, int type = kFeatherSmooth);
 
 // Paint strokes.
 struct StrokePt {

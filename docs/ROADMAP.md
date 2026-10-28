@@ -21,6 +21,7 @@
 - [x] Paste nodes copied in another .nk app (its clipboard format); groups as real nodes (Ctrl+G / Ctrl+Alt+G / Ctrl+Enter, own knobs), gizmos (.gizmo files and groups saved as .sgizmo), backdrops and sticky notes
 - [x] OpenColorIO 2.5 + ACES 2.0: project working space, Read/Write colour spaces, OCIO nodes (ColorSpace, Display, Look, File, CDL), GPU viewer transform, Log2Lin, .nk colour import
 - [x] Roto / RotoPaint: Bezier, B-spline, ellipse, rectangle; shape and per-point feather; shape keys; transforms; lifetimes; motion blur; paint, eraser, clone, reveal and blur strokes; .nk import
+- [x] Roto parity with the classic toolset: grouped viewer tools (select all / splines / points / feather points; add / remove / cusp / smooth points, open / close, remove feather; Bezier, cusped Bezier, B-spline, ellipse, rectangle, cusped rectangle, open spline), the tool settings bar (new-shape colour / blend / opacity / lifetime, feather link, lock, labels, hide curves / points / jack, onion skin), tabs (Roto, Transform, Motion Blur, Shape, Lifetime, Tracking), the curves table, clip to, replace, feather on / types, per-shape motion blur, locked shapes
 - [ ] RotoPaint next: dodge / burn / smear / sharpen brushes, pen pressure, layers with their own transforms, tracking data on shapes
 - [x] Expressions: a safe subset of the classic language on any knob (= in the properties), cache-aware, renamed with their nodes
 - [x] Copy nodes from Welder in the .nk clipboard format, and export whole comps as .nk (`welder nk`)

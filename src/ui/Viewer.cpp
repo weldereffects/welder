@@ -600,6 +600,10 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ImGui::Spacing();
         drawTrackerToolbar(app, ui);
     }
+    if (active && activeRoto(app)) {
+        ImGui::SetCursorPosX(8);
+        drawRotoToolbar(app, ui);
+    }
 
     // ---- image area
     const float infoH = ImGui::GetFrameHeight() + 4;

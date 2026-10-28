@@ -1839,6 +1839,70 @@ int main(int argc, char** argv) {
         CHECK_NEAR(a2[a2.size() / 8].x * 0 + std::hypot(split[1].x, split[1].y), 10, 0.05);
     });
 
+    test("roto: open splines, feather on / types, per-shape motion blur, replace, clip to", [] {
+        auto rotoComp = [](json shapes, json extra = json::object(), json bg = nullptr) {
+            json params = {{"shapes", shapes}};
+            for (auto& [k, v] : extra.items()) params[k] = v;
+            json nodes = json::array();
+            json r = {{"name", "R"}, {"type", "Roto"}, {"params", params}};
+            if (!bg.is_null()) {
+                nodes.push_back(bg);
+                r["inputs"] = {bg["name"]};
+            }
+            nodes.push_back(r);
+            return comp(nodes);
+        };
+        // an open spline: a line 6 px wide from (10, 24) to (54, 24), nothing at its ends' far side
+        json line = {{"name", "L"}, {"kind", "bezier"}, {"closed", false}, {"width", 6},
+                     {"points", json::array({json::array({10, 24, 0, 0, 0, 0}), json::array({54, 24, 0, 0, 0, 0})})}};
+        auto l = render(*rotoComp(json::array({line})), "R");
+        CHECK_NEAR(px(l, 32, 24, "A"), 1, 1e-6);
+        CHECK_NEAR(px(l, 32, 26, "A"), 1, 1e-6);
+        CHECK_NEAR(px(l, 32, 30, "A"), 0, 1e-6);  // 6 px wide: 21..27
+        CHECK_NEAR(px(l, 4, 24, "A"), 0, 1e-6);
+        // ...with a feather: a soft edge beyond the width
+        line["feather"] = 6;
+        auto lf = render(*rotoComp(json::array({line})), "R");
+        CHECK(px(lf, 32, 30, "A") > 0.02f && px(lf, 32, 30, "A") < 0.98f);
+        // feather on / off, and the falloff curve
+        json el = {{"name", "E"}, {"kind", "ellipse"}, {"points", roto::ptsJson(roto::ellipse(32, 24, 12, 12))}, {"feather", 8}};
+        const float soft = px(render(*rotoComp(json::array({el})), "R"), 32 + 16, 24, "A");
+        CHECK(soft > 0.02f && soft < 0.98f);
+        el["feather_on"] = false;
+        CHECK_NEAR(px(render(*rotoComp(json::array({el})), "R"), 32 + 16, 24, "A"), 0, 1e-6);
+        el["feather_on"] = true;
+        el["feather_type"] = "linear";
+        const float lin = px(render(*rotoComp(json::array({el})), "R"), 32 + 16, 24, "A");
+        el["feather_type"] = "smooth0";
+        const float s0 = px(render(*rotoComp(json::array({el})), "R"), 32 + 16, 24, "A");
+        el["feather_type"] = "smooth1";
+        const float s1 = px(render(*rotoComp(json::array({el})), "R"), 32 + 16, 24, "A");
+        CHECK(s0 < lin && lin < s1);  // eased at the outer edge: less; at the inner: more
+        // per-shape motion blur: a moving square blurs; with its motion blur off it doesn't
+        json sq = {{"name", "S"}, {"kind", "rectangle"}};
+        roto::setPointsAt(sq, 1, roto::rectangle(10, 10, 20, 20), true);
+        roto::setPointsAt(sq, 2, roto::rectangle(30, 10, 40, 20), true);
+        json mb = {{"motionblur", 8}, {"shutter", 1.0}};
+        const float edgeOn = px(render(*rotoComp(json::array({sq}), mb), "R", 1.5), 37, 15, "A");
+        CHECK(edgeOn > 0.02f && edgeOn < 0.98f);
+        sq["motionblur"] = false;
+        const float edgeOff = px(render(*rotoComp(json::array({sq}), mb), "R", 1.5), 37, 15, "A");
+        CHECK(edgeOff < 0.02f || edgeOff > 0.98f);
+        // replace: the output channel starts empty (the background's alpha goes)
+        json bg = {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.2, 0.2, 0.5}}}}};
+        json small = {{"name", "E2"}, {"kind", "ellipse"}, {"points", roto::ptsJson(roto::ellipse(32, 24, 5, 5))}};
+        CHECK_NEAR(px(render(*rotoComp(json::array({small}), json::object(), bg), "R"), 4, 4, "A"), 0.5, 1e-6);
+        CHECK_NEAR(px(render(*rotoComp(json::array({small}), {{"replace", true}}, bg), "R"), 4, 4, "A"), 0, 1e-6);
+        CHECK_NEAR(px(render(*rotoComp(json::array({small}), {{"replace", true}}, bg), "R"), 32, 24, "A"), 1, 1e-6);
+        // clip to format: a shape hanging off the frame stops at its edge
+        json off = {{"name", "O"}, {"kind", "rectangle"}, {"points", roto::ptsJson(roto::rectangle(50, 10, 90, 20))}};
+        auto c1 = rotoComp(json::array({off}));
+        CHECK(c1->find("R")->dod(*std::make_unique<Engine>(), 1).x2 > 64);
+        auto c2 = rotoComp(json::array({off}), {{"clip_to", "format"}});
+        CHECK(c2->find("R")->dod(*std::make_unique<Engine>(), 1).x2 <= 64);
+        CHECK_NEAR(px(render(*c2, "R"), 60, 15, "A"), 1, 1e-6);
+    });
+
     test("roto: per-point feather, transform, lifetime, B-spline, motion blur", [] {
         auto shapeComp = [](json shape, json extra = json::object()) {
             json p = {{"shapes", json::array({shape})}};
