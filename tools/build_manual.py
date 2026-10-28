@@ -56,7 +56,6 @@ LOOP_NODES = {"GodRays": "Filter", "VolumeRays": "Filter"}  # schema entries bui
 # Shortcut rows the editor's table doesn't list but the manual should (context, keys, what).
 EXTRA_KEYS = [
     ("Node Graph", "Alt+Shift+A", "Auto-align the selection (or everything)", "Alt+drag"),
-    ("Roto", "Q", "Select tool", None),
     ("Properties", "=", "Edit the knob's expression", "Ctrl+Shift+A"),
     ("Properties", "Alt+click a value", "Set a key for all of the knob's parts", "Ctrl+Shift+A"),
     ("3D viewer", "1 / 2 / 3", "EditMesh: points / edges / faces", "END"),

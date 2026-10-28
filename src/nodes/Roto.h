@@ -41,6 +41,7 @@ struct Pt {
     double lx = 0, ly = 0;  // incoming tangent (relative)
     double rx = 0, ry = 0;  // outgoing tangent (relative)
     double fx = 0, fy = 0;  // feather point (relative)
+    double dw = 0, df = 0;  // an open spline's extra width and feather at this point (pixels, on top of the shape's)
 };
 using Pts = std::vector<Pt>;
 

@@ -227,7 +227,8 @@ struct RotoState {
     bool cloneSourceSet = false, cloneOffsetSet = false;
     ImVec2 cloneSource, cloneOffset;    // image space; offset = destination - source
     // Mouse drags
-    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize, FeatherPts } drag = Drag::None;
+    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize, FeatherPts, LineWidth, LineFeather } drag = Drag::None;
+    int lineShape = -1, linePoint = -1;  // an open spline's width / feather handle being dragged
     ImVec2 dragStartImg, dragStartScreen;
     std::map<int, roto::Pts> orig;      // shape -> control points when the drag started
     std::map<int, json> origStroke;     // stroke -> points when the drag started

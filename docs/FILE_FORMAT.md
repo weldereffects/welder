@@ -129,7 +129,10 @@ Roto `shapes` are drawn first to last (the last is on top). A shape:
 
 * Each point is `[x, y, lx, ly, rx, ry, fx, fy]`: position in full-resolution
   pixels, the incoming / outgoing tangent handles and the per-point feather
-  point, all relative to it (`fx, fy` may be left off when zero).
+  point, all relative to it (`fx, fy` may be left off when zero). An open
+  spline's points can add `dw, df`: that point's extra width and extra feather
+  in pixels, on top of the shape's `width` and `feather` (eased between points,
+  keyed with them).
 * `kind` is `bezier`, `bspline` (the points are control points; `tension` 0-1
   pulls the curve onto them), `ellipse` or `rectangle` (both are Beziers).
 * A shape that isn't animated stores `"points": [...]` instead of `"anim"`;

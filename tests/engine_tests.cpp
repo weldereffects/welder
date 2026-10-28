@@ -1962,6 +1962,29 @@ int main(int argc, char** argv) {
         CHECK(spread(render(*paintComp(json::array({bl})), "P", 3), 58, 42) > plateGrain * 0.6);
     });
 
+    test("roto: an open spline's per-point width and feather", [] {
+        // a horizontal line from x 10 to 118 at y 48, 6 px wide; the right end 30 px wider, then feathered
+        auto lineComp = [](json pts) {
+            json sh = {{"name", "L"}, {"kind", "bezier"}, {"closed", false}, {"width", 6.0}, {"feather", 0.0}, {"points", pts}};
+            json r = {{"name", "R"}, {"type", "Roto"}, {"params", {{"shapes", json::array({sh})}}}};
+            return comp(json::array({r}), 128, 96);
+        };
+        auto edge = [](const ImagePtr& im, int x) {  // half the line's height at column x
+            int h = 0;
+            for (int y = 48; y < 96 && px(im, x, y, "A") > 0.5f; ++y) ++h;
+            return h;
+        };
+        auto even = render(*lineComp(json::array({json::array({10, 48, 0, 0, 0, 0}), json::array({118, 48, 0, 0, 0, 0})})), "R");
+        auto taper = render(*lineComp(json::array({json::array({10, 48, 0, 0, 0, 0}), json::array({118, 48, 0, 0, 0, 0, 0, 0, 30, 0})})), "R");
+        CHECK(std::abs(edge(even, 20) - edge(even, 110)) <= 1);
+        CHECK(edge(taper, 110) > edge(taper, 20) + 10);  // wider at the right
+        CHECK(std::abs(edge(taper, 20) - edge(even, 20)) <= 2);
+        auto soft = render(*lineComp(json::array({json::array({10, 48, 0, 0, 0, 0}), json::array({118, 48, 0, 0, 0, 0, 0, 0, 0, 20})})), "R");
+        const float a = px(soft, 112, 60, "A");  // 12 px out at the right end: in its feather
+        CHECK(a > 0.05f && a < 0.95f);
+        CHECK(px(soft, 16, 60, "A") < 0.01f);  // (the left end has none)
+    });
+
     test("roto: open splines, feather on / types, per-shape motion blur, replace, clip to", [] {
         auto rotoComp = [](json shapes, json extra = json::object(), json bg = nullptr) {
             json params = {{"shapes", shapes}};

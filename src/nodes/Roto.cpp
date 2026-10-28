@@ -26,7 +26,7 @@ namespace strata::roto {
 // ------------------------------------------------------------------ storage
 
 namespace {
-constexpr int kComps = 8;  // x, y, lx, ly, rx, ry, fx, fy
+constexpr int kComps = 10;  // x, y, lx, ly, rx, ry, fx, fy, dw, df
 double comp(const Pt& p, int c) { return (&p.x)[c]; }
 double& comp(Pt& p, int c) { return (&p.x)[c]; }
 double rnd(double v) { return std::round(v * 1000.0) / 1000.0; }  // keep files readable
@@ -49,9 +49,14 @@ json ptsJson(const Pts& pts) {
     json a = json::array();
     for (auto& p : pts) {
         json e = {rnd(p.x), rnd(p.y), rnd(p.lx), rnd(p.ly), rnd(p.rx), rnd(p.ry)};
-        if (p.fx != 0 || p.fy != 0) {
+        const bool extra = p.dw != 0 || p.df != 0;
+        if (p.fx != 0 || p.fy != 0 || extra) {
             e.push_back(rnd(p.fx));
             e.push_back(rnd(p.fy));
+        }
+        if (extra) {
+            e.push_back(rnd(p.dw));
+            e.push_back(rnd(p.df));
         }
         a.push_back(e);
     }
@@ -316,7 +321,8 @@ Pts curveAt(const json& s, double frame, const Xf& parent) {
             const V2 L = m.apply(p.x + p.lx, p.y + p.ly), Rr = m.apply(p.x + p.rx, p.y + p.ry), F = m.apply(p.x + p.fx, p.y + p.fy);
             l = {L.x - q.x, L.y - q.y}, r = {Rr.x - q.x, Rr.y - q.y}, f = {F.x - q.x, F.y - q.y};
         }
-        p = {q.x, q.y, l.x, l.y, r.x, r.y, f.x, f.y};
+        const double dw = p.dw, df = p.df;
+        p = {q.x, q.y, l.x, l.y, r.x, r.y, f.x, f.y, dw, df};
     }
     return c;
 }
@@ -765,13 +771,24 @@ void rasterizeOpen(const Pts& curve, double scale, const Region& r, double width
     const int W = r.x2 - r.x1, H = r.y2 - r.y1;
     cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
     if (W <= 0 || H <= 0 || curve.size() < 2) return;
-    const std::vector<V2> line = flatten(curve, false, scale);
-    const double half = std::max(0.25, width * scale * 0.5), f = std::max(0.0, feather * scale);
-    const double reach = half + (f > 0.5 ? f : 1.0);
-    // max of the coverage of each segment (a round-capped capsule), pixel by pixel near it
+    std::vector<int> segOf;
+    std::vector<double> tOf;
+    const std::vector<V2> line = flatten(curve, false, scale, &segOf, &tOf);
+    // the width and feather along the line: the shape's, plus each point's own, eased between points
+    std::vector<double> half(line.size()), fea(line.size());
+    for (size_t k = 0; k < line.size(); ++k) {
+        const int sg = k < segOf.size() ? std::clamp(segOf[k], 0, (int)curve.size() - 1) : 0;
+        const int sn = std::min(sg + 1, (int)curve.size() - 1);
+        const double t = k < tOf.size() ? std::clamp(tOf[k], 0.0, 1.0) : 0.0;
+        const double dw = curve[sg].dw + (curve[sn].dw - curve[sg].dw) * t, df = curve[sg].df + (curve[sn].df - curve[sg].df) * t;
+        half[k] = std::max(0.25, (width + dw) * scale * 0.5);
+        fea[k] = std::max(0.0, (feather + df) * scale);
+    }
+    // max of the coverage of each segment (a round-capped, tapered capsule), pixel by pixel near it
     for (size_t k = 0; k + 1 < line.size(); ++k) {
         const V2 a = line[k], b = line[k + 1];
         const double dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+        const double reach = std::max(half[k], half[k + 1]) + std::max({fea[k], fea[k + 1], 1.0});
         const int x1 = std::max(r.x1, (int)std::floor(std::min(a.x, b.x) - reach)), x2 = std::min(r.x2, (int)std::ceil(std::max(a.x, b.x) + reach) + 1);
         const int y1 = std::max(r.y1, (int)std::floor(std::min(a.y, b.y) - reach)), y2 = std::min(r.y2, (int)std::ceil(std::max(a.y, b.y) + reach) + 1);
         for (int y = y1; y < y2; ++y) {
@@ -782,9 +799,10 @@ void rasterizeOpen(const Pts& curve, double scale, const Region& r, double width
                 double t = len2 > 0 ? ((cx - a.x) * dx + (cy - a.y) * dy) / len2 : 0.0;
                 t = std::clamp(t, 0.0, 1.0);
                 const double d = std::hypot(a.x + t * dx - cx, a.y + t * dy - cy);
+                const double hh = half[k] + (half[k + 1] - half[k]) * t, f = fea[k] + (fea[k + 1] - fea[k]) * t;
                 double v;
-                if (f > 0.5) v = d <= half ? 1.0 : smooth01((half + f - d) / f, falloff, type);
-                else v = std::clamp(half + 0.5 - d, 0.0, 1.0);
+                if (f > 0.5) v = d <= hh ? 1.0 : smooth01((hh + f - d) / f, falloff, type);
+                else v = std::clamp(hh + 0.5 - d, 0.0, 1.0);
                 float& o = out[x - r.x1];
                 o = std::max(o, (float)v);
             }
@@ -1015,7 +1033,11 @@ public:
             }
             if (x1 > x2) continue;
             double pad = (s.value("feather_on", true) ? std::max(0.0, params::evalScalar(s.value("feather", json(0.0)), frame, 0.0)) : 0.0) * sc + 2;
-            if (open) pad += params::evalScalar(s.value("width", json(10.0)), frame, 10.0) * 0.5 * sc;
+            if (open) {
+                double extra = 0;  // the widest / most feathered point
+                for (auto& p : roto::pointsAt(s, frame)) extra = std::max(extra, p.dw * 0.5 + std::max(0.0, p.df));
+                pad += (params::evalScalar(s.value("width", json(10.0)), frame, 10.0) * 0.5 + extra) * sc;
+            }
             b = b.unite(Box((int)std::floor(x1 - pad), (int)std::floor(y1 - pad), (int)std::ceil(x2 + pad),
                             (int)std::ceil(y2 + pad)));
         }
@@ -1226,7 +1248,7 @@ private:
             const bool featherOn = s.value("feather_on", true);
             const double feather = featherOn ? params::evalScalar(s.value("feather", json(0.0)), a.frame, 0.0) * sc : 0.0;
             if (!featherOn)
-                for (auto& p : curve) p.fx = p.fy = 0;
+                for (auto& p : curve) p.fx = p.fy = p.df = 0;
             const double falloff = params::evalScalar(s.value("falloff", json(1.0)), a.frame, 1.0);
             const int ftype = roto::featherType(s.value("feather_type", std::string("smooth")));
             const bool invert = s.value("invert", false);

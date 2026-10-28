@@ -80,10 +80,10 @@ int groupOf(Tool t) {
 }
 const std::vector<ToolInfo>& groupTools(int g) {
     static const std::vector<ToolInfo> groups[7] = {
-        {{Tool::Select, "Select All", "Q", "Select points, tangents, feather points and whole shapes; the transform jack"},
-         {Tool::SelectSplines, "Select Splines", "Q", "Select and move whole shapes"},
-         {Tool::SelectPoints, "Select Points", "Q", "Select and move points and their tangents only"},
-         {Tool::SelectFeather, "Select Feather Points", "Q", "Select and move feather points only"}},
+        {{Tool::Select, "Select All", "", "Select points, tangents, feather points and whole shapes; the transform jack"},
+         {Tool::SelectSplines, "Select Splines", "", "Select and move whole shapes"},
+         {Tool::SelectPoints, "Select Points", "", "Select and move points and their tangents only"},
+         {Tool::SelectFeather, "Select Feather Points", "", "Select and move feather points only"}},
         {{Tool::AddPoints, "Add Points", "", "Click a curve to add a point there"},
          {Tool::RemovePoints, "Remove Points", "", "Click a point to remove it"},
          {Tool::CuspPoints, "Cusp Points", "Shift+Z", "Click a point to make it a corner (no tangents)"},
@@ -275,6 +275,29 @@ std::string uniqueName(const json& items, const std::string& base) {
 }
 
 // Points in screen space (an affine map, so tangents and feathers map linearly).
+// A closed loop drawn dashed (a feather's edge).
+void dashedPolyline(ImDrawList* dl, const std::vector<roto::V2>& pts, ImU32 col, float dash = 4.0f, float gap = 4.0f) {
+    if (pts.size() < 2) return;
+    double carry = 0;
+    bool on = true;
+    for (size_t k = 0; k < pts.size(); ++k) {
+        const roto::V2 a = pts[k], b = pts[(k + 1) % pts.size()];
+        const double len = std::hypot(b.x - a.x, b.y - a.y);
+        double pos = 0;
+        while (pos < len) {
+            const double step = std::min(len - pos, (on ? dash : gap) - carry);
+            if (on) {
+                const double t0 = pos / len, t1 = (pos + step) / len;
+                dl->AddLine(ImVec2((float)(a.x + (b.x - a.x) * t0), (float)(a.y + (b.y - a.y) * t0)),
+                            ImVec2((float)(a.x + (b.x - a.x) * t1), (float)(a.y + (b.y - a.y) * t1)), col, 1.0f);
+            }
+            pos += step;
+            carry += step;
+            if (carry >= (on ? dash : gap) - 1e-9) carry = 0, on = !on;
+        }
+    }
+}
+
 Pts toScreenPts(const Pts& pts, const ViewXf& xf) {
     Pts r = pts;
     for (auto& p : r) {
@@ -724,6 +747,12 @@ struct Disp {
     bool hasFeather = false;
     bool locked = false;              // can't be picked or edited in the viewer
     float strokeWidth = 0;            // screen px
+    // an open spline: the edges of its width and of its feather (closed loops, round ends), and per
+    // point the width (green) and feather (pink) handles on either side, along the normal `nrm`
+    bool line = false;
+    double lineW = 0, lineF = 0;      // the shape's own width and feather (image px)
+    std::vector<roto::V2> widthLoop, featherLoop;
+    std::vector<ImVec2> widthH, featherH, nrm;
 };
 
 Disp makeDisp(const json& items, const json& s, double frame, const ViewXf& xf) {
@@ -764,6 +793,65 @@ Disp makeDisp(const json& items, const json& s, double frame, const ViewXf& xf) 
         for (auto& p : d.curveS) d.ctrlS.push_back(ImVec2((float)p.x, (float)p.y));
     }
     for (auto& p : d.curveS) d.hasFeather = d.hasFeather || p.fx != 0 || p.fy != 0;
+    if (!d.closed && d.curveS.size() >= 2 && d.poly.size() >= 2) {
+        d.line = true;
+        d.hasFeather = false;  // (an open spline's feather is its edge, drawn below)
+        d.lineW = params::evalScalar(s.value("width", json(10.0)), frame, 10.0);
+        d.lineF = s.value("feather_on", true) ? params::evalScalar(s.value("feather", json(0.0)), frame, 0.0) : 0.0;
+        const auto& P = d.poly;
+        const size_t n = P.size();
+        std::vector<roto::V2> nv(n);
+        for (size_t k = 0; k < n; ++k) {  // normals of the flattened line
+            const roto::V2 a = P[k == 0 ? 0 : k - 1], b = P[k + 1 < n ? k + 1 : n - 1];
+            double tx = b.x - a.x, ty = b.y - a.y, l = std::hypot(tx, ty);
+            if (l < 1e-9) tx = 1, ty = 0, l = 1;
+            nv[k] = {-ty / l, tx / l};
+        }
+        auto along = [&](size_t k, bool feather) {  // half the width (+ the feather) at line vertex k, screen px
+            const int sg = k < d.segOf.size() ? std::clamp(d.segOf[k], 0, (int)d.curveS.size() - 1) : 0;
+            const int sn = std::min(sg + 1, (int)d.curveS.size() - 1);
+            const double t = k < d.tOf.size() ? std::clamp(d.tOf[k], 0.0, 1.0) : 0.0;
+            const auto& A = d.curveS[sg];
+            const auto& B = d.curveS[sn];
+            double h = std::max(0.25, (d.lineW + A.dw + (B.dw - A.dw) * t) * 0.5);
+            if (feather) h += std::max(0.0, d.lineF + A.df + (B.df - A.df) * t);
+            return h * xf.zoom;
+        };
+        for (int pass = 0; pass < 2; ++pass) {
+            auto& loop = pass ? d.featherLoop : d.widthLoop;
+            for (size_t k = 0; k < n; ++k) loop.push_back({P[k].x + nv[k].x * along(k, pass), P[k].y + nv[k].y * along(k, pass)});
+            const double he = along(n - 1, pass), hs = along(0, pass);
+            const roto::V2 te = {nv[n - 1].y, -nv[n - 1].x}, ts = {nv[0].y, -nv[0].x};  // (forward)
+            for (int a = 1; a < 12; ++a) {  // round end
+                const double an = M_PI * a / 12;
+                loop.push_back({P[n - 1].x + (nv[n - 1].x * std::cos(an) + te.x * std::sin(an)) * he,
+                                P[n - 1].y + (nv[n - 1].y * std::cos(an) + te.y * std::sin(an)) * he});
+            }
+            for (size_t k = n; k-- > 0;) loop.push_back({P[k].x - nv[k].x * along(k, pass), P[k].y - nv[k].y * along(k, pass)});
+            for (int a = 1; a < 12; ++a) {  // round start
+                const double an = M_PI * a / 12;
+                loop.push_back({P[0].x + (-nv[0].x * std::cos(an) - ts.x * std::sin(an)) * hs,
+                                P[0].y + (-nv[0].y * std::cos(an) - ts.y * std::sin(an)) * hs});
+            }
+        }
+        // handles: at each control point, along the line's normal there
+        for (size_t i = 0; i < d.curveS.size(); ++i) {
+            const auto& p = d.curveS[i];
+            double tx = p.rx, ty = p.ry;
+            if (tx == 0 && ty == 0) tx = -p.lx, ty = -p.ly;
+            if (tx == 0 && ty == 0) {
+                const auto& a = d.curveS[i > 0 ? i - 1 : 0];
+                const auto& b = d.curveS[i + 1 < d.curveS.size() ? i + 1 : i];
+                tx = b.x - a.x, ty = b.y - a.y;
+            }
+            const double l = std::max(1e-9, std::hypot(tx, ty));
+            const ImVec2 nn((float)(-ty / l), (float)(tx / l));
+            const double h = std::max(0.25, (d.lineW + p.dw) * 0.5) * xf.zoom, f = std::max(0.0, d.lineF + p.df) * xf.zoom;
+            d.nrm.push_back(nn);
+            d.widthH.push_back(ImVec2((float)(p.x - nn.x * h), (float)(p.y - nn.y * h)));
+            d.featherH.push_back(ImVec2((float)(p.x + nn.x * (h + std::max(f, 4.0))), (float)(p.y + nn.y * (h + std::max(f, 4.0)))));
+        }
+    }
     if (d.hasFeather) {
         Pts f = d.curveS;
         for (auto& p : f) {
@@ -1098,6 +1186,11 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             if (d.alive || sel) polyline(dl, d.poly, col, false, sel ? 2.0f : 1.0f);
             continue;
         }
+        if (!r.hideCurves && d.line) {  // an open spline: its width's edge, its feather's (dashed)
+            polyline(dl, d.widthLoop, (col & 0x00FFFFFF) | 0xC0000000, true, 1.0f);
+            if (d.lineF > 0 || std::any_of(d.curveS.begin(), d.curveS.end(), [](const Pt& p) { return p.df > 0; }))
+                dashedPolyline(dl, d.featherLoop, (col & 0x00FFFFFF) | 0xB0000000);
+        }
         if (!r.hideCurves) {
             polyline(dl, d.poly, col, d.closed, sel ? 2.0f : 1.5f);
             if (d.hasFeather) polyline(dl, d.featherPoly, sel ? IM_COL32(255, 196, 80, 120) : kFeather, true, 1.0f);
@@ -1106,6 +1199,19 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                     dl->AddLine(d.ctrlS[k], d.ctrlS[(k + 1) % d.ctrlS.size()], IM_COL32(200, 200, 200, 70), 1.0f);
         }
         if (r.hidePoints || d.locked || (!sel && r.showPoints == 0 && !featherMode)) continue;
+        if (d.line && sel && r.tool != Tool::SelectSplines)  // width (green) and feather (pink) at each point
+            for (size_t k = 0; k < d.widthH.size() && k < d.ctrlS.size(); ++k) {
+                const ImVec2 c = d.ctrlS[k];
+                const bool hotW = r.drag == Drag::LineWidth && r.lineShape == (int)i && r.linePoint == (int)k;
+                const bool hotF = r.drag == Drag::LineFeather && r.lineShape == (int)i && r.linePoint == (int)k;
+                dl->AddLine(c, d.widthH[k], IM_COL32(80, 220, 90, 160), 1.0f);
+                dl->AddLine(c, d.featherH[k], IM_COL32(235, 70, 220, 160), 1.0f);
+                const float q = 3.5f;
+                dl->AddRectFilled(ImVec2(d.widthH[k].x - q, d.widthH[k].y - q), ImVec2(d.widthH[k].x + q, d.widthH[k].y + q),
+                                  hotW ? IM_COL32(255, 255, 255, 255) : IM_COL32(80, 220, 90, 255));
+                dl->AddRectFilled(ImVec2(d.featherH[k].x - q, d.featherH[k].y - q), ImVec2(d.featherH[k].x + q, d.featherH[k].y + q),
+                                  hotF ? IM_COL32(255, 255, 255, 255) : IM_COL32(235, 70, 220, 255));
+            }
         for (size_t k = 0; k < d.ctrlS.size(); ++k) {
             ImVec2 c = d.ctrlS[k];
             bool ps = r.sel.count({(int)i, (int)k}) > 0;
@@ -1356,6 +1462,22 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Tool::SelectSplines:
             case Tool::SelectPoints: {
                 const bool splinesOnly = r.tool == Tool::SelectSplines, pointsOnly = r.tool == Tool::SelectPoints;
+                // 0. a selected open spline's width (green) / feather (pink) handles
+                if (!splinesOnly) {
+                    for (int si : selItems) {
+                        if (si < 0 || si >= (int)ds.size() || !ds[si].line || ds[si].locked) continue;
+                        for (int k = 0; k < (int)ds[si].widthH.size() && r.drag == Drag::None; ++k) {
+                            if (dist(mouse, ds[si].widthH[k]) < 6) r.drag = Drag::LineWidth;
+                            else if (dist(mouse, ds[si].featherH[k]) < 6) r.drag = Drag::LineFeather;
+                            if (r.drag != Drag::None) r.lineShape = si, r.linePoint = k;
+                        }
+                        if (r.drag != Drag::None) break;
+                    }
+                    if (r.drag != Drag::None) {
+                        r.orig[r.lineShape] = roto::pointsAt(items[r.lineShape], frame);
+                        break;
+                    }
+                }
                 // 1. the transform jack
                 if (jackShown && dist(mouse, jackRot) < 7) {
                     r.drag = Drag::JackRotate;
@@ -1672,6 +1794,31 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 });
                 break;
             }
+            case Drag::LineWidth:
+            case Drag::LineFeather: {  // an open spline's width / feather at one point: the distance from it along the normal
+                const int si = r.lineShape, pi = r.linePoint;
+                if (si < 0 || si >= (int)ds.size() || !r.orig.count(si) || pi >= (int)r.orig[si].size() || pi >= (int)ds[si].nrm.size()) break;
+                if (!movedEnough && !r.dragChanged) break;
+                if (r.dragChanged && !mouseMoved) break;
+                if (!r.dragChanged) app.checkpoint();
+                r.dragChanged = true;
+                const Disp& d = ds[si];
+                const ImVec2 c = d.ctrlS[pi], nn = d.nrm[pi];
+                const double along = ((mouse.x - c.x) * nn.x + (mouse.y - c.y) * nn.y) / std::max(1e-6f, xf.zoom);  // image px
+                Pts pts = r.orig[si];
+                if (r.drag == Drag::LineWidth) {
+                    const double half = std::max(0.25, -along);  // (green is on the other side)
+                    pts[pi].dw = std::round((2 * half - d.lineW) * 100) / 100;
+                } else {
+                    const double half = std::max(0.25, (d.lineW + pts[pi].dw) * 0.5);
+                    pts[pi].df = std::round((std::max(0.0, along - half) - d.lineF) * 100) / 100;
+                }
+                const bool ak = r.autokey;
+                editShapes(app, n->name, [si, pts, frame, ak](json& sh) {
+                    if (si < (int)sh.size()) roto::setPointsAt(sh[si], frame, pts, ak);
+                });
+                break;
+            }
             case Drag::FeatherPts: {  // Select Feather Points: the selected feather points move
                 if (!movedEnough && !r.dragChanged) break;
                 if (r.dragChanged && !mouseMoved) break;
@@ -1813,10 +1960,7 @@ bool rotoHotkeys(App& app, UiState& ui) {
         cycle(2);
         return true;
     }
-    if (pressed(ImGuiKey_Q)) {
-        cycle(0);
-        return true;
-    }
+    // (Q isn't a roto key: in the 2D viewer it always turns the overlays on and off)
     if (paintNode(n)) {
         if (pressed(ImGuiKey_N)) { setTool(app, ui, n, r.tool == Tool::Brush ? Tool::Eraser : Tool::Brush); return true; }
         if (pressed(ImGuiKey_C)) { cycle(4); return true; }
@@ -3102,7 +3246,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                                     map(p.x + p.lx, p.y + p.ly, lx, ly);
                                     map(p.x + p.rx, p.y + p.ry, rx, ry);
                                     map(p.x + p.fx, p.y + p.fy, fx, fy);
-                                    p = {px, py, lx - px, ly - py, rx - px, ry - py, p.fx || p.fy ? fx - px : 0, p.fx || p.fy ? fy - py : 0};
+                                    p = {px, py, lx - px, ly - py, rx - px, ry - py, p.fx || p.fy ? fx - px : 0, p.fx || p.fy ? fy - py : 0, p.dw, p.df};
                                 }
                                 // back into the space of the layer the shape is in
                                 const roto::Xf pinv = roto::parentTransformAt(items, s, f).inverse();
@@ -3111,7 +3255,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                                         roto::V2 q = pinv.apply(p.x, p.y), l = pinv.apply(p.x + p.lx, p.y + p.ly),
                                                  rr = pinv.apply(p.x + p.rx, p.y + p.ry), fq = pinv.apply(p.x + p.fx, p.y + p.fy);
                                         p = {q.x, q.y, l.x - q.x, l.y - q.y, rr.x - q.x, rr.y - q.y,
-                                             p.fx || p.fy ? fq.x - q.x : 0, p.fx || p.fy ? fq.y - q.y : 0};
+                                             p.fx || p.fy ? fq.x - q.x : 0, p.fx || p.fy ? fq.y - q.y : 0, p.dw, p.df};
                                     }
                                 bake.push_back({f, out});
                             }
