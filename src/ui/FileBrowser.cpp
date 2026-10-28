@@ -629,7 +629,12 @@ void drawFileDialog(App& app, UiState& ui) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             const bool sel = gB.selected.count(r.path) > 0;
-            ImGui::PushID(r.path.c_str());
+            {  // by a hash of the path: ImGui restarts an ID string at "###", and sequences are named "name.####.exr",
+                // so two sequences in one folder would otherwise share an ID
+                uint64_t h = 1469598103934665603ull;
+                for (unsigned char c : r.path) h = (h ^ c) * 1099511628211ull;
+                ImGui::PushID((int)(h ^ (h >> 32)));
+            }
             if (r.dir) ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(240, 240, 240, 255));
             // the name drawn apart: "####" would read as an ImGui ID separator
             const bool clicked = ImGui::Selectable("##row", sel, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
