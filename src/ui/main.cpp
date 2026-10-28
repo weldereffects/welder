@@ -956,6 +956,22 @@ int main(int argc, char** argv) {
                         std::sscanf(arg.c_str(), "%f,%f,%f,%f", &drag[0], &drag[1], &drag[2], &drag[3]);
                         tio.AddMousePosEvent(drag[0], drag[1]);
                         dragging = true;
+                    } else if (what == "menu") {  // a File menu action: open, save, saveas, saveinc
+                        ui.menuAction = arg;
+                    } else if (what == "script") {  // the script's path, and the version prompt
+                        std::printf("KEYS script %s dirty %d clash '%s' free '%s'\n", app.compPath.c_str(), (int)app.dirty, ui.versionClash.c_str(),
+                                    ui.versionFree.c_str());
+                    } else if (what == "open") {  // a node's panel opened (as a double-click does)
+                        app.openPanel(arg);
+                    } else if (what == "frame") {  // go to a frame
+                        app.frame = std::atof(arg.c_str());
+                        app.requestView();
+                    } else if (what == "io") {  // the in / out points, and where playback is
+                        const auto& pr = app.comp->project;
+                        const auto pr2 = app.playRange();
+                        std::printf("KEYS io: has %d in %g out %g, play range %g-%g, frame %g, playing %d, visible %g-%g\n", (int)pr.hasInOut,
+                                    pr.inPoint, pr.outPoint, pr2.first, pr2.second, app.frame, (int)app.playing, app.visibleRange().first,
+                                    app.visibleRange().second);
                     } else if (what == "play" || what == "stop") {  // playback on / off
                         app.playDir = 1;
                         app.playing = what == "play";

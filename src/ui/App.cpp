@@ -3509,6 +3509,7 @@ json App::nkToNodes(const std::string& nkText, std::string* err) {
 // ------------------------------------------------------------------ panels
 
 void App::openPanel(const std::string& name) {
+    panelsToExpand.insert(name);
     closePanel(name);
     panels.push_front(name);
     while ((int)panels.size() > maxPanels) panels.pop_back();

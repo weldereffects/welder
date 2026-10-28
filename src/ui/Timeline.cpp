@@ -557,22 +557,10 @@ void drawTimeline(App& app, UiState& ui) {
         if (iconButton("##loop", kLoop[ui.playMode], bw, false, kLoopTip[ui.playMode])) ui.playMode = (ui.playMode + 1) % 3;
         next(6);
     }
-    auto setInOut = [&](bool in) {
-        double fr = app.frame;
-        auto vis = app.visibleRange();
-        app.edit([fr, in, vis](Comp& cc) {
-            if (!cc.project.hasInOut) {
-                cc.project.inPoint = vis.first;
-                cc.project.outPoint = vis.second;
-            }
-            if (in) cc.project.inPoint = std::min(fr, cc.project.outPoint);
-            else cc.project.outPoint = std::max(fr, cc.project.inPoint);
-            cc.project.hasInOut = true;
-        });
-    };
+    auto setInOut = [&](bool in) { toggleInOut(app, in); };  // (as the I / O keys)
     auto clearInOut = [&] { app.edit([](Comp& cc) { cc.project.hasInOut = false; }); };
     if (show.io) {
-        if (textButton("I##in", bw, c.project.hasInOut, "set the in point here (I)\nright-click: clear in / out")) setInOut(true);
+        if (textButton("I##in", bw, c.project.hasInOut, "set the in point here (I); again on it: off\nright-click: clear in / out")) setInOut(true);
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) clearInOut();
         next();
     }
@@ -633,7 +621,7 @@ void drawTimeline(App& app, UiState& ui) {
     }
     if (show.io) {
         next();
-        if (textButton("O##out", bw, c.project.hasInOut, "set the out point here (O)\nright-click: clear in / out")) setInOut(false);
+        if (textButton("O##out", bw, c.project.hasInOut, "set the out point here (O); again on it: off\nright-click: clear in / out")) setInOut(false);
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) clearInOut();
     }
     if (show.inc) {

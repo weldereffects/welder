@@ -376,6 +376,7 @@ struct UiState {
     };
     std::vector<std::pair<std::string, float>> curParts;
     FrameParts slowFrame;
+    std::string versionClash, versionFree;  // Save Incremental: the next version exists (asks: overwrite it, or this free one)
     std::string dropOpenComp;  // a comp to open (dropped, recent, File > Open), or kNewComp: done once unsaved changes are dealt with
     bool requestQuit = false;
     double lastPlayTime = 0;
@@ -419,6 +420,8 @@ void drawMessages(App& app, UiState& ui);
 void drawDialogs(App& app, UiState& ui);
 
 // Shared actions
+// I / O: set the in / out point at the current frame, or take it off when it is already there.
+void toggleInOut(App& app, bool in);
 void createNode(App& app, UiState& ui, const std::string& type, const json& params = json::object(), bool branch = false);
 // Node-graph actions (driven by hotkeys and menus)
 void graphDelete(App& app);

@@ -292,7 +292,7 @@ footer { margin-top: 20px; color: var(--muted); font-size: 13px; border-top: 1px
         <div class="gstep" aria-hidden="true"><div class="pipe"></div><div></div></div>
         <div class="gstep" role="listitem"><div class="gnode" style="background:#8c8c8c">Write1<small>W</small></div><p><span class="num">3</span>Press <kbd>W</kbd> and set its file, for example <code>shot_v001.####.exr</code>. Press <kbd>F5</kbd> to render all Writes, <kbd>F7</kbd> for the selected ones.</p></div>
       </div>
-      <p class="muted">Save with <kbd>Ctrl</kbd><kbd>S</kbd>. Comps are <code>.weld</code> files; <kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd> saves and bumps the version to <code>_v002</code>.</p>
+      <p class="muted">Save with <kbd>Ctrl</kbd><kbd>S</kbd>. Comps are <code>.weld</code> files; <strong>File › Save Incremental</strong> (<kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd>) saves the next version: <code>shot_v001.weld</code> becomes <code>shot_v002.weld</code>, keeping the digits (an unversioned name gets <code>_v002</code>). If that version is already in the folder, it asks: overwrite it, or save as the next free number.</p>
 
       <h3>From the command line</h3>
 <!--os:win--><pre>bin\welder.exe render examples\demo.weld -f 1-24 -v
@@ -392,6 +392,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <li>Frames ahead of the playhead render several at a time into RAM; the Timeline's green line shows what's cached, and the <strong>cache</strong> button renders the whole range.</li>
         <li>Slow frames also go to the disk cache (20 GB by default), so they come back after an undo or when the comp reopens. <kbd>F12</kbd> clears cached images.</li>
         <li>The Timeline's range menu shows <strong>Global</strong>, <strong>Input</strong> (the viewed footage) or <strong>Custom</strong> frames. The fps readout turns red when playback falls behind.</li>
+        <li><kbd>I</kbd> and <kbd>O</kbd> over the viewer or timeline (or the timeline's <strong>I</strong> / <strong>O</strong> buttons) set the in and out points at the current frame; pressed again on the same frame they take that point off. Playback, <kbd>Home</kbd> / <kbd>End</kbd> and the Render dialog's <strong>in-out</strong> range use them; right-click either button to clear both. They are saved with the script, and come in and go out with .nk scripts as the viewer's locked frame range.</li>
       </ul>
     </section>
 

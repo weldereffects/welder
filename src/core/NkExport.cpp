@@ -320,6 +320,7 @@ struct Writer {
     const Names& names;
     std::vector<std::string>& warnings;
     int placeholders = 0;
+    json inOut;  // the project's in / out points [in, out] (null: none): they go on the Viewer
 
     std::string in(const json& n, size_t i) const {
         const json& ins = n.value("inputs", json::array());
@@ -791,6 +792,10 @@ struct Writer {
             for (size_t i = 0; i < ins.size(); ++i) b.main.push_back(in(n, i));
             const int a = (int)std::lround(p.value("a_pipe", 1.0));
             raw("input_number", std::to_string(((a % 10) + 9) % 10));
+            if (inOut.is_array() && inOut.size() == 2) {  // the in / out points: a locked frame range on the viewer
+                raw("frame_range", fmt(inOut[0].get<double>()) + "-" + fmt(inOut[1].get<double>()));
+                raw("frame_range_lock", "true");
+            }
         } else if (type == "Dot" || type == "NoOp") {
             b.cls = type;
             mainMask(1, -1);
@@ -933,6 +938,7 @@ struct Exporter {
     ExportResult res;
     bool selected = true;
     bool cutPasteUsed = false;
+    json inOut;  // (Writer::inOut)
 
     std::string groupOf(const json& n) const {
         std::string g = n.value("group", "");
@@ -965,6 +971,7 @@ struct Exporter {
         for (size_t i : at) visit(i);
 
         Writer w{names, res.warnings};
+        w.inOut = inOut;
         for (size_t i : order) {
             const json& n = nodes[i];
             const std::string name = n.value("name", "Node");
@@ -1113,6 +1120,7 @@ ExportResult exportCompJson(const json& j) {
     Exporter e;
     e.selected = false;
     e.cutPasteUsed = true;  // a script has nothing to paste onto
+    if (j.contains("project") && j["project"].contains("in_out")) e.inOut = j["project"]["in_out"];
     std::string body = e.run(j.value("nodes", json::array()));
     json fmtj = j.value("format", json::object());
     int W = fmtj.value("width", 1920), H = fmtj.value("height", 1080);

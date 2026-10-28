@@ -129,6 +129,7 @@ public:
     std::string viewed;                     // node shown in the active viewer (its Viewer node's A pipe)
     std::set<std::string> selection;
     std::deque<std::string> panels;         // properties bin, most recent first
+    std::set<std::string> panelsToExpand;   // just opened: shown expanded (even if collapsed before), the bin brought forward
     int maxPanels = 6;
     std::string status;                     // one-line status message
     std::deque<std::string> log;            // messages panel

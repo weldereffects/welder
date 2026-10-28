@@ -2846,6 +2846,11 @@ class Translator:
             num = str(k.get("input_number", "0"))
             if is_number(num):
                 params["a_pipe"] = (int(float(num)) + 1) % 10
+            # in / out points: a locked frame range ("1001-1100") on the viewer
+            if str(k.get("frame_range_lock", "")).strip() == "true" and "frame_range" in k:
+                m = re.match(r"^\s*(-?\d+(?:\.\d+)?)\s*[- ]\s*(-?\d+(?:\.\d+)?)\s*$", str(k["frame_range"]).strip("\"{} "))
+                if m and float(m.group(1)) <= float(m.group(2)):
+                    self.root.setdefault("project", {})["in_out"] = [float(m.group(1)), float(m.group(2))]
             return self.emit(nk_name, klass, "Viewer", main[:10], params, k)
         if klass in ("BackdropNode", "StickyNote"):
             label = strip_html(str(k.get("label", "")))

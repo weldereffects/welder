@@ -24,7 +24,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Global", "Ctrl+O", "open comp", true},
         {"Global", "Ctrl+S", "save", true},
         {"Global", "Ctrl+Shift+S", "save as", true},
-        {"Global", "Alt+Shift+S", "save and increment version (_v###)", true},
+        {"Global", "Alt+Shift+S", "save incremental: the next version (_v###), asking if it exists", true},
         {"Global", "Alt+Shift+1-9, 0", "open a recent script (File > Open Recent)", true},
         {"Global", "Ctrl+W", "close comp (new empty comp)", true},
         {"Global", "Ctrl+Q", "quit", true},
@@ -205,26 +205,6 @@ void setFrame(App& app, double f) {
 }
 
 // Save, then save again as the next _v### version.
-std::string nextVersionPath(const std::string& path) {
-    namespace fs = std::filesystem;
-    fs::path p(path);
-    std::string stem = p.stem().string();
-    size_t best = std::string::npos, len = 0;
-    for (size_t i = 0; i + 1 < stem.size(); ++i)
-        if ((stem[i] == 'v' || stem[i] == 'V') && std::isdigit((unsigned char)stem[i + 1])) {
-            size_t j = i + 1;
-            while (j < stem.size() && std::isdigit((unsigned char)stem[j])) ++j;
-            best = i;
-            len = j - i - 1;
-        }
-    if (best == std::string::npos) return (p.parent_path() / (stem + "_v002" + p.extension().string())).string();
-    int v = std::stoi(stem.substr(best + 1, len)) + 1;
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%0*d", (int)len, v);
-    stem = stem.substr(0, best + 1) + buf + stem.substr(best + 1 + len);
-    return (p.parent_path() / (stem + p.extension().string())).string();
-}
-
 // Digit keys 0-9 (top row and keypad).
 int digitPressed(bool ctrl, bool shift, bool alt) {
     for (int k = 0; k <= 9; ++k)
@@ -261,6 +241,36 @@ void openRender(App& app, UiState& ui, bool selectedOnly) { openRenderDialog(app
 
 }  // namespace
 
+// I / O (and the timeline's I / O buttons): set the in / out point at this frame; on the frame
+// that already is the in (out) point, take it off again (back to the start / end of the range).
+void toggleInOut(App& app, bool in) {
+    const double fr = std::round(app.frame);
+    const auto vis = app.visibleRange();
+    const auto& pr = app.comp->project;
+    const bool clear = pr.hasInOut && (in ? pr.inPoint == fr && fr != vis.first : pr.outPoint == fr && fr != vis.second);
+    app.edit([fr, in, vis, clear](Comp& c) {
+        auto& p = c.project;
+        if (!p.hasInOut) {
+            p.inPoint = vis.first;
+            p.outPoint = vis.second;
+        }
+        if (clear) {
+            if (in) p.inPoint = vis.first;
+            else p.outPoint = vis.second;
+        } else if (in) {
+            p.inPoint = fr;
+            if (p.outPoint < fr) p.outPoint = vis.second;  // an in point after the out point: the out point goes
+        } else {
+            p.outPoint = fr;
+            if (p.inPoint > fr) p.inPoint = vis.first;
+        }
+        // neither set any more: no in / out at all
+        p.hasInOut = !(p.inPoint <= vis.first && p.outPoint >= vis.second);
+    });
+    app.message(std::string(in ? "in point " : "out point ") + (clear ? "off" : std::to_string((int)fr)));
+}
+
+
 void handleHotkeys(App& app, UiState& ui) {
     ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return;
@@ -283,12 +293,7 @@ void handleHotkeys(App& app, UiState& ui) {
 
     if (key(ImGuiKey_Z, true)) { app.undo(); return; }
     if (key(ImGuiKey_Y, true) || key(ImGuiKey_Z, true, true)) { app.redo(); return; }
-    if (key(ImGuiKey_S, false, true, true)) {
-        if (app.compPath.empty()) { ui.menuAction = "saveas"; return; }
-        std::string err, next = nextVersionPath(app.compPath);
-        if (!app.save(app.compPath, &err) || !app.save(next, &err)) app.message("error: " + err);
-        return;
-    }
+    if (key(ImGuiKey_S, false, true, true)) { ui.menuAction = "saveinc"; return; }  // Save Incremental
     for (int i = 0; i < 10; ++i)  // Alt+Shift+1..9, 0: the recent scripts (the classic keys)
         if (key((ImGuiKey)(ImGuiKey_0 + (i + 1) % 10), false, true, true)) {
             if (i < (int)app.recentFiles.size()) ui.dropOpenComp = app.recentFiles[i];  // asks about unsaved changes
@@ -347,31 +352,7 @@ void handleHotkeys(App& app, UiState& ui) {
         if (key(ImGuiKey_J)) { app.playDir = -1; app.playing = true; return; }
         if (key(ImGuiKey_K)) { app.playing = false; return; }
         if (key(ImGuiKey_I) || key(ImGuiKey_O)) {
-            // I / O set the in / out point at this frame; pressed again on the frame that already
-            // is the in (out) point, they take it off (back to the start / end of the range)
-            const bool in = ImGui::IsKeyPressed(ImGuiKey_I);
-            const double fr = app.frame;
-            const auto vis = app.visibleRange();
-            const auto& pr = app.comp->project;
-            const bool clear = pr.hasInOut && (in ? pr.inPoint == fr && fr != vis.first : pr.outPoint == fr && fr != vis.second);
-            app.edit([fr, in, vis, clear](Comp& c) {
-                auto& p = c.project;
-                if (!p.hasInOut) {
-                    p.inPoint = vis.first;
-                    p.outPoint = vis.second;
-                }
-                if (clear) {
-                    if (in) p.inPoint = vis.first;
-                    else p.outPoint = vis.second;
-                } else if (in) {
-                    p.inPoint = std::min(fr, p.outPoint);
-                } else {
-                    p.outPoint = std::max(fr, p.inPoint);
-                }
-                // neither set any more: no in / out at all
-                p.hasInOut = !(p.inPoint <= vis.first && p.outPoint >= vis.second);
-            });
-            app.message(std::string(in ? "in point " : "out point ") + (clear ? "off" : std::to_string((int)fr)));
+            toggleInOut(app, ImGui::IsKeyPressed(ImGuiKey_I));
             return;
         }
     }

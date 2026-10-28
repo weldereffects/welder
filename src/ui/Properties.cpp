@@ -3003,6 +3003,7 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
     ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertU32ToFloat4(theme().card));
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
     ImGui::PushFont(theme().medium, 0.0f);
+    if (!ImGui::GetCurrentWindow()->SkipItems && app.panelsToExpand.erase(n->name)) ImGui::SetNextItemOpen(true);  // opened again (double-click...): expanded
     bool open = ImGui::CollapsingHeader((n->name + "###hdr").c_str(), keepOpen, ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
     ImGui::PopStyleColor(2);
@@ -3306,6 +3307,10 @@ void setParamComp(json& v, int n, int k, double val, double frame, const std::ve
 
 void drawProperties(App& app, UiState& ui) {
     ImGui::Begin(ui.win("Properties").c_str());
+    if (!app.panelsToExpand.empty()) {  // a node was just opened: the bin's tab to the front (focus stays where it is)
+        ImGuiWindow* w = ImGui::GetCurrentWindow();
+        if (w->DockNode && w->DockNode->TabBar) w->DockNode->TabBar->NextSelectedTabId = w->TabId;
+    }
     ui.noteHover("Properties");
     // the classic bin toolbar: how many panels stay open, and clear them all.
     {
@@ -3345,6 +3350,7 @@ void drawProperties(App& app, UiState& ui) {
         if (!keep) close.push_back(name);
     }
     for (auto& c : close) app.closePanel(c);
+    if (!ImGui::GetCurrentWindow()->SkipItems) app.panelsToExpand.clear();  // (shown: done; hidden: next time it shows)
     drawExprEditor(app);
     ImGui::End();
 }

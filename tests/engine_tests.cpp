@@ -1202,6 +1202,15 @@ int main(int argc, char** argv) {
         CHECK(t.find("Viewer {") != std::string::npos);
         CHECK(t.find("inputs 2") != std::string::npos);
         CHECK(t.find("input_number 0") != std::string::npos);
+        // the in / out points go on the viewer as a locked frame range (a whole script only)
+        c->project.hasInOut = true;
+        c->project.inPoint = 1010;
+        c->project.outPoint = 1020;
+        std::string s = nk::exportComp(*c).text;
+        CHECK(s.find("frame_range 1010-1020") != std::string::npos);
+        CHECK(s.find("frame_range_lock true") != std::string::npos);
+        c->project.hasInOut = false;
+        CHECK(nk::exportComp(*c).text.find("frame_range_lock") == std::string::npos);
     });
 
     test("KillOutline: the light rim of a key takes the colour inside it; alpha and the core stay", [] {

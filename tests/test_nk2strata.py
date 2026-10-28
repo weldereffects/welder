@@ -216,6 +216,20 @@ Viewer { inputs 2 input_number 1 name Viewer1 }
         self.assertEqual(sorted(v["inputs"]), ["A", "B"])
         self.assertEqual(v["params"]["a_pipe"], 2)  # .nk input 1 is pipe 2
 
+    def test_viewer_in_out(self):
+        # in / out points: the viewer's locked frame range becomes the project's in / out
+        comp, _, _ = convert("""
+Root { inputs 0 first_frame 1001 last_frame 1100 }
+Constant { inputs 0 name A }
+Viewer { frame_range 1010-1050 frame_range_lock true name Viewer1 }
+""")
+        self.assertEqual(comp["project"]["in_out"], [1010.0, 1050.0])
+        comp, _, _ = convert("""
+Constant { inputs 0 name A }
+Viewer { frame_range 1010-1050 name Viewer1 }
+""")
+        self.assertNotIn("in_out", comp.get("project", {}))  # not locked: just what the viewer showed
+
 
 class Knobs(unittest.TestCase):
     def test_root(self):

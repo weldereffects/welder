@@ -72,6 +72,56 @@ static void doSaveAs(App& app, UiState& ui) {
     }, app.compPath.empty() ? "" : fs::path(app.compPath).parent_path().string());
 }
 
+// ---- versions: the last "v<digits>" in a script's name (shot_comp_v003.weld); its number and digits
+struct Version {
+    size_t pos = std::string::npos, len = 0;  // the digits, in the stem
+    int number = 0;
+};
+static Version findVersion(const std::string& stem) {
+    Version v;
+    for (size_t i = 0; i + 1 < stem.size(); ++i)
+        if ((stem[i] == 'v' || stem[i] == 'V') && std::isdigit((unsigned char)stem[i + 1]) &&
+            (i == 0 || !std::isalpha((unsigned char)stem[i - 1]))) {  // (not the v inside a word)
+            size_t j = i + 1;
+            while (j < stem.size() && std::isdigit((unsigned char)stem[j])) ++j;
+            v.pos = i + 1;
+            v.len = j - i - 1;
+        }
+    if (v.pos != std::string::npos) v.number = std::atoi(stem.substr(v.pos, v.len).c_str());
+    return v;
+}
+
+// The script's path at version `number`, keeping its padding (an unversioned name gets "_v###").
+std::string versionPath(const std::string& path, int number) {
+    const fs::path p(path);
+    std::string stem = p.stem().string();
+    const Version v = findVersion(stem);
+    char digits[32];
+    std::snprintf(digits, sizeof digits, "%0*d", v.pos == std::string::npos ? 3 : (int)v.len, number);
+    if (v.pos == std::string::npos) stem += std::string("_v") + digits;
+    else stem = stem.substr(0, v.pos) + digits + stem.substr(v.pos + v.len);
+    return (p.parent_path() / (stem + p.extension().string())).string();
+}
+
+// Save Incremental (Alt+Shift+S): the comp saved as the next version (v001 -> v002). When that
+// one is already there, ask: overwrite it, or take the next free number.
+static void doSaveIncremental(App& app, UiState& ui) {
+    if (app.compPath.empty()) return doSaveAs(app, ui);
+    const Version v = findVersion(fs::path(app.compPath).stem().string());
+    const int cur = v.pos == std::string::npos ? 1 : v.number;
+    const std::string next = versionPath(app.compPath, cur + 1);
+    std::error_code ec;
+    if (!fs::exists(next, ec)) {
+        std::string err;
+        if (!app.save(next, &err)) app.message("error: " + err);
+        return;
+    }
+    int free = cur + 2;
+    while (fs::exists(versionPath(app.compPath, free), ec) && free < cur + 10000) ++free;
+    ui.versionClash = next;
+    ui.versionFree = versionPath(app.compPath, free);
+}
+
 static void doSave(App& app, UiState& ui) {
     if (app.compPath.empty()) return doSaveAs(app, ui);
     std::string err;
@@ -88,6 +138,7 @@ void drawMenuBar(App& app, UiState& ui) {
         if (a == "open") doOpen(app, ui);
         else if (a == "save") doSave(app, ui);
         else if (a == "saveas") doSaveAs(app, ui);
+        else if (a == "saveinc") doSaveIncremental(app, ui);
     }
     if (!ImGui::BeginMainMenuBar()) return;
     if (ImGui::BeginMenu("File")) {
@@ -130,6 +181,8 @@ void drawMenuBar(App& app, UiState& ui) {
         ImGui::Separator();
         if (ImGui::MenuItem("Save", "Ctrl+S")) doSave(app, ui);
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) doSaveAs(app, ui);
+        if (ImGui::MenuItem("Save Incremental", "Alt+Shift+S")) doSaveIncremental(app, ui);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save as the next version: _v001 -> _v002 (asks if that one exists)");
         ImGui::Separator();
         if (ImGui::MenuItem("Close Comp", "Ctrl+W")) ui.dropOpenComp = kNewComp;
         if (ImGui::MenuItem("Quit", "Ctrl+Q")) ui.requestQuit = true;
@@ -1209,6 +1262,33 @@ void drawDialogs(App& app, UiState& ui) {
         }
         ImGui::EndPopup();
     }
+    // Save Incremental: the next version is already there
+    if (!ui.versionClash.empty() && !ImGui::IsPopupOpen("Version exists")) ImGui::OpenPopup("Version exists");
+    if (ImGui::BeginPopupModal("Version exists", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const std::string clash = fs::path(ui.versionClash).filename().string(), free = fs::path(ui.versionFree).filename().string();
+        ImGui::Text("%s already exists.", clash.c_str());
+        ImGui::TextDisabled("Overwrite it, or save as the next free version?");
+        ImGui::Spacing();
+        auto saveTo = [&](const std::string& p) {
+            std::string err;
+            if (!app.save(p, &err)) app.message("error: " + err);
+            ui.versionClash.clear();
+            ui.versionFree.clear();
+            ImGui::CloseCurrentPopup();
+        };
+        if (ImGui::Button(("Save as " + free).c_str())) saveTo(ui.versionFree);
+        ImGui::SetItemDefaultFocus();
+        ImGui::SameLine();
+        if (ImGui::Button(("Overwrite " + clash).c_str())) saveTo(ui.versionClash);
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            ui.versionClash.clear();
+            ui.versionFree.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     // Opening a comp, or a new one: straight away, or asking first when there are unsaved changes.
     auto doIt = [&app, &ui](bool discarded) {
         const std::string what = ui.dropOpenComp;
