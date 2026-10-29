@@ -30,6 +30,37 @@ and settings from a Strata install are picked up the first time Welder starts.
 exits; `WELDER_UI_PROFILE=1` makes the editor print UI frame times and viewer
 updates per second.
 
+## Download (public beta)
+
+**Welder 0.1.0-beta.1** is the first public test build. Get it from the
+[Releases page](https://github.com/weldereffects/welder/releases).
+
+| Platform | Download | Needs |
+|---|---|---|
+| Windows 10 / 11, x64 | `welder-0.1.0-beta.1-win64.zip`, plus `-python.zip` (.nk import) and `-rife-models.zip` (the RIFE node) if you want them | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
+| Linux x86_64 | `welder-0.1.0-beta.1-linux-x86_64.tar.gz` (+ `-rife-models`) | glibc 2.38 or newer (Ubuntu 24.04, Fedora 39, Debian 13 or later), X11 or XWayland |
+| macOS | not in this beta | |
+
+**Windows:** before unzipping, right-click the zip, Properties, tick **Unblock**, OK. The build
+isn't code-signed yet, so Windows may still say "Windows protected your PC": click **More info**,
+then **Run anyway**. Unzip every zip into the same folder and run `Welder.bat`.
+
+**Linux:** unpack and run `./Welder`; `./install-desktop-entry.sh` adds it to your
+applications menu.
+
+It's a beta: save often (it autosaves every 30 seconds and offers to recover after a crash) and
+don't put it on a delivery you can't redo.
+
+### Reporting bugs
+
+Use [GitHub Issues](https://github.com/weldereffects/welder/issues/new/choose) (**Help › Report a
+Bug...** in Welder opens it). Say what you did, what happened and what you expected, and attach:
+
+* the version (Help › About Welder)
+* your OS and GPU
+* after a crash, the newest `crash-<time>.txt` from **Help › Open Crash Reports Folder**
+* the script, or a cut-down one that shows the problem, if you can share it
+
 ## What works
 
 | Area | Status |

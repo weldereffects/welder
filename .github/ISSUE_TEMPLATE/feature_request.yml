@@ -1,0 +1,27 @@
+name: Feature request
+description: Something Welder should do, or do differently.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: What you're trying to do
+      description: The shot task, in your words, and what gets in the way today.
+      placeholder: When I paint out wires over 200 frames I have to ...
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you'd like it to work. If another app does it well, say which and how.
+  - type: dropdown
+    id: blocker
+    attributes:
+      label: How much it matters
+      options:
+        - It stops me using Welder on real shots
+        - It would save me real time
+        - Nice to have
+    validations:
+      required: true

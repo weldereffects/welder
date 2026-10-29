@@ -1,0 +1,65 @@
+name: Bug report
+description: Something broke, crashed, rendered wrong or got slow.
+labels: ["bug", "beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing Welder. One problem per report, please: it makes each one easier to fix and to close.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what happened, and what you expected instead.
+      placeholder: |
+        1. Opened shot.weld, selected RotoPaint1
+        2. Painted a clone stroke on frame 1047
+        3. The viewer went black / Welder closed / ...
+        Expected: ...
+    validations:
+      required: true
+  - type: dropdown
+    id: how-often
+    attributes:
+      label: How often
+      options:
+        - Every time
+        - Sometimes
+        - Once so far
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Welder version
+      description: Help > About Welder.
+      placeholder: 0.1.0-beta.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-detail
+    attributes:
+      label: OS version and GPU
+      description: For Linux, the distribution. The GPU and driver version matter for viewer and GPU-node problems.
+      placeholder: Ubuntu 24.04 · NVIDIA RTX 4080, driver 565.57
+  - type: textarea
+    id: crash
+    attributes:
+      label: Crash report
+      description: After a crash, Help > Open Crash Reports Folder and drop the newest crash-<time>.txt here (or paste it).
+  - type: textarea
+    id: files
+    attributes:
+      label: Script, footage or screenshots
+      description: A .weld or .nk script that shows it (cut down to the nodes involved is ideal), screenshots or a screen recording. Only share what you're allowed to.

@@ -30,15 +30,15 @@ using namespace strata;
 namespace {
 
 void usage() {
-    std::cerr << "strata " STRATA_VERSION " — open-source node-based compositor (headless)\n\n"
+    std::cerr << "welder " STRATA_VERSION " — open-source node-based compositor (headless)\n\n"
                  "usage:\n"
                  "  welder render <comp.weld> [-f 1-100|1-100x2|1,5,9] [-w Write1,..] [-t threads] [--cache-mb N] [--scale 0.5] [-c] [-v] [--no-gpu]\n"
                  "  welder node   <comp.weld> <NodeName> -o out.(exr|dpx|tif|png|jpg) [-f frame]\n"
                  "  welder info   <comp.weld>\n"
                  "  welder nk     <comp.weld> [-o shot.nk]   (export to a .nk script)\n"
                  "  welder bench  <comp.weld> <Node> [EditedNode] [-f frame]\n"
-                 "  strata types\n"
-                 "  strata ofx-list [dir ...]   (also searches $OFX_PLUGIN_PATH)\n";
+                 "  welder types\n"
+                 "  welder ofx-list [dir ...]   (also searches $OFX_PLUGIN_PATH)\n";
 }
 
 bool parseRange(const std::string& s, double& a, double& b) {

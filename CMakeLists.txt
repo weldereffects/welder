@@ -153,7 +153,14 @@ target_link_libraries(strata_core PUBLIC strata_thirdparty strata_openexr Thread
 if(WIN32)
   target_link_libraries(strata_core PUBLIC shell32 dbghelp mpr)
 endif()
-target_compile_definitions(strata_core PUBLIC STRATA_VERSION="${PROJECT_VERSION}")
+# a pre-release label ("beta.1"): shown in the app and in the packages' names; empty for a release
+set(WELDER_PRERELEASE "beta.1" CACHE STRING "pre-release label, e.g. beta.1 (empty: a release)")
+if(WELDER_PRERELEASE)
+  set(WELDER_VERSION_FULL "${PROJECT_VERSION}-${WELDER_PRERELEASE}")
+else()
+  set(WELDER_VERSION_FULL "${PROJECT_VERSION}")
+endif()
+target_compile_definitions(strata_core PUBLIC STRATA_VERSION="${WELDER_VERSION_FULL}")
 
 # ---------------------------------------------------------------- GPU compute (Vulkan)
 # Shaders (src/gpu/shaders/*.comp) are compiled to SPIR-V with glslangValidator

@@ -336,6 +336,16 @@ void drawMenuBar(App& app, UiState& ui) {
             else ml::openFolder(found);
         }
         if (ImGui::MenuItem("Keyboard Shortcuts")) ui.showShortcuts = true;
+        ImGui::Separator();
+        if (ImGui::MenuItem("Report a Bug...")) ml::openFolder("https://github.com/weldereffects/welder/issues/new/choose");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Opens Welder's issue page on GitHub (Welder %s)", STRATA_VERSION);
+        if (ImGui::MenuItem("Open Crash Reports Folder")) {
+            std::error_code ec;
+            fs::create_directories(crash::dir(), ec);
+            ml::openFolder(crash::dir());
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Attach the newest crash-<time>.txt to a bug report");
+        ImGui::Separator();
         if (ImGui::MenuItem("About Welder")) ui.showAbout = true;
         ImGui::EndMenu();
     }

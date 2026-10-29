@@ -19,6 +19,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OFX=${1:-}
 BUILD="$ROOT/build-win"
 VERSION=$(grep -oP 'project\(welder VERSION \K[0-9.]+' "$ROOT/CMakeLists.txt")
+PRE=$(grep -oP 'set\(WELDER_PRERELEASE "\K[^"]*' "$ROOT/CMakeLists.txt" || true)
+[ -n "$PRE" ] && VERSION="$VERSION-$PRE"  # (0.1.0-beta.1)
 STAGE="$ROOT/dist/welder-$VERSION-win64"
 
 NCNN_WIN=${NCNN_WIN:-$ROOT/../deps/ncnn-win}
@@ -91,11 +93,13 @@ find "$STAGE/bin/ml" -name __pycache__ -prune -exec rm -rf {} +
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$STAGE/"
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/"  # (the AGPL; what is bundled, under which licence)
+cp -r "$ROOT/licenses" "$STAGE/licenses"
 mkdir -p "$STAGE/examples/nk"
 cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"
 python3 "$ROOT/tools/nk2strata.py" "$STAGE/examples/nk/shot010_comp_v003.nk" -q   # pre-translated copy
-cp "$ROOT/tools/windows/README-WINDOWS.txt" "$STAGE/"
+sed "s/@VERSION@/$VERSION/g" "$ROOT/tools/windows/README-WINDOWS.txt" > "$STAGE/README-WINDOWS.txt"
 python3 "$ROOT/tools/build_manual.py" "$STAGE/Welder-Manual.html" --os win   # Help > User Manual
 cp "$ROOT/tools/windows/try-it.bat" "$STAGE/"
 cp "$ROOT/tools/windows/Welder.bat" "$STAGE/"

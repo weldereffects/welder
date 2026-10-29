@@ -2,15 +2,15 @@ Welder for Windows (x64)
 ========================
 
 No install needed. Unzip anywhere. The download comes in up to five zips
-that all unpack into the same welder-0.1.0-win64 folder: unzip them into
+that all unpack into the same welder-@VERSION@-win64 folder: unzip them into
 the same place.
-  welder-0.1.0-win64.zip              the app (required)
-  welder-0.1.0-win64-python.zip       Python for the .nk importer (python\):
+  welder-@VERSION@-win64.zip              the app (required)
+  welder-@VERSION@-win64-python.zip       Python for the .nk importer (python\):
                                       importing .nk scripts and pasting nodes
                                       copied in another .nk app (or have Python 3 installed)
-  welder-0.1.0-win64-rife-models.zip  the RIFE node's networks (bin\models\rife)
-  welder-0.1.0-win64-tests.zip        self-tests (optional)
-  welder-0.1.0-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
+  welder-@VERSION@-win64-rife-models.zip  the RIFE node's networks (bin\models\rife)
+  welder-@VERSION@-win64-tests.zip        self-tests (optional)
+  welder-@VERSION@-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
 
 USER MANUAL
   Welder-Manual.html (open it in any browser, or Help > User Manual in Welder).

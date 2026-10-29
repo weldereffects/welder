@@ -12,6 +12,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD="$ROOT/build-linux"
 VERSION=$(grep -oP 'project\(welder VERSION \K[0-9.]+' "$ROOT/CMakeLists.txt")
+PRE=$(grep -oP 'set\(WELDER_PRERELEASE "\K[^"]*' "$ROOT/CMakeLists.txt" || true)
+[ -n "$PRE" ] && VERSION="$VERSION-$PRE"  # (0.1.0-beta.1)
 TOP="welder-$VERSION-linux-x86_64"
 STAGE="$ROOT/dist/$TOP"
 
@@ -59,6 +61,8 @@ find "$STAGE/bin/ml" -name __pycache__ -prune -exec rm -rf {} +
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"
 cp "$ROOT/README.md" "$STAGE/"
+cp "$ROOT/LICENSE" "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/"  # (the AGPL; what is bundled, under which licence)
+cp -r "$ROOT/licenses" "$STAGE/licenses"
 mkdir -p "$STAGE/examples/nk"
 cp "$ROOT"/examples/*.weld "$STAGE/examples/"
 cp "$ROOT"/examples/nk/*.nk "$STAGE/examples/nk/"
