@@ -1,0 +1,92 @@
+# The Linux release build: made on Rocky Linux 8 (glibc 2.28), so it runs on Rocky / Alma / RHEL 8
+# and 9, the VFX Reference Platform systems, and every newer distribution.
+#
+# Run it from the Actions tab (Run workflow), or push a v* tag. The packages come out as the run's
+# artifact "welder-linux-x86_64".
+name: Linux build (Rocky 8)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container: rockylinux:8
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Build tools and libraries
+        run: |
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled powertools
+          dnf -y install gcc-toolset-13 git cmake ninja-build python3.11 make perl nasm which patch xz \
+            findutils diffutils file binutils tar gzip \
+            libX11-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel libXext-devel \
+            mesa-libGL-devel xorg-x11-server-Xvfb mesa-dri-drivers xorg-x11-xauth
+          alternatives --set python3 /usr/bin/python3.11
+          python3 --version
+
+      - uses: actions/checkout@v4
+
+      - name: Trust the checkout (it belongs to another user in the container)
+        run: git config --global --add safe.directory '*'
+
+      - name: How to link the C++ runtime
+        run: |
+          source /opt/rh/gcc-toolset-13/enable
+          echo 'int main() { return 0; }' > /tmp/t.cpp
+          if g++ -static-libstdc++ -static-libgcc /tmp/t.cpp -o /tmp/t 2>/dev/null; then
+            echo "WELDER_LINK_FLAGS=-static-libstdc++ -static-libgcc" >> "$GITHUB_ENV"
+          else  # gcc-toolset's runtime: the newer parts are linked in, the rest is the system's libstdc++
+            echo "WELDER_LINK_FLAGS=-static-libgcc" >> "$GITHUB_ENV"
+          fi
+
+      - name: Cache the libraries (OpenColorIO, FFmpeg, ncnn)
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: el8-deps-${{ hashFiles('tools/build_ocio.sh', 'tools/build_ffmpeg.sh', 'tools/build_ncnn.sh') }}
+
+      - name: Build the libraries
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          source /opt/rh/gcc-toolset-13/enable
+          tools/build_ocio.sh deps/src deps/ocio-linux
+          tools/build_ffmpeg.sh deps/src deps/ffmpeg-linux
+          git clone -q --depth 1 --branch 20250916 https://github.com/Tencent/ncnn.git deps/src/ncnn
+          git -C deps/src/ncnn submodule update -q --init --depth 1 glslang
+          tools/build_ncnn.sh deps/src/ncnn deps/ncnn-linux
+          rm -rf deps/src deps/*/build
+
+      - name: Build, test and package
+        run: |
+          source /opt/rh/gcc-toolset-13/enable
+          OCIO_LINUX=$PWD/deps/ocio-linux FFMPEG_LINUX=$PWD/deps/ffmpeg-linux NCNN_LINUX=$PWD/deps/ncnn-linux \
+            tools/package_linux.sh
+
+      - name: What it needs to run
+        run: |
+          cd dist/welder-*-linux-x86_64
+          for b in bin/welder bin/welder_ui; do
+            echo "$b needs $(objdump -T $b | grep -oE 'GLIBC_[0-9.]+' | sort -t. -k2,2n -k3,3n -u | tail -1)" \
+                 "and $(objdump -T $b | grep -oE 'GLIBCXX_[0-9.]+' | sort -t. -k2,2n -k3,3n -u | tail -1)"
+          done
+          ldd bin/welder_ui | grep -v "linux-vdso\|ld-linux"
+
+      - name: Startup check (the editor under a virtual display)
+        run: |
+          tools/smoke_test.sh "$(cd dist/welder-*-linux-x86_64/bin && pwd)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: welder-linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error

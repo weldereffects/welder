@@ -6,7 +6,9 @@
 # Optional (default ../deps/<name>-linux, built with tools/build_ocio.sh / build_ffmpeg.sh / build_ncnn.sh):
 #   OCIO_LINUX, FFMPEG_LINUX, NCNN_LINUX  - colour management, movies, the RIFE node (all linked statically).
 # The C++ runtime is linked in; libgomp travels in bin/lib (found through RUNPATH $ORIGIN/lib). The result runs on distributions with at
-# least the glibc of the machine that built it (build on the oldest system you want to support).
+# least the glibc of the machine that built it (build on the oldest system you want to support: the release
+# build is made on Rocky Linux 8, glibc 2.28, by .github/workflows/linux-el8.yml).
+# WELDER_LINK_FLAGS overrides how the C++ runtime is linked (default: statically).
 # Output: dist/welder-<version>-linux-x86_64.tar.gz (+ -rife-models, -tests)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -35,7 +37,7 @@ fi
 GEN=()
 command -v ninja >/dev/null && GEN=(-G Ninja)
 cmake -S "$ROOT" -B "$BUILD" "${GEN[@]}" -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc" -DCMAKE_BUILD_RPATH='$ORIGIN/lib' "${ARGS[@]}"
+      -DCMAKE_EXE_LINKER_FLAGS="${WELDER_LINK_FLAGS:--static-libstdc++ -static-libgcc}" -DCMAKE_BUILD_RPATH='$ORIGIN/lib' "${ARGS[@]}"
 cmake --build "$BUILD" -j"$(nproc)"
 
 echo "== engine tests"
