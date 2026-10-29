@@ -596,8 +596,10 @@ std::vector<NodeDef> build() {
                   When(F("noise_size", "noise size", 150, 5, 4000), "mode=loop"), When(I("seed", "seed", 0, 0, 1000), "mode=loop"),
                   When(F("time_offset", "time offset", 0, -10000, 10000), "mode=loop"),
                   When(F("start", "start frame", 1, -100000, 100000, "The src frame that is carried along"), "mode=advect"),
-                  Div("flow"), C("flow_channels", "flow from", "auto", {"auto", "forward.u / .v", "RG flowmap"}),
-                  F("speed", "speed", 1, -10, 10, "Multiplies the flow"), F("rg_speed", "RG flowmap speed (px / frame)", 4, 0, 200),
+                  Div("flow"), C("flow_channels", "flow from", "auto", {"auto", "forward.u / .v", "RG flowmap", "angle"}),
+                  When(F("angle", "angle", 0, -360, 360, "The direction it flows (0 = right, 90 = up): no flow input needed"), "flow_channels=angle"),
+                  When(F("rotate", "rotate flow", 0, -180, 180, "Turns the flow input's direction everywhere by this many degrees"), "flow_channels=auto|forward.u / .v|RG flowmap"),
+                  F("speed", "speed", 1, -10, 10, "Multiplies the flow"), F("rg_speed", "px / frame", 4, 0, 200, "How fast it flows: at the angle, or at full strength of an RG flowmap"),
                   B("flip_g", "flip green (RG flowmap)", false),
                   Div("sampling"), C("edges", "edges", "clamp", {"clamp", "repeat", "mirror", "black"}), C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic"})},
                  "Moves src along a flow map. loop: two copies half a cycle apart, each pushed along the flow and cross-faded as it stretches "

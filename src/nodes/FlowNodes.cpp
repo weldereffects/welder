@@ -528,7 +528,7 @@ public:
         if (idx == 0) return input(0) ? e.dod(input(0), inputTime(0, f)) : Box();
         return req;
     }
-    int identityInput(double) override { return input(1) ? -1 : 0; }
+    int identityInput(double) override { return input(1) || angleMode() ? -1 : 0; }
     double inputTime(int idx, double f) override {
         if (idx == 0 && params.str("mode", "loop") == "advect") return std::round(params.num("start", 1));
         return f;
@@ -536,7 +536,7 @@ public:
 
     void render(RenderArgs& a, Image& out) override {
         std::fill(out.data.begin(), out.data.end(), 0.0f);
-        if (!input(0) || !input(1)) return;
+        if (!input(0) || (!input(1) && !angleMode())) return;
         const Box R = a.region.intersect(dod(a.engine, a.frame));
         if (R.empty()) return;
         if (params.str("mode", "loop") == "advect") renderAdvect(a, out, R);
@@ -544,7 +544,7 @@ public:
     }
     // advect: frame f is carried along every flow frame from the start
     uint64_t pastHash(Engine& e, double f) override {
-        if (!input(1) || params.str("mode", "loop") != "advect") return 0;
+        if (!input(1) || angleMode() || params.str("mode", "loop") != "advect") return 0;
         const int start = (int)std::round(params.num("start", 1)), steps = std::clamp((int)std::round(f) - start, 0, 5000);
         uint64_t h = 0x3c6ef372fe94f82bull;
         for (int k = 0; k < steps; ++k) h = hashCombine(h, e.hash(input(1), start + k));
@@ -572,9 +572,33 @@ protected:
     };
     SharedCache<PosMap> maps_{8};
 
+    // "flow from: angle": one direction everywhere, no flow input
+    bool angleMode() const { return params.str("flow_channels", "auto") == "angle"; }
+    // The flow's direction: in angle mode, the angle (degrees, 0 = right, 90 = up) at the RG speed;
+    // otherwise the flow as read, turned by "rotate" (degrees).
+    void orient(VecField& F, double fr, double sc) const {
+        if (angleMode()) {
+            const double a = params.num("angle", fr, 0) * 3.14159265358979323846 / 180;
+            const double s = params.num("rg_speed", fr, 4) * sc * params.num("speed", fr, 1);
+            std::fill(F.u.begin(), F.u.end(), (float)(std::cos(a) * s));
+            std::fill(F.v.begin(), F.v.end(), (float)(std::sin(a) * s));
+            return;
+        }
+        const double r = params.num("rotate", fr, 0) * 3.14159265358979323846 / 180;
+        if (r == 0) return;
+        const float c = (float)std::cos(r), sn = (float)std::sin(r);
+        for (size_t i = 0; i < F.u.size(); ++i) {
+            const float u = F.u[i], v = F.v[i];
+            F.u[i] = u * c - v * sn;
+            F.v[i] = u * sn + v * c;
+        }
+    }
+
     VecField readTileFlow(const Image& fi, double fr, double sc) {
-        return readFlow(fi, params.str("flow_channels", "auto"), params.num("rg_speed", fr, 4) * sc, params.flag("flip_g", false),
-                        params.num("speed", fr, 1));
+        VecField F = readFlow(fi, params.str("flow_channels", "auto"), params.num("rg_speed", fr, 4) * sc, params.flag("flip_g", false),
+                              params.num("speed", fr, 1));
+        orient(F, fr, sc);
+        return F;
     }
 
     // The flow image averaged over grid cells: a gw x gh field (box in cell units from 0).
@@ -607,6 +631,7 @@ protected:
                     F.v[(size_t)j * gw + i] = n ? (float)(sv / n) : 0.0f;
                 }
         });
+        orient(F, fr, sc);
         return F;
     }
 
@@ -669,9 +694,14 @@ protected:
     void renderLoop(RenderArgs& a, Image& out, const Box& R) {
         Engine& e = a.engine;
         const double f = a.frame, sc = e.scale();
-        const Box fb = e.dod(input(1), f).intersect(R);
         VecField F;
-        if (!fb.empty()) F = readTileFlow(*a.fetch(input(1), fb), f, sc);
+        if (angleMode()) {
+            F.resize(R);
+            orient(F, f, sc);
+        } else {
+            const Box fb = e.dod(input(1), f).intersect(R);
+            if (!fb.empty()) F = readTileFlow(*a.fetch(input(1), fb), f, sc);
+        }
         const double cycle = std::max(1.0, params.num("cycle", f, 40));
         const double T = (f + params.num("time_offset", f, 0)) / cycle;
         const double pn = params.num("phase_noise", f, 0.6), ns = std::max(1.0, params.num("noise_size", f, 150));
@@ -723,7 +753,7 @@ protected:
         const int gw = std::max(2, (int)std::ceil(D.width() / cell)), gh = std::max(2, (int)std::ceil(D.height() / cell));
         std::vector<uint64_t> keys(steps + 1);
         keys[0] = hashCombine(hashCombine(boxKey(paramsKey(params), D), (uint64_t)start), (uint64_t)std::llround(sc * 1e6));
-        for (int k = 1; k <= steps; ++k) keys[k] = hashCombine(keys[k - 1], e.hash(input(1), start + k - 1));
+        for (int k = 1; k <= steps; ++k) keys[k] = hashCombine(keys[k - 1], angleMode() ? (uint64_t)k : e.hash(input(1), start + k - 1));
         int have = 0;
         std::shared_ptr<const PosMap> P;
         for (int k = steps; k >= 1 && !P; --k)
@@ -741,8 +771,14 @@ protected:
             const double fr = start + k - 1;
             P = maps_.get(keys[k], [&] {
                 // the flow, averaged over each grid cell (it is smooth at that scale)
-                ImagePtr fi = e.renderRegion(input(1), fr, D);
-                const VecField F = cellFlow(*fi, fr, sc, D, cell, gw, gh);
+                VecField F;
+                if (angleMode()) {
+                    F.resize(Box(0, 0, gw, gh));
+                    orient(F, fr, sc);
+                } else {
+                    ImagePtr fi = e.renderRegion(input(1), fr, D);
+                    F = cellFlow(*fi, fr, sc, D, cell, gw, gh);
+                }
                 auto nm = std::make_shared<PosMap>();
                 nm->gw = gw, nm->gh = gh, nm->cell = cell;
                 nm->dx.resize((size_t)gw * gh);

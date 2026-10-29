@@ -5046,6 +5046,35 @@ int main(int argc, char** argv) {
         CHECK(eA < eD * 0.25);
         CHECK(eA < eN * 0.5);
     });
+    test("FlowMap: flow at an angle (no flow input), and the flow input turned by rotate", [] {
+        const int W = 192, H = 128;
+        json m = json::array({
+            {{"name", "P"}, {"type", "Plasma"}, {"params", {{"size", 60}, {"complexity", 8}, {"cycles", 3}, {"speed", 0}}}},
+            {{"name", "Right"}, {"type", "FlowField"}, {"params", {{"base", "direction"}, {"angle", 0}, {"speed", 2}}}},
+            // 5 frames at 2 px / frame, straight up: the start frame moved 10 px up
+            {{"name", "Up"}, {"type", "FlowMap"}, {"inputs", {"P"}}, {"params", {{"mode", "advect"}, {"start", 1}, {"flow_channels", "angle"}, {"angle", 90}, {"rg_speed", 2}}}},
+            {{"name", "Turned"}, {"type", "FlowMap"}, {"inputs", {"P", "Right"}}, {"params", {{"mode", "advect"}, {"start", 1}, {"rotate", 90}}}},
+            {{"name", "Diag"}, {"type", "FlowMap"}, {"inputs", {"P"}}, {"params", {{"mode", "advect"}, {"start", 1}, {"flow_channels", "angle"}, {"angle", 225}, {"rg_speed", 2}}}},
+            {{"name", "Up10"}, {"type", "Transform"}, {"inputs", {"P"}}, {"params", {{"translate", {0, 10}}}}},
+            {{"name", "DownLeft"}, {"type", "Transform"}, {"inputs", {"P"}}, {"params", {{"translate", {-7.0710678, -7.0710678}}}}},
+        });
+        auto c = comp(m, W, H);
+        c->firstFrame = 1;
+        c->lastFrame = 10;
+        auto err = [&](const char* a, const char* b) {
+            auto ia = render(*c, a, 6), ib = render(*c, b, 6);
+            double e = 0;
+            for (int y = 20; y < H - 20; ++y)
+                for (int x = 20; x < W - 20; ++x) e += std::fabs(px(ia, x, y, "R") - px(ib, x, y, "R"));
+            return e / ((H - 40) * (W - 40));
+        };
+        const double eUp = err("Up", "Up10"), eTurned = err("Turned", "Up10"), eDiag = err("Diag", "DownLeft"), eWrong = err("Up", "P");
+        std::printf("  angle 90 vs moved up 10 px %.4f; rotated flow %.4f; angle 225 vs moved down-left %.4f; (unmoved %.4f)\n", eUp, eTurned, eDiag, eWrong);
+        CHECK(eUp < 0.01);
+        CHECK(eTurned < 0.01);
+        CHECK(eDiag < 0.01);
+        CHECK(eWrong > 0.05);
+    });
     test("Flow maps: VectorGenerator, FlowField (modes, paint), FlowMap loop and advect", [] {
         const int W = 192, H = 128;
         // a textured plate moving 3 px right per frame

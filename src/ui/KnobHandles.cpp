@@ -124,6 +124,7 @@ const std::map<std::string, std::vector<Spec>>& table() {
         {"InfiniteZoom", {P("center")}},
         {"Repeat", {P("center"), Off("offset", "center"), Ang("rotate", "center")}},
         {"Puddle", {P("center"), Ell("size", "center", "aspect", "rotate", "feather")}},
+        {"FlowMap", {If(Len(Ang("angle", "@center", 0, "flow"), 120), "flow_channels=angle"), If(Len(Ang("rotate", "@center", 0, "rotate flow"), 120), "flow_channels!=angle")}},
         {"Plasma", {P("center")}},
         {"ChromaSpiral", {P("center")}},
         {"Flux", {P("center")}},
