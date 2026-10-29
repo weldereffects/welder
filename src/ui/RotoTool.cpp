@@ -1004,7 +1004,8 @@ Node* activeRoto(App& app) {
     return n && (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "SplineFlow") ? n : nullptr;
 }
 
-void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered) {
+void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hoveredIn) {
+    bool hovered = hoveredIn;
     Node* n = activeRoto(app);
     RotoState& r = ui.roto;
     if (!n) {
@@ -1083,6 +1084,11 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         float y = p0.y + 6;
         const int cur = groupOf(r.tool);
         const double now = ImGui::GetTime();
+        // A tool menu open blocks the viewer's hover; a click into the viewer outside it closes it and
+        // still lands there (the first point of a shape isn't lost to closing the menu).
+        if (!hovered && ImGui::IsPopupOpen("##rotoToolMenu") && mouse.x >= p0.x && mouse.y >= p0.y && mouse.x < p1.x && mouse.y < p1.y &&
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+            hovered = true;
         for (size_t gi = 0; gi < groups.size(); ++gi) {
             const int g = groups[gi];
             if (gi == 3) y += 8;  // the brushes, apart
@@ -1117,7 +1123,8 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 if (many && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) openMenu();
             }
             if (r.flyGroup == g) {
-                if (many && ImGui::IsMouseDown(ImGuiMouseButton_Left) && now - r.flyPress > 0.35) openMenu();
+                // held (on the button) for a moment: the group's menu; a click, even a slow one, picks the tool
+                if (many && ImGui::IsMouseDown(ImGuiMouseButton_Left) && hov && now - r.flyPress > 0.6) openMenu();
                 else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {  // a click: the group's tool
                     if (hov) setTool(app, ui, n, shown);
                     r.flyGroup = -1;
@@ -1127,7 +1134,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         }
         ImGui::SetNextWindowPos(menuAt, ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##rotoToolMenu")) {
-            overToolbar = true;
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) overToolbar = true;  // (outside it: the viewer)
             for (auto& ti : groupTools(menuGroup)) {
                 ImGui::PushID((int)ti.t);
                 const ImVec2 at = ImGui::GetCursorScreenPos();

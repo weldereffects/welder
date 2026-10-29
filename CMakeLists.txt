@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(welder VERSION 0.1.1 LANGUAGES C CXX)
+project(welder VERSION 0.1.2 LANGUAGES C CXX)
 if(WIN32)  # the program icon and version details for both programs
   enable_language(RC)
   configure_file(src/ui/welder.rc.in ${CMAKE_BINARY_DIR}/welder.rc @ONLY)
