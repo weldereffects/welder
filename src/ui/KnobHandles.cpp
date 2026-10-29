@@ -11,6 +11,8 @@
 //   Line     two XY points joined: drag either end, or the middle to move both
 //   SizeBox  a [w, h] size around a centre, rotated by a rotate knob: corners and edges
 //   Jack     translate / rotate / scale / centre together, as on Transform (Ctrl: pivot)
+//   Ellipse  a soft-edged ellipse around a centre: its rim and the end of its long axis (size), the end of
+//            its short axis (aspect), a dashed inner rim (feather) and an arrow (rotate)
 // Handles follow the knob's visibility in the panel (a hidden knob shows no handle), key
 // animated knobs at the current frame, and are one undo step per drag. Values are full-
 // resolution pixels, y up.
@@ -31,11 +33,11 @@ const ImU32 kDim = IM_COL32(120, 200, 255, 110);
 const ImU32 kHot = IM_COL32(255, 230, 40, 255);
 constexpr double kPi = 3.14159265358979323846;
 
-enum class K { Point, Offset, Box, Radius, Angle, Polar, Line, SizeBox, Jack };
+enum class K { Point, Offset, Box, Radius, Angle, Polar, Line, SizeBox, Jack, Ellipse };
 
 struct Spec {
     K kind = K::Point;
-    std::string a, b, c, d;  // knob keys (meaning by kind); an anchor "@center" / "@origin"
+    std::string a, b, c, d, e;  // knob keys (meaning by kind); an anchor "@center" / "@origin"
     int comp = -1;           // a component of a vector knob (Radius on an XYZ)
     double k = 1;            // value -> image pixels (Radius / Offset / Polar distance)
     double off = 0;          // Angle / Polar: added to the value to get the drawn direction
@@ -59,6 +61,11 @@ Spec Pol(const char* ang, const char* dist, const char* anchor) { return mk(K::P
 Spec Ln(const char* a, const char* b) { return mk(K::Line, a, b); }
 Spec SzB(const char* size, const char* center, const char* rot) { return mk(K::SizeBox, size, center, rot); }
 Spec Jk(const char* t, const char* r, const char* sc, const char* c) { return mk(K::Jack, t, r, sc, c); }
+Spec Ell(const char* size, const char* center, const char* aspect, const char* rot, const char* feather) {
+    Spec s = mk(K::Ellipse, size, center, aspect, rot);
+    s.e = feather;
+    return s;
+}
 Spec Len(Spec s, float len) {
     s.len = len;
     return s;
@@ -116,7 +123,7 @@ const std::map<std::string, std::vector<Spec>>& table() {
         {"Vignette", {P("center")}},
         {"InfiniteZoom", {P("center")}},
         {"Repeat", {P("center"), Off("offset", "center"), Ang("rotate", "center")}},
-        {"Puddle", {P("center")}},
+        {"Puddle", {P("center"), Ell("size", "center", "aspect", "rotate", "feather")}},
         {"Plasma", {P("center")}},
         {"ChromaSpiral", {P("center")}},
         {"Flux", {P("center")}},
@@ -298,6 +305,33 @@ void square(ImDrawList* dl, ImVec2 c, ImU32 col, float r = 4) { dl->AddRectFille
 void dot(ImDrawList* dl, ImVec2 c, ImU32 col) { dl->AddCircleFilled(c, 5, col); }
 void label(ImDrawList* dl, ImVec2 c, ImU32 col, const std::string& t) { dl->AddText(ImVec2(c.x + 9, c.y + 6), col, t.c_str()); }
 
+// An Ellipse handle's shape now: centre, semi-axes (image px), rotation (radians), feather; with no
+// size yet (0: no edge) a stand-in a quarter of the format wide, drawn dim, to drag out.
+struct EllGeo {
+    ImVec2 c;
+    double size = 0, aspect = 1, rot = 0, feather = 0;
+    bool placeholder = false;
+    ImVec2 at(double lx, double ly) const {  // ellipse space (x along the long axis) -> image
+        const double co = std::cos(rot), si = std::sin(rot);
+        return ImVec2((float)(c.x + lx * co - ly * si), (float)(c.y + lx * si + ly * co));
+    }
+    void toLocal(ImVec2 p, double& lx, double& ly) const {
+        const double co = std::cos(rot), si = std::sin(rot), dx = p.x - c.x, dy = p.y - c.y;
+        lx = dx * co + dy * si;
+        ly = -dx * si + dy * co;
+    }
+};
+EllGeo ellGeo(const Ctx& c, const Spec& s) {
+    EllGeo e;
+    e.c = xy(c, s.b);
+    e.size = num(c, s.a);
+    e.aspect = std::clamp(s.c.empty() ? 1.0 : num(c, s.c), 0.01, 100.0);
+    e.rot = (s.d.empty() ? 0.0 : num(c, s.d)) * kPi / 180;
+    e.feather = std::clamp(s.e.empty() ? 0.0 : num(c, s.e), 0.0, std::max(0.0, e.size));
+    if (e.size <= 0) e.size = std::max(16.0, c.fm.width * 0.25), e.placeholder = true, e.feather = 0;
+    return e;
+}
+
 }  // namespace
 
 bool hasKnobHandles(const std::string& type) { return table().count(type) > 0; }
@@ -409,6 +443,18 @@ void drawKnobHandles(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1
                 rings.push_back({i, jc, R});                                                          // uniform scale
                 break;
             }
+            case K::Ellipse: {
+                const EllGeo e = ellGeo(c, s);
+                grips.push_back({i, 0, S(e.at(e.size, 0)), 8});                    // size (the long axis' end)
+                grips.push_back({i, 1, S(e.at(0, e.size * e.aspect)), 8});         // aspect (the short axis' end)
+                if (!e.placeholder) grips.push_back({i, 2, S(e.at(-(e.size - e.feather), 0)), 8});  // feather (the inner rim)
+                // rotate: an arrow out along the long axis, past the rim
+                const ImVec2 rim = S(e.at(e.size, 0)), cs = S(e.c);
+                const float L = std::max(1.0f, dist(rim, cs));
+                const ImVec2 dir((rim.x - cs.x) / L, (rim.y - cs.y) / L);
+                grips.push_back({i, 3, ImVec2(rim.x + dir.x * 46, rim.y + dir.y * 46), 10});
+                break;
+            }
         }
     }
     if (testOut) {
@@ -435,6 +481,16 @@ void drawKnobHandles(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1
                 const bool inX = mouse.x > lx - 4 && mouse.x < hx + 4, inY = mouse.y > ly - 4 && mouse.y < hy + 4;
                 if ((inX && (std::fabs(mouse.y - ly) < 4 || std::fabs(mouse.y - hy) < 4)) || (inY && (std::fabs(mouse.x - lx) < 4 || std::fabs(mouse.x - hx) < 4)))
                     hotSpec = i, hotPart = 8;
+            }
+        if (hotSpec < 0)  // an ellipse's rim: its size
+            for (int i = 0; i < (int)specs.size() && hotSpec < 0; ++i) {
+                if (specs[i].kind != K::Ellipse || !shown(c, specs[i])) continue;
+                const EllGeo e = ellGeo(c, specs[i]);
+                double lx, ly;
+                e.toLocal(mi, lx, ly);
+                const double r = std::hypot(lx, ly / e.aspect);  // in long-axis pixels
+                const double scr = zoom * std::max(1e-6, std::hypot(lx, ly) / std::max(1e-9, r));  // screen px per unit along this ray
+                if (std::fabs(r - e.size) * scr < 5) hotSpec = i, hotPart = 4;
             }
         if (hotSpec < 0)
             for (auto& r : rings)
@@ -549,6 +605,54 @@ void drawKnobHandles(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1
                 if (hotSpec == i && hotPart == 0 && (io.KeyCtrl || (mine && g.part == 1))) label(dl, jc, kHot, "pivot");
                 break;
             }
+            case K::Ellipse: {
+                const EllGeo e = ellGeo(c, s);
+                const ImU32 kRim = IM_COL32(90, 220, 110, 235), kArrow = IM_COL32(255, 120, 40, 240);
+                auto loop = [&](double sz, std::vector<ImVec2>& pts) {
+                    pts.clear();
+                    for (int k = 0; k < 120; ++k) {
+                        const double t = 2 * kPi * k / 120;
+                        pts.push_back(S(e.at(sz * std::cos(t), sz * e.aspect * std::sin(t))));
+                    }
+                };
+                std::vector<ImVec2> pts;
+                loop(e.size, pts);
+                const bool rimHot = hotSpec == i && (hotPart == 4 || hotPart == 0 || hotPart == 1);
+                if (e.placeholder) {  // no edge yet: a dim dashed stand-in
+                    for (size_t k = 0; k < pts.size(); k += 2) dl->AddLine(pts[k], pts[(k + 1) % pts.size()], rimHot ? kHot : kDim, 1.5f);
+                } else {
+                    dl->AddPolyline(pts.data(), (int)pts.size(), rimHot ? kHot : kRim, ImDrawFlags_Closed, rimHot ? 2.5f : 1.8f);
+                    if (e.feather > 0) {  // where the fade begins: dashed
+                        loop(e.size - e.feather, pts);
+                        const ImU32 fc = hotSpec == i && hotPart == 2 ? kHot : IM_COL32(90, 220, 110, 150);
+                        for (size_t k = 0; k < pts.size(); k += 2) dl->AddLine(pts[k], pts[(k + 1) % pts.size()], fc, 1.2f);
+                    }
+                }
+                const ImVec2 cs = S(e.c);
+                for (auto& gp : grips) {
+                    if (gp.spec != i) continue;
+                    if (gp.part == 3) {  // the rotate arrow: from the centre out past the rim, with a curved tip
+                        const ImU32 ac = colFor(i, 3);
+                        const ImVec2 base = S(e.at(e.size * 0.35, 0));
+                        dl->AddLine(base, gp.at, ac == kHot ? kHot : kArrow, 1.8f);
+                        const float L = std::max(1.0f, dist(gp.at, cs));
+                        const ImVec2 dir((gp.at.x - cs.x) / L, (gp.at.y - cs.y) / L), nrm(-dir.y, dir.x);
+                        dl->AddLine(gp.at, ImVec2(gp.at.x - dir.x * 11 + nrm.x * 6, gp.at.y - dir.y * 11 + nrm.y * 6), ac == kHot ? kHot : kArrow, 1.8f);
+                        dl->AddLine(gp.at, ImVec2(gp.at.x - dir.x * 11 - nrm.x * 6, gp.at.y - dir.y * 11 - nrm.y * 6), ac == kHot ? kHot : kArrow, 1.8f);
+                        dl->PathArcTo(gp.at, 9, std::atan2(dir.y, dir.x) + 1.2f, std::atan2(dir.y, dir.x) + 1.95f, 6);  // (the turn)
+                        dl->PathStroke(ac == kHot ? kHot : kArrow, 0, 1.5f);
+                        dl->PathArcTo(gp.at, 9, std::atan2(dir.y, dir.x) - 1.95f, std::atan2(dir.y, dir.x) - 1.2f, 6);
+                        dl->PathStroke(ac == kHot ? kHot : kArrow, 0, 1.5f);
+                        if (hotSpec == i && hotPart == 3) label(dl, gp.at, kHot, "rotate");
+                    } else {
+                        square(dl, gp.at, gp.part == 2 ? (colFor(i, 2) == kHot ? kHot : IM_COL32(90, 220, 110, 200)) : (colFor(i, gp.part) == kHot ? kHot : kRim), gp.part == 2 ? 3.5f : 4.5f);
+                        if (hotSpec == i && hotPart == gp.part)
+                            label(dl, gp.at, kHot, gp.part == 0 ? "size" : gp.part == 1 ? "aspect" : "feather");
+                    }
+                }
+                if (hotSpec == i && hotPart == 4) label(dl, mouse, kHot, e.placeholder ? "drag to give the puddle an edge" : "size");
+                break;
+            }
         }
     }
 
@@ -578,6 +682,11 @@ void drawKnobHandles(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1
                 auto sc = scale2(c, s.c);
                 g.v0 = {t.x, t.y, ce.x, ce.y, sc[0], sc[1], num(c, s.b)};
                 if (hotPart == 0 && io.KeyCtrl) g.part = 1;  // the pivot
+                break;
+            }
+            case K::Ellipse: {
+                const EllGeo e = ellGeo(c, s);
+                g.v0 = {e.size, e.aspect, e.rot * 180 / kPi, e.feather};
                 break;
             }
         }
@@ -676,6 +785,41 @@ void drawKnobHandles(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1
                     if (std::fabs(k) < 1e-4) k = k < 0 ? -1e-4 : 1e-4;
                     if (ax == 0) writeXY(c, s.c, sx * k, sy);
                     else writeXY(c, s.c, sx, sy * k);
+                    break;
+                }
+            }
+            break;
+        }
+        case K::Ellipse: {
+            EllGeo e = ellGeo(c, s);
+            const double size0 = g.v0[0], aspect0 = g.v0[1], rot0 = g.v0[2], fea0 = g.v0[3];
+            double lx, ly;
+            e.toLocal(mi, lx, ly);
+            switch (g.part) {
+                case 0: {  // size along the long axis; the feather keeps its share
+                    const double ns = std::max(1.0, std::fabs(lx));
+                    write(c, s.a, 1, -1, ns);
+                    if (fea0 > 0 && !s.e.empty()) write(c, s.e, 1, -1, fea0 * ns / std::max(1e-9, size0));
+                    break;
+                }
+                case 1:  // aspect: the short axis against the long one
+                    if (!s.c.empty()) write(c, s.c, 1, -1, std::clamp(std::fabs(ly) / std::max(1e-9, e.size), 0.05, 20.0));
+                    break;
+                case 2:  // feather: from the rim in to the inner rim
+                    if (!s.e.empty()) write(c, s.e, 1, -1, std::clamp(e.size - std::hypot(lx, ly / e.aspect), 0.0, e.size));
+                    break;
+                case 3: {  // rotate about the centre
+                    const double da = std::remainder(angleTo(e.c, mi) - angleTo(e.c, g.start), 360.0);
+                    if (!s.d.empty()) write(c, s.d, 1, -1, rot0 + da);
+                    break;
+                }
+                case 4: {  // the rim: the whole puddle bigger or smaller, the same shape
+                    double l0x, l0y;
+                    e.toLocal(g.start, l0x, l0y);
+                    const double r0 = std::hypot(l0x, l0y / aspect0), r1 = std::hypot(lx, ly / e.aspect);
+                    const double k = r0 > 1e-6 ? std::max(1e-3, r1 / r0) : 1;
+                    write(c, s.a, 1, -1, std::max(1.0, size0 * k));
+                    if (fea0 > 0 && !s.e.empty()) write(c, s.e, 1, -1, fea0 * k);
                     break;
                 }
             }

@@ -798,6 +798,25 @@ public:
         const int drops = std::clamp((int)params.num("drops", f, 6), 1, 64);
         const double life = std::max(1.0, params.num("drop_life", f, 60));  // frames a drop's rings last
         const uint32_t seed = (uint32_t)(int64_t)params.num("seed", f, 0);
+        // the puddle's shape: an ellipse (size, aspect = height / width, rotate) with a soft edge inside it
+        const double size = std::max(0.0, params.num("size", f, 0)) * sc, feather = std::max(0.0, params.num("feather", f, 0)) * sc;
+        const double aspect = std::clamp(params.num("aspect", f, 1), 0.01, 100.0), rot = params.num("rotate", f, 0) * kPi / 180;
+        const double co = std::cos(rot), si = std::sin(rot);
+        // image offset -> the ellipse's own space, with its height scaled to its width (rings are circles there)
+        auto local = [&](double dx, double dy, double& u, double& v) {
+            u = dx * co + dy * si;
+            v = (-dx * si + dy * co) / aspect;
+        };
+        auto edge = [&](double px, double py) {  // 1 inside, fading to 0 at the rim
+            if (size <= 0) return 1.0;
+            double u, v;
+            local(px - cx, py - cy, u, v);
+            const double r = std::hypot(u, v);
+            if (r >= size) return 0.0;
+            const double fe = std::min(feather, size);
+            if (fe <= 0 || r <= size - fe) return 1.0;
+            return (double)smooth01((float)((size - r) / fe));
+        };
         Filter fl = parseFilter(params.str("filter", "cubic"));
         Edges ed(params.str("edges", "mirror"), fb.intersect(src->bounds));
         struct Drop { double x, y, age; };
@@ -808,25 +827,45 @@ public:
                 double t = f / life + (double)i / drops + rnd(seed, i, 77) * 0.3;
                 double cyc = std::floor(t), age = (t - cyc) * life;
                 uint32_t k = (uint32_t)(int64_t)cyc;
-                ds.push_back({fb.x1 + rnd(seed, i, k * 2 + 1) * fb.width(), fb.y1 + rnd(seed, i, k * 2 + 2) * fb.height(), age});
+                const double r1 = rnd(seed, i, k * 2 + 1), r2 = rnd(seed, i, k * 2 + 2);
+                if (size > 0) {  // inside the puddle: a point in the ellipse
+                    const double rr = size * std::sqrt(r1), an = r2 * 2 * kPi, u = rr * std::cos(an), v = rr * std::sin(an) * aspect;
+                    ds.push_back({cx + u * co - v * si, cy + u * si + v * co, age});
+                } else {
+                    ds.push_back({fb.x1 + r1 * fb.width(), fb.y1 + r2 * fb.height(), age});
+                }
             }
         }
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
         for (int y = a.region.y1; y < a.region.y2; ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double px = x + 0.5, py = y + 0.5, ox = 0, oy = 0, slope = 0;
+                // a ring's push: outward across the ring, which with an aspect is an ellipse
                 auto ring = [&](double dx, double dy, double h, double env) {
-                    double r = std::hypot(dx, dy);
-                    if (r < 1e-6) return;
+                    double u, v;
+                    local(dx, dy, u, v);
+                    if (std::hypot(u, v) < 1e-6) return;
+                    const double gu = u, gv = v / aspect;  // the ellipse's normal, in its space
+                    double gx = gu * co - gv * si, gy = gu * si + gv * co;
+                    const double gl = std::hypot(gx, gy);
+                    if (gl < 1e-12) return;
+                    gx /= gl, gy /= gl;
                     double ph = 2 * kPi * h;
                     double s = std::sin(ph) * env, c = std::cos(ph) * env;
-                    ox += dx / r * s * amp;
-                    oy += dy / r * s * amp;
+                    ox += gx * s * amp;
+                    oy += gy * s * amp;
                     slope += c;
                 };
-                if (mode == "rain") {
+                auto rOf = [&](double dx, double dy) {
+                    double u, v;
+                    local(dx, dy, u, v);
+                    return std::hypot(u, v);
+                };
+                const double m = edge(px, py);
+                if (m <= 0) {
+                } else if (mode == "rain") {
                     for (auto& d : ds) {
-                        double dx = px - d.x, dy = py - d.y, r = std::hypot(dx, dy);
+                        double dx = px - d.x, dy = py - d.y, r = rOf(dx, dy);
                         double front = d.age * speed;
                         double rel = (r - front) / lam;  // waves behind the expanding front
                         if (rel > 0.5 || rel < -4) continue;
@@ -834,9 +873,10 @@ public:
                         ring(dx, dy, rel, env);
                     }
                 } else {
-                    double dx = px - cx, dy = py - cy, r = std::hypot(dx, dy);
+                    double dx = px - cx, dy = py - cy, r = rOf(dx, dy);
                     ring(dx, dy, r / lam - speed * f / lam, std::exp(-r / decay));
                 }
+                ox *= m, oy *= m, slope *= m;
                 double sx = px + ox, sy = py + oy;
                 ed.apply(sx, sy);
                 float* o = out.px(x, y);

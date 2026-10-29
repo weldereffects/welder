@@ -699,7 +699,11 @@ std::vector<NodeDef> build() {
                   C("mirror", "mirror", "none", {"none", "x", "y", "both"}), C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic"})},
                  "The image tiled: scaled, rotated, mirrored every other tile, in bricks, with gaps."});
     d.push_back({"Puddle", "Stylize",
-                 {C("mode", "mode", "centre", {"centre", "rain"}), When(XY("center", "center", "$center", 0, 4096), "mode=centre"),
+                 {C("mode", "mode", "centre", {"centre", "rain"}), XY("center", "center", "$center", 0, 4096),
+                  F("size", "size (px)", 0, 0, 8000, "The puddle's radius: the ripples stay inside it (0: no edge, over the whole image)"),
+                  F("feather", "feather (px)", 0, 0, 4000, "How far in from the edge the ripples fade out"),
+                  F("aspect", "aspect", 1, 0.05, 20, "Height / width: below 1 for a puddle seen at an angle (the rings flatten too)"),
+                  F("rotate", "rotate", 0, -180, 180),
                   F("wavelength", "wavelength", 40, 2, 500), F("amplitude", "amplitude", 6, -100, 100), F("speed", "speed (px / frame)", 4, -50, 50),
                   F("decay", "decay distance", 600, 10, 10000), F("shading", "shading", 0.3, 0, 2),
                   When(I("drops", "drops", 6, 1, 64), "mode=rain"), When(F("drop_life", "drop life (frames)", 60, 2, 1000), "mode=rain"),

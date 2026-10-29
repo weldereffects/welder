@@ -1962,6 +1962,36 @@ int main(int argc, char** argv) {
         CHECK(spread(render(*paintComp(json::array({bl})), "P", 3), 58, 42) > plateGrain * 0.6);
     });
 
+    test("Puddle: the ripples stay in the puddle's ellipse (size, feather, aspect, rotate)", [] {
+        json img = {{"name", "Img"}, {"type", "Expression"}, {"params", {{"channel0", "rgb"}, {"expr0", "0.5 + 0.4 * sin(x * 0.3) * cos(y * 0.23)"}}}};
+        auto pud = [&](json extra) {
+            json p = {{"center", {64, 48}}, {"wavelength", 12}, {"amplitude", 4}, {"speed", 0}, {"shading", 0}, {"decay", 10000}};
+            for (auto& [k, v] : extra.items()) p[k] = v;
+            return comp(json::array({img, {{"name", "P"}, {"type", "Puddle"}, {"inputs", {"Img"}}, {"params", p}}}), 128, 96);
+        };
+        auto src = render(*pud({}), "Img");
+        auto moved = [&](const ImagePtr& im, int x, int y) {  // the most a 5 x 5 patch differs from the input
+            double d = 0;
+            for (int j = -2; j <= 2; ++j)
+                for (int i = -2; i <= 2; ++i) d = std::max(d, (double)std::abs(px(im, x + i, y + j, "R") - px(src, x + i, y + j, "R")));
+            return d;
+        };
+        auto whole = render(*pud({}), "P");
+        CHECK(moved(whole, 110, 48) > 0.05);  // no edge: ripples everywhere
+        auto round = render(*pud({{"size", 30}, {"feather", 6}}), "P");
+        CHECK(moved(round, 76, 48) > 0.05);   // inside
+        CHECK(moved(round, 110, 48) < 1e-6);  // outside: the image as it was
+        CHECK(moved(round, 64, 88) < 1e-6);
+        auto flat = render(*pud({{"size", 40}, {"aspect", 0.4}}), "P");  // 40 wide, 16 high
+        CHECK(moved(flat, 92, 48) > 0.05);
+        CHECK(moved(flat, 64, 72) < 1e-6);
+        auto turned = render(*pud({{"size", 40}, {"aspect", 0.4}, {"rotate", 90}}), "P");  // now 16 wide, 40 high
+        CHECK(moved(turned, 64, 76) > 0.05);
+        CHECK(moved(turned, 92, 48) < 1e-6);
+        auto rain = render(*pud({{"mode", "rain"}, {"size", 30}, {"speed", 4}}), "P", 20);
+        CHECK(moved(rain, 120, 90) < 1e-6);  // drops land in the puddle only
+    });
+
     test("roto: an open spline's per-point width and feather", [] {
         // a horizontal line from x 10 to 118 at y 48, 6 px wide; the right end 30 px wider, then feathered
         auto lineComp = [](json pts) {

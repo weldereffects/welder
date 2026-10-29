@@ -483,6 +483,11 @@ void createNode(App& app, UiState& ui, const std::string& type, const json& para
     }
     json params0 = params;
     if (type == "ReferenceLink" && !params0.contains("reference_frame")) params0["reference_frame"] = std::round(app.frame);
+    if (type == "Puddle" && !params0.contains("size") && app.comp) {  // a new puddle has an edge to drag (older scripts: none)
+        const double w = std::max(64, app.comp->format.width);
+        params0["size"] = std::round(w * 0.22);
+        params0["feather"] = std::round(w * 0.06);
+    }
     if (type == "Copy" && !params0.contains("from") && !params0.contains("layer_copy")) {  // a new Copy copies the alpha
         params0["from"] = json::array({"A"});
         params0["to"] = json::array({"A"});
