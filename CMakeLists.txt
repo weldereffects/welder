@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(welder VERSION 0.1.0 LANGUAGES C CXX)
+project(welder VERSION 0.1.1 LANGUAGES C CXX)
 if(WIN32)  # the program icon and version details for both programs
   enable_language(RC)
   configure_file(src/ui/welder.rc.in ${CMAKE_BINARY_DIR}/welder.rc @ONLY)
@@ -153,8 +153,9 @@ target_link_libraries(strata_core PUBLIC strata_thirdparty strata_openexr Thread
 if(WIN32)
   target_link_libraries(strata_core PUBLIC shell32 dbghelp mpr)
 endif()
-# a pre-release label ("beta.1"): shown in the app and in the packages' names; empty for a release
-set(WELDER_PRERELEASE "beta.1" CACHE STRING "pre-release label, e.g. beta.1 (empty: a release)")
+# a pre-release label ("beta.1"): shown in the app and in the packages' names; empty for a release.
+# (Each update raises the patch number instead: 0.1.1, 0.1.2 ... see docs/RELEASING.md.)
+set(WELDER_PRERELEASE "")
 if(WELDER_PRERELEASE)
   set(WELDER_VERSION_FULL "${PROJECT_VERSION}-${WELDER_PRERELEASE}")
 else()

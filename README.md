@@ -32,13 +32,13 @@ updates per second.
 
 ## Download (public beta)
 
-**Welder 0.1.0-beta.1** is the first public test build. Get it from the
+**Welder 0.1.1** is the current public test build. Get it from the
 [Releases page](https://github.com/weldereffects/welder/releases).
 
 | Platform | Download | Needs |
 |---|---|---|
-| Windows 10 / 11, x64 | `welder-0.1.0-beta.1-win64.zip`, plus `-python.zip` (.nk import) and `-rife-models.zip` (the RIFE node) if you want them | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
-| Linux x86_64 | `welder-0.1.0-beta.1-linux-x86_64.tar.gz` (+ `-rife-models`) | glibc 2.38 or newer (Ubuntu 24.04, Fedora 39, Debian 13 or later), X11 or XWayland |
+| Windows 10 / 11, x64 | `welder-0.1.1-win64.zip`, plus `-python.zip` (.nk import) and `-rife-models.zip` (the RIFE node) if you want them | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
+| Linux x86_64 | `welder-0.1.1-linux-x86_64.tar.gz` (+ `-rife-models`) | glibc 2.28 or newer (Rocky / Alma / RHEL 8 and 9, Ubuntu 20.04, Debian 11 or later), X11 or XWayland |
 | macOS | not in this beta | |
 
 **Windows:** before unzipping, right-click the zip, Properties, tick **Unblock**, OK. The build
