@@ -236,6 +236,10 @@ if(STRATA_OCIO_DIR)
   endif()
   target_include_directories(strata_core SYSTEM PUBLIC ${STRATA_OCIO_DIR}/include)
   target_link_libraries(strata_core PUBLIC ${_ocio_libs})
+  if(APPLE)  # OCIO's monitor-profile lookup (SystemMonitor_macos) uses Apple's display frameworks
+    target_link_libraries(strata_core PUBLIC "-framework CoreFoundation" "-framework CoreGraphics"
+                                             "-framework ColorSync" "-framework IOKit")
+  endif()
   target_compile_definitions(strata_core PUBLIC STRATA_HAVE_OCIO=1 OpenColorIO_SKIP_IMPORTS=1)
   message(STATUS "OCIO: using ${STRATA_OCIO_DIR}")
 else()
