@@ -74,7 +74,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: macos-15, arch: arm64 }          # Apple silicon
+          - { runner: macos-14, arch: arm64 }          # Apple silicon (macos-15 arm64 runners are often unavailable)
           - { runner: macos-15-intel, arch: x86_64 }   # Intel
     runs-on: ${{ matrix.runner }}
     steps:
