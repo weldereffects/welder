@@ -6,6 +6,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  release:
+    types: [published]  # a release made on GitHub's site: build and attach every download
   pull_request:
   workflow_dispatch:
     inputs:
@@ -18,6 +20,11 @@ on:
         description: "Mac: build OpenColorIO, FFmpeg and ncnn too (off = a quick compile check, far fewer minutes)"
         type: boolean
         default: true
+
+# one build per branch / tag at a time (a release can arrive as both its tag and its publishing)
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   linux:
