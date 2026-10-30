@@ -179,9 +179,10 @@ public:
     WarpLayer() {
         one_blob_only = false;
         support_inplace = false;
-        support_vulkan = true;
+        support_vulkan = NCNN_VULKAN != 0;  // (a build of ncnn without Vulkan, as on macOS: the CPU path only)
         support_packing = false;
     }
+#if NCNN_VULKAN
     int create_pipeline(const ncnn::Option& opt) override {
         if (!vkdev) return 0;
         for (int k = 0; k < 2; ++k) {
@@ -202,6 +203,7 @@ public:
         }
         return 0;
     }
+#endif
     using ncnn::Layer::forward;
     int forward(const std::vector<ncnn::Mat>& bottom, std::vector<ncnn::Mat>& top, const ncnn::Option& opt) const override {
         const ncnn::Mat& img = bottom[0];
@@ -234,6 +236,7 @@ public:
         });
         return 0;
     }
+#if NCNN_VULKAN
     int forward(const std::vector<ncnn::VkMat>& bottom, std::vector<ncnn::VkMat>& top, ncnn::VkCompute& cmd,
                 const ncnn::Option& opt) const override {
         const ncnn::VkMat& img = bottom[0];
@@ -255,6 +258,7 @@ public:
 
 private:
     ncnn::Pipeline* pipeline_[2] = {nullptr, nullptr};
+#endif
 };
 
 static ncnn::Layer* warpCreator(void*) { return new WarpLayer; }
@@ -269,7 +273,9 @@ static int gpuDevice() {  // -1 = none
         dev = -1;
         const char* off = std::getenv("STRATA_NO_GPU");
         if (!(off && *off && *off != '0')) {
+#if NCNN_VULKAN
             if (ncnn::create_gpu_instance() == 0 && ncnn::get_gpu_count() > 0) dev = ncnn::get_default_gpu_index();
+#endif
         }
     }
     return dev;
@@ -280,7 +286,11 @@ static int cpuThreads() { return (int)std::max(1u, std::thread::hardware_concurr
 std::string deviceName(bool gpu) {
     if (gpu) {
         int d = gpuDevice();
+#if NCNN_VULKAN
         if (d >= 0) return std::string(ncnn::get_gpu_info(d).device_name()) + " (Vulkan)";
+#else
+        (void)d;
+#endif
     }
     return "CPU (" + std::to_string(cpuThreads()) + " threads)";
 }
@@ -390,7 +400,9 @@ static std::shared_ptr<Model> loadModel(const std::string& name, bool wantGpu, b
     o.use_fp16_storage = fp16;
     o.use_fp16_packed = fp16;
     o.use_bf16_storage = false;
+#if NCNN_VULKAN
     if (m->gpu) m->net.set_vulkan_device(dev);
+#endif
     m->net.register_custom_layer("rife.Warp", warpCreator);
     FILE* fp = openFile(dir / "flownet.param");
     if (!fp) throw RenderError("RIFE: can't open " + u8(dir / "flownet.param"));

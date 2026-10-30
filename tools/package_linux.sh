@@ -30,6 +30,8 @@ if [ -f "$NCNN_LINUX/lib/cmake/ncnn/ncnnConfig.cmake" ]; then
   [ -f "$ROOT/models/rife/rife-v4.26/flownet.bin" ] || "$ROOT/tools/fetch_rife_models.sh"
 else
   echo "(no ncnn: $NCNN_LINUX - packaging without the RIFE node)"
+  # a release build must have it (WELDER_REQUIRE_NCNN=1 in CI)
+  [ "${WELDER_REQUIRE_NCNN:-0}" = 1 ] && { echo "error: ncnn not found in $NCNN_LINUX (lib/cmake/ncnn)"; exit 1; }
 fi
 
 GEN=()

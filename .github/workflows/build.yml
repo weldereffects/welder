@@ -60,6 +60,8 @@ jobs:
             tools/ci_run.sh ncnn tools/build_ncnn.sh $D/src/ncnn $D/ncnn-linux
           fi
       - run: tools/ci_run.sh "Linux package" tools/package_linux.sh
+        env:
+          WELDER_REQUIRE_NCNN: "1"  # a release without the RIFE node fails instead of shipping
       - uses: actions/upload-artifact@v4
         with:
           name: linux
