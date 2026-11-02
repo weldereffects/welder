@@ -814,6 +814,13 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         dl->AddText(ImVec2(p0.x + 10, p1.y - 22), IM_COL32(255, 210, 120, 255), hint);
     }
 
+    // Q hid the overlays, and with them the Roto's tools: a click in the viewer while a Roto is
+    // open brings them back, and the click goes on to the tool (it was a roto that "wouldn't draw").
+    if (active && !v.overlays && v.hovered && !pk.active && activeRoto(app) && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        !ImGui::GetIO().KeyAlt) {
+        v.overlays = true;
+        app.message("viewer overlays back on for the Roto (Q hides them)");
+    }
     // Roto shapes and tools (when a Roto node's properties are open): in the active viewer.
     if (!active) {
     } else if (v.overlays) {
