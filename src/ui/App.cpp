@@ -392,6 +392,8 @@ void App::loadSettings() {
             diskCacheGB = j.value("disk_cache_gb", diskCacheGB);
             playbackCacheGB = j.value("playback_cache_gb", playbackCacheGB);
             askMatchProject = j.value("ask_match_project", askMatchProject);
+            rightAnglePipes = j.value("graph_right_angle_pipes", rightAnglePipes);
+            altDragCuts = j.value("graph_alt_drag_cuts", altDragCuts);
             uncPaths = j.value("unc_paths", uncPaths);
             autosaveSecs = j.value("autosave_seconds", autosaveSecs);
             if (j.contains("ui_theme") && j["ui_theme"].is_string()) {  // ("theme" was written by every save before: ignored)
@@ -432,6 +434,8 @@ void App::saveSettings() {
     j["disk_cache_gb"] = diskCacheGB;
     j["playback_cache_gb"] = playbackCacheGB;
     j["ask_match_project"] = askMatchProject;
+    j["graph_right_angle_pipes"] = rightAnglePipes;
+    j["graph_alt_drag_cuts"] = altDragCuts;
     j["unc_paths"] = uncPaths;
     j["autosave_seconds"] = autosaveSecs;
     if (themeChosen) j["ui_theme"] = themeName;

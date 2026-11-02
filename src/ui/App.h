@@ -210,6 +210,8 @@ public:
     bool themeChosen = false;            // picked in Preferences (only then is it saved, so the default can change)
     bool uncPaths = true;         // the setting: mapped drive paths (S:\\...) become \\\\server\\share\\... (core/NetPath.h)
     bool askMatchProject = true;  // the setting: offer to match the project to a new script's first Read
+    bool rightAnglePipes = false; // the setting: node graph pipes drawn with square corners
+    bool altDragCuts = true;      // the setting: Alt+drag in the node graph cuts pipes (off: it pans)
     bool matchArmed = false;      // this script has had no media yet (the first Read's file brings the offer)
     double playbackCacheGB = 0;  // the setting; 0 = automatic (a quarter of the RAM, 3..64 GB)
     void setPlaybackCacheGB(double gb);

@@ -668,6 +668,14 @@ static void drawPreferences(App& app, UiState& ui) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Graphite: neutral greys, amber accent (the default)\nForge: warm charcoal, orange accent\n"
                           "Midnight: cool blue-black, teal accent\nNeutral: true mid grey, for judging colour");
+    ImGui::SeparatorText("Node Graph");
+    if (kit::checkbox("Right-angle pipes", &app.rightAnglePipes,
+                      "Pipes run straight down and across with square corners, instead of in straight lines from node to node"))
+        app.saveSettings();
+    if (kit::checkbox("Alt+drag cuts pipes", &app.altDragCuts,
+                      "Alt+drag across pipes in the node graph to disconnect them (one undo step).\n"
+                      "Off: Alt+drag pans the graph. The middle mouse button always pans."))
+        app.saveSettings();
     ImGui::SeparatorText("Autosave");
     kit::rowLabel("every", "A copy of the comp goes to the settings folder this often while it has unsaved changes.\n"
                            "After a crash, opening the script (or starting Welder, for an untitled comp) offers it back.\n0: off");

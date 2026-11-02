@@ -133,7 +133,8 @@ struct GraphState {
     ImVec2 canvasOrigin = {0, 0}, canvasSize = {0, 0};  // where the graph is on screen (drops land there)
     float zoom = 1.0f;
     bool needsFrame = true;
-    enum class Drag { None, Move, Marquee, Pan, FromInput, FromOutput, Resize } drag = Drag::None;
+    enum class Drag { None, Move, Marquee, Pan, FromInput, FromOutput, Resize, Cut } drag = Drag::None;
+    ImVec2 cutStart;    // Alt+drag: where the cutting line started (screen)
     std::string level;  // the group shown ("" = the top level)
     ImVec2 resizeOrig;  // backdrop size when a resize started
     ImVec2 dragStartScreen;

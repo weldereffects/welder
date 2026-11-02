@@ -343,28 +343,46 @@ ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
         *dir = ImVec2(0, -1);
         return ImVec2(p.x + s.x / 2, p.y + s.y / 2);
     }
-    if (i == 0) {
-        *dir = ImVec2(0, -1);
-        return ImVec2(p.x + s.x / 2, p.y);
+    // Masks come in on the right side, one under the other; every other input along the top.
+    int maskIdx = 0, topIdx = 0, tops = 0;
+    for (int k = 0; k < std::max(n->maxInputs(), i + 1); ++k) {
+        const bool m = n->inputLabel(k) == "mask";
+        if (k < i) (m ? maskIdx : topIdx) += 1;
+        if (!m && k < n->maxInputs()) ++tops;
     }
     if (label == "mask") {
         *dir = ImVec2(1, 0);
-        return ImVec2(p.x + s.x, p.y + s.y * 0.7f);
-    }
-    if (i == 1) {
-        // Enter from the side the source sits on, so pipes don't cross the node (the right
-        // when the left has exposed knobs).
-        Node* src = n->input(1);
-        if (!n->knobInputs.empty() || (src && pos(src).x + size(src).x / 2 > p.x + s.x / 2 + 10)) {
-            *dir = ImVec2(1, 0);
-            return ImVec2(p.x + s.x, p.y + s.y * 0.25f);
-        }
-        *dir = ImVec2(-1, 0);
-        return ImVec2(p.x, p.y + s.y / 2);
+        return ImVec2(p.x + s.x, p.y + std::min(s.y * 0.5f + 12.0f * maskIdx, s.y - 2));
     }
     *dir = ImVec2(0, -1);
-    float t = std::min(0.97f, 0.86f + 0.11f * (i - 2));  // clear of input 0 (the centre) and its label
-    return ImVec2(p.x + s.x * t, p.y);
+    if (tops <= 1) return ImVec2(p.x + s.x / 2, p.y);
+    // B (input 0) a third of the way in, A two thirds; any more (A2, A3...) out by the right edge,
+    // so B and A stay put as extra inputs come and go
+    float t = topIdx == 0 ? 1.0f / 3 : topIdx == 1 ? 2.0f / 3 : 0.88f + 0.04f * (topIdx - 2);
+    return ImVec2(std::round(p.x + s.x * std::min(t, 0.96f)), p.y);
+}
+
+// The path a pipe takes on screen from a source's output (a) to an input (b) that points away
+// along dir: a straight line, or (Preferences: right-angle pipes) down and across with square corners.
+std::vector<ImVec2> pipeRoute(ImVec2 a, ImVec2 b, ImVec2 dir, bool square, float stub) {
+    if (!square || (std::fabs(a.x - b.x) < 0.5f && dir.y < 0 && a.y <= b.y)) return {a, b};
+    if (dir.y < 0) {  // into the top
+        if (b.y - a.y >= stub) {
+            const float mid = std::round((a.y + b.y) / 2);
+            return {a, ImVec2(a.x, mid), ImVec2(b.x, mid), b};
+        }
+        // the source is below: out, across, up past it, across, in
+        const float ya = a.y + stub * 0.5f, yb = b.y - stub * 0.5f;
+        float xm = std::round((a.x + b.x) / 2);
+        if (std::fabs(a.x - b.x) < stub) xm = std::max(a.x, b.x) + stub * 2;
+        return {a, ImVec2(a.x, ya), ImVec2(xm, ya), ImVec2(xm, yb), ImVec2(b.x, yb), b};
+    }
+    // into a side (a mask on the right, an exposed knob on the left)
+    const float ex = b.x + dir.x * stub * 0.6f;
+    const bool sourceOnThatSide = dir.x * (a.x - ex) > 0;
+    if (sourceOnThatSide && a.y < b.y) return {a, ImVec2(a.x, b.y), b};  // down, then across into the side
+    const float ya = a.y < b.y ? std::round((a.y + b.y) / 2) : a.y + stub * 0.5f;
+    return {a, ImVec2(a.x, ya), ImVec2(ex, ya), ImVec2(ex, b.y), b};
 }
 
 ImVec2 outputPoint(const Node* n) {
@@ -1011,17 +1029,19 @@ Laid layTree(Node* n, const std::set<Node*>& sel, std::set<Node*>& done) {
     L.l = -s.x / 2, L.r = s.x / 2, L.t = 0, L.b = s.y;
     done.insert(n);
     auto take = [&](Node* in) { return in && sel.count(in) && !done.count(in) && !isAnnotation(in); };
-    if (Node* m = n->input(0); take(m)) {  // straight above
+    if (Node* m = n->input(0); take(m)) {  // straight above its port (B sits a third of the way in on a Merge)
         Laid M = layTree(m, sel, done);
-        L.add(M, 0, -kAlignGapY - size(m).y);
+        ImVec2 dir;
+        const float dx = inputPoint(n, 0, &dir).x - (pos(n).x + s.x / 2);
+        L.add(M, dx, -kAlignGapY - size(m).y);
     }
+    // A (and A2...) and masks: up to the right, where their ports are
     std::vector<Node*> left, right, knobs;
     const int nin = std::max(n->maxInputs(), (int)n->inputs.size());
     for (int i = 1; i < nin; ++i) {
         Node* in = n->input(i);
         if (!take(in)) continue;
-        const bool mask = n->inputLabel(i) == "mask";
-        (i == 1 && !mask ? left : right).push_back(in);
+        right.push_back(in);
     }
     for (auto& [k, in] : n->knobInputs)
         if (take(in)) knobs.push_back(in);
@@ -1765,7 +1785,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         }
         return nullptr;
     };
-    struct Pipe { Node* src; Node* dst; int input; ImVec2 a, b; };  // screen space, src output -> dst input
+    struct Pipe { Node* src; Node* dst; int input; ImVec2 a, b; std::vector<ImVec2> pts; };  // screen space, src output -> dst input
     std::vector<Pipe> pipes;
     auto segDist = [](ImVec2 p, ImVec2 a, ImVec2 b, ImVec2* at) {
         ImVec2 d(b.x - a.x, b.y - a.y);
@@ -1780,12 +1800,14 @@ void drawNodeGraph(App& app, UiState& ui) {
         const Pipe* best = nullptr;
         for (auto& pp : pipes) {
             if (skip && (pp.src == skip || pp.dst == skip)) continue;
-            ImVec2 q;
-            float d = segDist(sp, pp.a, pp.b, &q);
-            if (d < r) {
-                r = d;
-                best = &pp;
-                if (at) *at = q;
+            for (size_t k = 0; k + 1 < pp.pts.size(); ++k) {
+                ImVec2 q;
+                const float d = segDist(sp, pp.pts[k], pp.pts[k + 1], &q);
+                if (d < r) {
+                    r = d;
+                    best = &pp;
+                    if (at) *at = q;
+                }
             }
         }
         return best;
@@ -1970,14 +1992,21 @@ void drawNodeGraph(App& app, UiState& ui) {
             }
             if (src) {
                 ImVec2 a = S(via ? precompInnerPort(via) : outputPoint(from)), b = S(ip);
-                pipes.push_back({src, n, i, a, b});
-                dl->AddLine(a, b, col, 1.5f);
-                arrow(b, a, col);
-                ImVec2 d(b.x - a.x, b.y - a.y);
+                std::vector<ImVec2> pts = pipeRoute(a, b, dir, app.rightAnglePipes, kStub * g.zoom);
+                pipes.push_back({src, n, i, a, b, pts});
+                dl->AddPolyline(pts.data(), (int)pts.size(), col, 0, 1.5f);
+                const ImVec2 pb = pts[pts.size() - 2];  // the last corner (or a): the arrow and the grab point sit on the last stretch
+                arrow(b, pb, col);
+                ImVec2 d(b.x - pb.x, b.y - pb.y);
                 float len = std::max(1.0f, std::sqrt(d.x * d.x + d.y * d.y));
-                ImVec2 grab(b.x - d.x / len * 16, b.y - d.y / len * 16);
+                const float gl = std::min(16.0f, len * 0.8f);
+                ImVec2 grab(b.x - d.x / len * gl, b.y - d.y / len * gl);
                 handles.push_back({n, i, grab});
-                if (len > 70) tails.push_back({n, i, ImVec2(a.x + d.x / len * 18, a.y + d.y / len * 18)});
+                float total = 0;
+                for (size_t k = 0; k + 1 < pts.size(); ++k) total += std::hypot(pts[k + 1].x - pts[k].x, pts[k + 1].y - pts[k].y);
+                const ImVec2 f(pts[1].x - a.x, pts[1].y - a.y);
+                const float fl = std::max(1.0f, std::hypot(f.x, f.y));
+                if (total > 70) tails.push_back({n, i, ImVec2(a.x + f.x / fl * std::min(18.0f, fl * 0.8f), a.y + f.y / fl * std::min(18.0f, fl * 0.8f))});
                 if (drawText && !label.empty()) {
                     if (knob) {  // exposed knob: its name just left of the arrow, above the pipe
                         ImVec2 ts = font->CalcTextSizeA(fs * 0.8f, FLT_MAX, 0, label.c_str());
@@ -2013,7 +2042,8 @@ void drawNodeGraph(App& app, UiState& ui) {
                 dl->AddLine(a, b, sc, 1.2f);
                 arrow(b, a, sc);
                 handles.push_back({n, i, a});
-                if (drawText && !label.empty() && (!isMask || g.zoom > 0.9f)) {
+                // (a mask's or a spare A2's name only close up: it would sit on its neighbour's)
+                if (drawText && !label.empty() && ((!isMask && dir.y < 0 && i < 2) || g.zoom > 0.9f || (!isMask && dir.y >= 0))) {
                     ImVec2 ts = font->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, label.c_str());
                     ImVec2 tp(a.x - ts.x / 2 + dir.x * (ts.x / 2 + 3), a.y - ts.y - 1);
                     dl->AddText(font, fs * 0.85f, tp, IM_COL32(190, 190, 190, 220), label.c_str());
@@ -2091,7 +2121,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 int bi = -1;
                 float bx = 1e9f;
                 for (int i = 0; i < n->maxInputs(); ++i) {
-                    if (i == 1 || n->inputLabel(i) == "mask") continue;
+                    if (n->inputLabel(i) == "mask") continue;
                     ImVec2 dir;
                     const float ix = S(inputPoint(n, i, &dir)).x;
                     if (dir.y >= 0) continue;
@@ -2351,6 +2381,9 @@ void drawNodeGraph(App& app, UiState& ui) {
             g.moved = true;       // graphDuplicate takes the undo step
             g.moveOrig.clear();
             graphDuplicate(app, false, &g);
+        } else if (io.KeyAlt && !io.KeyCtrl && app.altDragCuts && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            g.drag = GraphState::Drag::Cut;  // Alt+drag across pipes: cut them
+            g.cutStart = io.MousePos;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) || (io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
             g.drag = GraphState::Drag::Pan;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -2454,6 +2487,45 @@ void drawNodeGraph(App& app, UiState& ui) {
     }
 
     switch (g.drag) {
+        case GraphState::Drag::Cut: {
+            // the cutting line, and the pipes it crosses lit up; let go to cut them
+            auto crosses = [](ImVec2 p, ImVec2 q, ImVec2 a, ImVec2 b) {
+                auto side = [](ImVec2 o, ImVec2 u, ImVec2 v) { return (u.x - o.x) * (v.y - o.y) - (u.y - o.y) * (v.x - o.x); };
+                const float d1 = side(p, q, a), d2 = side(p, q, b), d3 = side(a, b, p), d4 = side(a, b, q);
+                return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
+            };
+            const ImVec2 p = g.cutStart, q = io.MousePos;
+            std::vector<const Pipe*> cut;
+            for (auto& pp : pipes)
+                for (size_t k = 0; k + 1 < pp.pts.size(); ++k)
+                    if (crosses(p, q, pp.pts[k], pp.pts[k + 1])) {
+                        cut.push_back(&pp);
+                        break;
+                    }
+            const ImU32 red = IM_COL32(235, 80, 70, 255);
+            for (const Pipe* pp : cut) dl->AddPolyline(pp->pts.data(), (int)pp->pts.size(), red, 0, 3.0f);
+            {  // dashed
+                const float len = std::max(1.0f, std::hypot(q.x - p.x, q.y - p.y));
+                const ImVec2 d((q.x - p.x) / len, (q.y - p.y) / len);
+                for (float t = 0; t < len; t += 10)
+                    dl->AddLine(ImVec2(p.x + d.x * t, p.y + d.y * t), ImVec2(p.x + d.x * std::min(len, t + 6), p.y + d.y * std::min(len, t + 6)), red, 2.0f);
+            }
+            ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                g.drag = GraphState::Drag::None;
+                if (!cut.empty()) {
+                    std::vector<std::pair<std::string, int>> ends;
+                    for (const Pipe* pp : cut) ends.push_back({pp->dst->name, pp->input});
+                    app.checkpoint();
+                    app.edit([ends](Comp& c) {
+                        for (auto& [dst, in] : ends)
+                            if (Node* d = c.find(dst)) c.setInput(d, in, nullptr);
+                    });
+                    app.message(ends.size() == 1 ? "cut 1 pipe" : "cut " + std::to_string(ends.size()) + " pipes");
+                }
+            }
+            break;
+        }
         case GraphState::Drag::Pan:
             g.pan.x -= io.MouseDelta.x / g.zoom;
             g.pan.y -= io.MouseDelta.y / g.zoom;
@@ -2583,7 +2655,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                     ImVec2 at;
                     into = pipeAt(centre, std::max(10.0f, sz2.y * g.zoom * 0.6f), mover, &at);
                     if (into) {
-                        dl->AddLine(into->a, into->b, theme().accent, 3.0f);
+                        dl->AddPolyline(into->pts.data(), (int)into->pts.size(), theme().accent, 0, 3.0f);
                         ImGui::SetTooltip("drop into %s -> %s", into->src->name.c_str(), into->dst->name.c_str());
                     }
                 }

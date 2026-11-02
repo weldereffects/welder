@@ -1005,6 +1005,17 @@ int main(int argc, char** argv) {
                         ui.roto.cloneOffsetSet = true;
                     } else if (what == "ptrack") {  // tracked paint: the Tracker new strokes follow
                         ui.roto.paintTrack = arg;
+                    } else if (what == "alt") {  // Alt held (1) or let go (0)
+                        tio.AddKeyEvent(ImGuiMod_Alt, arg == "1");
+                        tio.AddKeyEvent(ImGuiKey_LeftAlt, arg == "1");
+                    } else if (what == "rightangle") {  // Preferences: right-angle pipes on (1) / off (0)
+                        app.rightAnglePipes = arg == "1";
+                    } else if (what == "inputs") {  // a node's inputs, by name
+                        if (Node* in = app.node(arg)) {
+                            std::string s;
+                            for (size_t k = 0; k < in->inputs.size(); ++k) s += " " + in->inputLabel((int)k) + "=" + (in->inputs[k] ? in->inputs[k]->name : "-");
+                            std::printf("KEYS inputs %s:%s\n", arg.c_str(), s.c_str());
+                        }
                     } else if (what == "tab") {  // a panel's tab clicked
                         ImGui::SetWindowFocus(arg.c_str());
                     } else if (what == "max") {  // Space over a panel: maximize it, or restore
