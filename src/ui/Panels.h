@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "core/Schema.h"
@@ -439,7 +440,11 @@ struct UiState {
     // Window name for a panel. A maximized panel is drawn as a separate floating
     // window so the docked layout stays exactly as it was.
     std::string win(const char* panel) const {
-        return maximized == panel ? std::string(panel) + "###max" : std::string(panel);
+        if (maximized == panel) return std::string(panel) + "###max";
+        // under a maximized viewer the timeline is its own floating window too: moving the
+        // docked one there would undock it, and it would stay at the bottom after the restore
+        if (maximized == "Viewer" && std::string_view(panel) == "Timeline") return "Timeline###maxTimeline";
+        return panel;
     }
     void noteHover(const char* panel) {
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))

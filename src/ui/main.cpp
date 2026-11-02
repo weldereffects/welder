@@ -436,9 +436,24 @@ int main(int argc, char** argv) {
                                               {"Properties", drawProperties}, {"Messages", drawMessages},
                                               {"Curve Editor", drawCurveEditor}, {"Dope Sheet", drawDopeSheet}};
             static std::string lastMax;
+            static std::vector<std::string> shownTabs;  // the tab each dock area showed before maximizing
+            static std::string focusedPanel;            // and the panel that had keyboard focus
+            static std::string restored;
+            static int reselect = 0;
             const bool justMaximized = lastMax != ui.maximized;
-            if (justMaximized && ui.maximized.empty() && !lastMax.empty())
-                ImGui::SetWindowFocus(lastMax.c_str());  // restored panel is the active tab again
+            if (justMaximized && !ui.maximized.empty() && lastMax.empty()) {
+                shownTabs.clear();
+                for (const char* n : kPanelNames)
+                    if (ImGuiWindow* w = ImGui::FindWindowByName(n); w && w->DockNode && w->DockNode->TabBar &&
+                                                                     w->DockNode->TabBar->SelectedTabId == w->TabId)
+                        shownTabs.push_back(n);
+                ImGuiWindow* nav = GImGui->NavWindow ? GImGui->NavWindow->RootWindow : nullptr;
+                focusedPanel = nav ? nav->Name : "";
+            }
+            if (justMaximized && ui.maximized.empty() && !lastMax.empty()) {
+                restored = lastMax;
+                reselect = 2;  // once the hidden panels are back in their dock areas: their tabs and focus as they were
+            }
             lastMax = ui.maximized;
             // a maximized viewer keeps the timeline under it
             const bool viewerMax = ui.maximized == "Viewer";
@@ -456,6 +471,16 @@ int main(int argc, char** argv) {
                 }
                 p.fn(app, ui);
                 mark(p.name);
+            }
+            if (reselect > 0) {
+                // Panels coming back each take focus as they reappear, so the last one drawn
+                // (the Dope Sheet) would win its dock area: focus the ones that were showing
+                // instead, then the panel that had focus (or the restored one).
+                --reselect;
+                for (const std::string& n : shownTabs) ImGui::SetWindowFocus(n.c_str());
+                const std::string& f = std::find(std::begin(kPanelNames), std::end(kPanelNames), focusedPanel) != std::end(kPanelNames)
+                                           ? focusedPanel : restored;
+                if (!f.empty()) ImGui::SetWindowFocus(f.c_str());
             }
         }
         if (focusGraph && frameCount > 0) {
@@ -980,6 +1005,17 @@ int main(int argc, char** argv) {
                         ui.roto.cloneOffsetSet = true;
                     } else if (what == "ptrack") {  // tracked paint: the Tracker new strokes follow
                         ui.roto.paintTrack = arg;
+                    } else if (what == "tab") {  // a panel's tab clicked
+                        ImGui::SetWindowFocus(arg.c_str());
+                    } else if (what == "max") {  // Space over a panel: maximize it, or restore
+                        ui.toggleMaximize = arg;
+                    } else if (what == "docks") {  // each panel: docked or floating, its dock area, the tab shown there
+                        for (const char* n : kPanelNames)
+                            if (ImGuiWindow* w = ImGui::FindWindowByName(n))
+                                std::printf("KEYS dock %s: %s node %08x shown %d y %.0f h %.0f\n", n, w->DockIsActive ? "docked" : "floating",
+                                            w->DockNode ? w->DockNode->ID : 0u,
+                                            (int)(w->DockNode && w->DockNode->TabBar ? w->DockNode->TabBar->SelectedTabId == w->TabId : w->Active),
+                                            w->Pos.y, w->Size.y);
                     } else if (what == "menu") {  // a File menu action: open, save, saveas, saveinc
                         ui.menuAction = arg;
                     } else if (what == "script") {  // the script's path, and the version prompt
