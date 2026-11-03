@@ -251,6 +251,7 @@ void drawMLPanel(App& app, UiState& ui, Node* n) {
                       : n->type == "Reconstruct"                ? "mapanything"
                       : n->type == "Depth"                      ? "einops"
                       : n->type == "TrackMask"                  ? "hydra"
+                      : n->type == "SurfacePasses"              ? "utils3d_moge"
                       : n->type == "GaussianSplat"              ? "gsplat"
                                                                 : "";
     workerSection(app, pkg);

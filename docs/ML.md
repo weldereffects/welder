@@ -14,6 +14,9 @@ working, and the node shows the result when it's ready.
 | **Depth** | Video Depth Anything: depth for the whole shot that stays steady from frame to frame (no flicker), as depth.Z. Relative (the scene's shape) or metric (metres). Splits a cut sequence at its cuts. | Video Depth Anything Small (Apache 2.0); Base / Large (non-commercial) |
 | **TrackMask** | Track and mask: click an object on a frame (Shift+click what isn't it, or drag a box) and SAM 2.1 masks it, then follows it through the shot. The matte goes in alpha. | SAM 2.1 (Apache 2.0) |
 | **NeRF** | A NeRF of the shot, trained with joint camera optimisation. **Train**, then **Render** through any camera. | none (trained per shot) |
+| **SurfacePasses** | Normals, depth and position for relighting (N, depth.Z, P, plus a person matte). People get their own crops at the model's native size, and optical flow averages neighbouring frames so nothing flickers. | MoGe-2 (MIT) + Sapiens2 (Sapiens2 License) + RAFT |
+
+**NormalLight** (Color group) relights a plate from N without the worker; see SurfacePasses below.
 
 Two 3D nodes work without the worker:
 
@@ -129,6 +132,9 @@ These nodes are built for a 24 GB card such as an RTX 3090 or 4090.
   trades speed against memory.
 * **Reconstruct** handles up to about 150 frames at once on 24 GB (**max frames**
   spreads them over the shot).
+* **SurfacePasses** runs one frame at a time, so shot length doesn't change the GPU memory it needs.
+  Sapiens2 runs in bf16 on the GPU; pick 0.4b for smaller cards. Each person costs
+  two Sapiens2 passes (segmentation and normals) and each head two more.
 * **Depth** runs 32-frame windows, so shot length doesn't change the GPU memory it
   needs (Small: a few GB; Large: under 24 GB at the default **detail**, 518). The
   frames are held in system RAM at **max size**.
@@ -240,6 +246,46 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
 * Unlike running the single-image Depth Anything frame by frame, the video model ties
   frames together, so an effect driven by this depth doesn't flicker.
 
+### SurfacePasses
+* **Input:** src. **Generate passes** runs the frame range; the node then passes src through with
+  `N.X/Y/Z`, `depth.Z`, `P.X/Y/Z` and `people.A`. Write them out with a Write node as one multi-layer
+  EXR per frame if you need files; inside Welder they're just layers.
+* Everything is in **camera space**, with Welder's axes: x right, y up, z towards the viewer. P and
+  depth are in metres (MoGe-2 is metric); `depth.Z` is 1 / distance like ScanlineRender's.
+* How it works, frame by frame:
+  1. **MoGe-2** gives depth, normals and a point map for the whole frame. With **one field of view
+     for the shot** (on by default) the lens is estimated once (the median over 7 frames) and held,
+     so P lines up from frame to frame. Type a known FOV to skip the estimate.
+  2. **Sapiens2 segmentation** finds the people, in overlapping 3:4 windows across the frame. Each
+     person is cropped to 3:4 so Sapiens2 runs at its native 1024 x 768, and its normals are pasted
+     back over MoGe-2's with a soft edge (**edge softness**). With **crop heads too**, each head is
+     cropped and run again, so faces get the model's full resolution. Sapiens2's axes are matched to
+     MoGe-2's on the people seen (the job log and result give the signs).
+  3. With **steady (no flicker)**, optical flow lines up the frames up to **frames each side**
+     (2) before and after onto each frame. Where the flow holds (a forward-backward check, the
+     colour, and the surface not turning away) they're averaged with the frame: the details stay
+     and the flicker goes. Cuts are found and never averaged across. **RAFT** (torchvision; its
+     weights download once to `ml\torch`) is the accurate one; **DIS** is OpenCV's, quick, and what
+     it falls back to when RAFT can't load.
+* **depth edge clean-up** pulls the in-between pixels MoGe-2 leaves at silhouettes to the
+  background side, like a FilterErode on depth (1 px by default; 0 turns it off).
+* **view:** plate, normals (shown as 0.5 + N / 2), depth (grey), position, people.
+* **Sapiens2's licence** forbids biometric processing, surveillance and deepfakes, among other
+  things; relighting and compositing your own plates is fine, but read it. Its models are gated:
+  accept the licence on each model's Hugging Face page and paste a Read token into **HF token**.
+  Turn **refine people** off to run with MoGe-2 alone (MIT).
+
+### NormalLight
+* **Inputs:** the plate (with N, and P for point lights), normals (optional: where N is, if not
+  on the plate) and mask (e.g. SurfacePasses with mask channel `people.A`).
+* One light: **directional** (azimuth 0 = from the right, 90 = from the camera; elevation up) or
+  **point** (a position in camera space, in P's units, with falloff). **wrap** softens the
+  terminator; **specular** and **roughness** add a highlight.
+* **mode:** add (plate + plate x light: the plate stands in for the albedo), multiply (plate x
+  (ambient + light): the shot lit only by this light), light only (the light pass).
+* Stack NormalLights for more lights. The relight is a quick check of the normals as much as a
+  look: a bad normal shows up immediately.
+
 ### TrackMask
 * **Input:** src. Open its properties and view it: the viewer's tools are on.
   * **click** a point on the object; **Shift+click** a point that isn't it (a background
@@ -285,6 +331,9 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
 | Video Depth Anything Small, Metric Video Depth Anything Small | Apache 2.0 |
 | Video Depth Anything Base / Large (relative and metric) | CC-BY-NC-4.0: non-commercial use only |
 | Video Depth Anything code (bundled in `ml/strata_ml/vendor`) | Apache 2.0 |
+| MoGe-2 (`Ruicheng/moge-2-*-normal`) and its code (bundled in `ml/strata_ml/vendor/moge`) | MIT (DINOv2 code: Apache 2.0) |
+| Sapiens2 (`facebook/sapiens2-seg-*`, `facebook/sapiens2-normal-*`) and its inference code (bundled in `ml/strata_ml/vendor/sapiens2`) | Sapiens2 License: royalty-free, but no biometric processing, surveillance, deepfakes or identifying people |
+| RAFT weights (torchvision) | BSD-3-Clause |
 | SAM 2.1 checkpoints (`facebook/sam2.1-hiera-*`) and code (bundled in `ml/strata_ml/vendor/sam2pkg`) | Apache 2.0 |
 | gsplat | Apache 2.0 |
 

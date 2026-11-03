@@ -264,6 +264,105 @@
    "gated": false,
    "license": "Apache 2.0",
    "license_url": "https://huggingface.co/facebook/sam2.1-hiera-large"
+  },
+  "moge-2-vitl-normal": {
+   "label": "MoGe-2 Large (depth, normals and points from one image)",
+   "repo": "Ruicheng/moge-2-vitl-normal",
+   "files": [
+    "model.pt"
+   ],
+   "size_gb": 1.3,
+   "gated": false,
+   "license": "MIT",
+   "license_url": "https://huggingface.co/Ruicheng/moge-2-vitl-normal"
+  },
+  "moge-2-vitb-normal": {
+   "label": "MoGe-2 Base (depth, normals and points from one image)",
+   "repo": "Ruicheng/moge-2-vitb-normal",
+   "files": [
+    "model.pt"
+   ],
+   "size_gb": 0.42,
+   "gated": false,
+   "license": "MIT",
+   "license_url": "https://huggingface.co/Ruicheng/moge-2-vitb-normal"
+  },
+  "moge-2-vits-normal": {
+   "label": "MoGe-2 Small (depth, normals and points from one image)",
+   "repo": "Ruicheng/moge-2-vits-normal",
+   "files": [
+    "model.pt"
+   ],
+   "size_gb": 0.14,
+   "gated": false,
+   "license": "MIT",
+   "license_url": "https://huggingface.co/Ruicheng/moge-2-vits-normal"
+  },
+  "sapiens2-normal-0.4b": {
+   "label": "Sapiens2 0.4B: surface normals of people",
+   "repo": "facebook/sapiens2-normal-0.4b",
+   "files": [
+    "sapiens2_0.4b_normal.safetensors"
+   ],
+   "size_gb": 1.6,
+   "gated": true,
+   "license": "Sapiens2 License (no biometric processing, surveillance or deepfakes)",
+   "license_url": "https://huggingface.co/facebook/sapiens2-normal-0.4b"
+  },
+  "sapiens2-seg-0.4b": {
+   "label": "Sapiens2 0.4B: body-part segmentation",
+   "repo": "facebook/sapiens2-seg-0.4b",
+   "files": [
+    "sapiens2_0.4b_seg.safetensors"
+   ],
+   "size_gb": 1.6,
+   "gated": true,
+   "license": "Sapiens2 License (no biometric processing, surveillance or deepfakes)",
+   "license_url": "https://huggingface.co/facebook/sapiens2-seg-0.4b"
+  },
+  "sapiens2-normal-0.8b": {
+   "label": "Sapiens2 0.8B: surface normals of people",
+   "repo": "facebook/sapiens2-normal-0.8b",
+   "files": [
+    "sapiens2_0.8b_normal.safetensors"
+   ],
+   "size_gb": 3.3,
+   "gated": true,
+   "license": "Sapiens2 License (no biometric processing, surveillance or deepfakes)",
+   "license_url": "https://huggingface.co/facebook/sapiens2-normal-0.8b"
+  },
+  "sapiens2-seg-0.8b": {
+   "label": "Sapiens2 0.8B: body-part segmentation",
+   "repo": "facebook/sapiens2-seg-0.8b",
+   "files": [
+    "sapiens2_0.8b_seg.safetensors"
+   ],
+   "size_gb": 3.3,
+   "gated": true,
+   "license": "Sapiens2 License (no biometric processing, surveillance or deepfakes)",
+   "license_url": "https://huggingface.co/facebook/sapiens2-seg-0.8b"
+  },
+  "sapiens2-normal-1b": {
+   "label": "Sapiens2 1B: surface normals of people",
+   "repo": "facebook/sapiens2-normal-1b",
+   "files": [
+    "sapiens2_1b_normal.safetensors"
+   ],
+   "size_gb": 5.9,
+   "gated": true,
+   "license": "Sapiens2 License (no biometric processing, surveillance or deepfakes)",
+   "license_url": "https://huggingface.co/facebook/sapiens2-normal-1b"
+  },
+  "sapiens2-seg-1b": {
+   "label": "Sapiens2 1B: body-part segmentation",
+   "repo": "facebook/sapiens2-seg-1b",
+   "files": [
+    "sapiens2_1b_seg.safetensors"
+   ],
+   "size_gb": 5.9,
+   "gated": true,
+   "license": "Sapiens2 License (no biometric processing, surveillance or deepfakes)",
+   "license_url": "https://huggingface.co/facebook/sapiens2-seg-1b"
   }
  },
  "ic_loras": {

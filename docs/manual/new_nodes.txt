@@ -130,3 +130,5 @@ Deflicker
 HeatWave
 Rain
 LensDroplets
+NormalLight
+SurfacePasses

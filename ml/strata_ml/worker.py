@@ -96,7 +96,7 @@ def probe_packages():
         info["torch_error"] = str(e)
     import importlib.util
     for mod, key in (("ltx_pipelines", "ltx"), ("gsplat", "gsplat"), ("mapanything", "mapanything"),
-                     ("huggingface_hub", "huggingface_hub"), ("cv2", "opencv"), ("av", "av"), ("einops", "einops"), ("hydra", "hydra")):
+                     ("huggingface_hub", "huggingface_hub"), ("cv2", "opencv"), ("av", "av"), ("einops", "einops"), ("hydra", "hydra"), ("utils3d_moge", "utils3d_moge")):
         info[key] = importlib.util.find_spec(mod) is not None
     return info
 
@@ -241,6 +241,8 @@ def main(argv=None):
         sys.stdout = sys.stderr = f
     # Hugging Face downloads (MapAnything's own code) land in the ML home too.
     os.environ.setdefault("HF_HOME", os.path.join(a.home, "hf"))
+    # torchvision's RAFT weights (Surface) too
+    os.environ.setdefault("TORCH_HOME", os.path.join(a.home, "torch"))
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     load_tasks()
     w = Worker(a.home)
