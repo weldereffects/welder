@@ -31,6 +31,7 @@
 #include <set>
 
 #include "Panels.h"
+#include "Tablet.h"
 #include "PanelKit.h"
 #include "imgui_internal.h"
 #include "nodes/Planar.h"
@@ -1461,7 +1462,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                         r.cloneOffset = ImVec2(mouseImg.x - r.cloneSource.x, mouseImg.y - r.cloneSource.y);
                         r.cloneOffsetSet = true;  // aligned: later strokes keep the offset
                     }
-                    r.strokePts = {{mouseImg.x, mouseImg.y, 1.0}};
+                    r.strokePts = {{mouseImg.x, mouseImg.y, tablet::strokePressure()}};  // (a pen's pressure; 1 for a mouse)
                     r.drag = Drag::Paint;
                 }
                 break;
@@ -1632,7 +1633,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Drag::Paint:
                 if (!r.strokePts.empty()) {
                     ImVec2 last = xf.toScreen(r.strokePts.back().x, r.strokePts.back().y);
-                    if (dist(last, mouse) >= 1.5f) r.strokePts.push_back({mouseImg.x, mouseImg.y, 1.0});
+                    if (dist(last, mouse) >= 1.5f) r.strokePts.push_back({mouseImg.x, mouseImg.y, tablet::strokePressure()});
                 }
                 break;
             case Drag::BrushSize:

@@ -184,7 +184,7 @@ public:
         noise::Settings s1 = st, s2 = st;
         s1.seed = st.seed + 1013;
         s2.seed = st.seed + 2027;
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double px = (x + 0.5) / sc - ox, py = (y + 0.5) / sc - oy;
                 float u = (float)((cr * px + sr * py) / sx), v = (float)((-sr * px + cr * py) / sy);
@@ -236,7 +236,7 @@ public:
         std::fill(out.data.begin(), out.data.end(), 0.0f);
         if (bg) out.copyFrom(*bg);
         const int chs[4] = {out.ch("R"), out.ch("G"), out.ch("B"), out.ch("A")};
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double qx = (x + 0.5) / sc - p0[0], qy = (y + 0.5) / sc - p0[1];
                 double t;
@@ -401,7 +401,7 @@ public:
             return lo + (m > len ? 2 * len - m : m);
         };
         const bool folding = edges != "black" && !fb.empty();
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double sx, sy;
                 if (!fn(x + 0.5, y + 0.5, sx, sy)) continue;
@@ -620,7 +620,7 @@ public:
         std::vector<int> rest(out.nch());
         for (int c = 0; c < out.nch(); ++c) rest[c] = (c == R || c == G || c == B) ? -1 : src->ch(out.channels[c]);
         std::vector<int> mr(1, src->ch("R")), mg(1, src->ch("G")), mb(1, src->ch("B"));
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
                 float* o = out.px(x, y);
@@ -726,7 +726,7 @@ public:
         // add back (bilinear from the reduced grid)
         MaskMix mm = MaskMix::setup(a, this, 1);
         const int oR = out.ch("R"), oG = out.ch("G"), oB = out.ch("B");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float glow[3] = {0, 0, 0};
                 if (k == 1) {  // full resolution: the grid is the pixels

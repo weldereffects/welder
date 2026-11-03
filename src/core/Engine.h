@@ -121,6 +121,11 @@ public:
     void cancel() { cancel_ = true; }
     void resetCancel() { cancel_ = false; }
     bool cancelled() const { return cancel_; }
+    // Inside a node's own loops (a row at a time): stop now if this thread's render was cancelled,
+    // so an edit never waits for a slow tile to finish. Does nothing off the engine's threads.
+    static void cancelPoint() {
+        if (Engine* e = current(); e && e->cancel_.load(std::memory_order_relaxed)) throw RenderCancelled();
+    }
     CacheStats cacheStats() { return cache_.stats(); }
     TileCache& cache() { return cache_; }
     int threads() const { return threads_; }

@@ -22,6 +22,7 @@
 
 #include "GL.h"
 #include "Panels.h"
+#include "Tablet.h"
 #include "core/Crash.h"
 #include "SmokeTest.h"
 #include "core/FrameList.h"
@@ -243,6 +244,7 @@ int main(int argc, char** argv) {
     }
     splash::setWindowIcon(win);
     splash::pump();
+    tablet::init(win);  // pen pressure for paint strokes
     glfwMakeContextCurrent(win);
     glfwSetDropCallback(win, onDrop);
     glfwSwapInterval(opt.idScan ? 0 : 1);
@@ -1005,6 +1007,8 @@ int main(int argc, char** argv) {
                         ui.roto.cloneOffsetSet = true;
                     } else if (what == "ptrack") {  // tracked paint: the Tracker new strokes follow
                         ui.roto.paintTrack = arg;
+                    } else if (what == "pressure") {  // a pen pressing this hard (negative: back to the mouse)
+                        tablet::simulate((float)std::atof(arg.c_str()));
                     } else if (what == "alt") {  // Alt held (1) or let go (0)
                         tio.AddKeyEvent(ImGuiMod_Alt, arg == "1");
                         tio.AddKeyEvent(ImGuiKey_LeftAlt, arg == "1");
@@ -1467,6 +1471,7 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+    tablet::shutdown();
     glfwDestroyWindow(win);
     glfwTerminate();
     return scanResult;

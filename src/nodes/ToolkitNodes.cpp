@@ -97,7 +97,7 @@ public:
         const auto col = params.vec<4>("color", f, {1, 0.28, 0.08, 1});
         const float inten = (float)std::max(0.0, params.num("intensity", f, 0.6));
         const bool only = params.flag("effect_only", false);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const float* q = h.px(x, y);
                 const float l = lum3(q);
@@ -139,7 +139,7 @@ public:
         if (lift > 0) blurNormalized(all, haze, s * 4, {0, 1, 2}, a.engine.dod(input(0), f));
         const float amt = (float)std::max(0.0, params.num("amount", f, 0.4));
         const auto tint = params.vec<4>("color", f, {1, 1, 1, 1});
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float* q = g.px(x, y);
@@ -167,7 +167,7 @@ public:
         const float t = (float)params.num("threshold", f, 0.8), st = (float)std::max(0.0, params.num("strength", f, 1));
         const float desat = (float)std::clamp(params.num("desaturate", f, 0.3), 0.0, 1.0);
         const bool byMax = params.str("detect", "luminance") == "max channel";
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 float c[3] = {o[R], o[G], o[B]};
@@ -273,7 +273,7 @@ public:
         const double rs = std::max(0.0, params.num("refine", f, 30)) * sc;
         blurNormalized(tr, ts, rs, {0}, a.engine.dod(input(0), f));
         const std::string view = params.str("output", "result");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float t = std::max(t0, ts.px(x, y)[0]);
@@ -314,7 +314,7 @@ public:
         const bool show = params.str("output", "fixed") == "bad pixels";
         auto bad = [&](float v) { return (nan && std::isnan(v)) || (inf && std::isinf(v)) || (neg && v < 0); };
         auto good = [&](float v) { return std::isfinite(v) && !(neg && v < 0); };
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 bool any = false;
@@ -383,7 +383,7 @@ public:
         };
         std::vector<int> map(out.nch());
         for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const int sx = mapc(x, S.x1, W), sy = mapc(y, S.y1, H);
                 float* o = out.px(x, y);
@@ -471,7 +471,7 @@ public:
                 const double k = perCh ? (ref[c] + eps) / (cur[c] + eps) : (lr + eps) / (lc + eps);
                 g[c] = (float)std::pow(std::clamp(k, 0.25, 4.0), amount);
             }
-            for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
                 for (int x = a.region.x1; x < a.region.x2; ++x) {
                     float* o = out.px(x, y);
                     for (int c = 0; c < 3; ++c) o[oc[c]] *= g[c];
@@ -492,7 +492,7 @@ public:
                 for (size_t i = 0; i < ref.data.size(); ++i) ref.data[i] += b.data[i] / fs.size();
             }
             Image cur = blurred(f);
-            for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
                 for (int x = a.region.x1; x < a.region.x2; ++x) {
                     float* o = out.px(x, y);
                     const float* rf = ref.px(x, y);
@@ -554,7 +554,7 @@ public:
         std::vector<int> map(out.nch());
         for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
         const Box in = a.engine.dod(input(0), f);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const double X = (x + 0.5) / sc, Y = (y + 0.5) / sc;
                 // coordinates along / across the drift, the noise moving with it

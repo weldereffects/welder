@@ -493,7 +493,7 @@ public:
         RGBAIdx oi(out);
         const int W = D.width();
         const size_t N = (size_t)W * D.height();
-        for (int y = a.region.y1; y < a.region.y2; ++y) {
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y) {
             float* o = out.row(y);
             for (int x = a.region.x1; x < a.region.x2; ++x, o += out.nch()) {
                 if (!D.contains(x, y)) continue;

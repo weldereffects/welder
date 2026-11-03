@@ -448,7 +448,7 @@ public:
             }
         const int oR = out.ch("R"), oG = out.ch("G"), oB = out.ch("B"), oA = out.ch("A");
         if (output == "focal plane setup") {  // red in front, green in focus, blue behind
-            for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
                 for (int x = a.region.x1; x < a.region.x2; ++x) {
                     const float* s = src->px(x, y);
                     float l = 0.2126f * s[R] + 0.7152f * s[G] + 0.0722f * s[Bc];
@@ -462,7 +462,7 @@ public:
             return;
         }
         if (output == "coc") {
-            for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
                 for (int x = a.region.x1; x < a.region.x2; ++x) {
                     float c = coc.at(x, y)[0] / (float)sc;  // in full-resolution pixels
                     float* o = out.px(x, y);
@@ -531,7 +531,7 @@ public:
             }
         }
         MaskMix mm = MaskMix::setup(a, this, 2);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float* v = acc.at(x, y);
@@ -606,7 +606,7 @@ public:
         Buf blurred;
         lensBlur(buf, std::max(0.0, params.num("defocus", f, 10)) * a.engine.scale(), bk, a.region, blurred);
         MaskMix mm = MaskMix::setup(a, this, 2);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float* v = blurred.at(x, y);
@@ -747,7 +747,7 @@ public:
         }
         auto rnd = [](float v) { return (int)std::floor(v + 0.5f); };
         std::vector<float> acc(n);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float nx, ny;
                 neighbourMax(x, y, nx, ny);

@@ -7,6 +7,9 @@
 #include <ImfIO.h>
 #include <ImfChannelList.h>
 #include <ImfCompression.h>
+#include <ImfDeepFrameBuffer.h>
+#include <ImfDeepScanLineInputPart.h>
+#include <ImfDeepTiledInputPart.h>
 #include <ImfFrameBuffer.h>
 #include <ImfHeader.h>
 #include <ImfStringAttribute.h>
@@ -14,6 +17,7 @@
 #include <ImfMultiPartInputFile.h>
 #include <ImfOutputFile.h>
 #include <ImfPartType.h>
+#include <ImfTileDescriptionAttribute.h>
 #include <ImfThreading.h>
 #include <half.h>
 
@@ -119,6 +123,89 @@ std::vector<char> slurp(const std::string& path) {
     return d;
 }
 
+// A deep part, flattened into `img` (rows top-down, laid out from `uni`, as the flat parts are read):
+// each pixel's samples sorted front to back by Z and composited over each other (premultiplied, as
+// deep images are stored); "Z" becomes the depth of the nearest sample that isn't fully transparent.
+void flattenDeep(Imf::MultiPartInputFile& in, int p, const std::vector<std::pair<std::string, int>>& chans, const Imath::Box2i& uni, Image& img) {
+    const Imf::Header& h = in.header(p);
+    const Imath::Box2i dw = h.dataWindow();
+    const long w = dw.max.x - dw.min.x + 1, hgt = dw.max.y - dw.min.y + 1;
+    if (w <= 0 || hgt <= 0) return;
+    const bool tiled = h.type() == Imf::DEEPTILE;
+    // what the file holds besides the channels we show: alpha and depth drive the compositing
+    std::vector<std::string> names;
+    for (auto& c : chans) names.push_back(c.first);
+    for (const char* need : {"A", "Z"})
+        if (h.channels().findChannel(need) && std::find(names.begin(), names.end(), need) == names.end()) names.push_back(need);
+    std::vector<unsigned int> counts((size_t)(w * hgt));
+    std::vector<std::vector<float*>> ptrs(names.size(), std::vector<float*>((size_t)(w * hgt), nullptr));
+    Imf::DeepFrameBuffer fb;
+    // (slices are addressed by absolute pixel position: the base points at pixel (0, 0))
+    fb.insertSampleCountSlice(Imf::Slice(Imf::UINT, (char*)(counts.data() - dw.min.x - (long)dw.min.y * w), sizeof(unsigned int),
+                                         sizeof(unsigned int) * w));
+    for (size_t c = 0; c < names.size(); ++c)
+        fb.insert(names[c], Imf::DeepSlice(Imf::FLOAT, (char*)(ptrs[c].data() - dw.min.x - (long)dw.min.y * w), sizeof(float*),
+                                           sizeof(float*) * w, sizeof(float)));
+    std::unique_ptr<Imf::DeepScanLineInputPart> sp;
+    std::unique_ptr<Imf::DeepTiledInputPart> tp;
+    if (tiled) {
+        tp = std::make_unique<Imf::DeepTiledInputPart>(in, p);
+        tp->setFrameBuffer(fb);
+        tp->readPixelSampleCounts(0, tp->numXTiles(0) - 1, 0, tp->numYTiles(0) - 1, 0, 0);
+    } else {
+        sp = std::make_unique<Imf::DeepScanLineInputPart>(in, p);
+        sp->setFrameBuffer(fb);
+        sp->readPixelSampleCounts(dw.min.y, dw.max.y);
+    }
+    size_t total = 0;
+    for (unsigned int n : counts) total += n;
+    std::vector<std::vector<float>> store(names.size(), std::vector<float>(std::max<size_t>(1, total)));
+    for (size_t c = 0; c < names.size(); ++c) {
+        size_t at = 0;
+        for (size_t i = 0; i < counts.size(); ++i) {
+            ptrs[c][i] = store[c].data() + at;
+            at += counts[i];
+        }
+    }
+    if (tiled) tp->readTiles(0, tp->numXTiles(0) - 1, 0, tp->numYTiles(0) - 1, 0, 0);
+    else sp->readPixels(dw.min.y, dw.max.y);
+
+    const int ai = (int)(std::find(names.begin(), names.end(), "A") - names.begin());
+    const int zi = (int)(std::find(names.begin(), names.end(), "Z") - names.begin());
+    const bool haveA = ai < (int)names.size(), haveZ = zi < (int)names.size();
+    const int n = img.nch(), W = img.bounds.width();
+    parallelFor(hgt, 8, [&](long y0, long y1) {
+        std::vector<int> ord;
+        for (long y = y0; y < y1; ++y)
+            for (long x = 0; x < w; ++x) {
+                const size_t i = (size_t)(y * w + x);
+                const int ns = (int)counts[i];
+                if (ns == 0) continue;
+                ord.resize(ns);
+                for (int s = 0; s < ns; ++s) ord[s] = s;
+                if (haveZ) std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) { return ptrs[zi][i][a] < ptrs[zi][i][b]; });
+                float* px = img.data.data() + ((size_t)(dw.min.y + y - uni.min.y) * W + (dw.min.x + x - uni.min.x)) * n;
+                for (size_t c = 0; c < chans.size(); ++c) {
+                    const int k = chans[c].second;
+                    if (chans[c].first == "Z") {  // the nearest sample that shows
+                        float z = 0;
+                        for (int s : ord)
+                            if (!haveA || ptrs[ai][i][s] > 0) { z = ptrs[c][i][s]; break; }
+                        px[k] = z;
+                        continue;
+                    }
+                    float acc = 0, T = 1;
+                    for (int s : ord) {
+                        acc += T * ptrs[c][i][s];
+                        T *= haveA ? std::clamp(1.0f - ptrs[ai][i][s], 0.0f, 1.0f) : 0.0f;
+                        if (T <= 0) break;
+                    }
+                    px[k] = acc;
+                }
+            }
+    });
+}
+
 ExrFile readExr(const std::string& path) {
     initThreads();
     try {
@@ -138,6 +225,7 @@ ExrFile readExr(const std::string& path) {
         };
         std::vector<Src> srcs;
         std::vector<int> imageParts;
+        std::vector<int> deepParts;  // deep parts: flattened (front to back) into ordinary channels
         Imath::Box2i uni;  // union of data windows (EXR coordinates)
         bool haveBox = false;
         ExrFile out;
@@ -145,8 +233,8 @@ ExrFile readExr(const std::string& path) {
             const Imf::Header& h = in.header(p);
             std::string pname = h.hasName() ? h.name() : "";
             out.parts.push_back(pname);
-            if (h.hasType() && Imf::isDeepData(h.type())) continue;  // deep parts are skipped
-            imageParts.push_back(p);
+            const bool deep = h.hasType() && Imf::isDeepData(h.type());
+            (deep ? deepParts : imageParts).push_back(p);
             const Imath::Box2i dw = h.dataWindow();
             if (!haveBox) {
                 uni = dw;
@@ -157,14 +245,20 @@ ExrFile readExr(const std::string& path) {
             for (auto it = h.channels().begin(); it != h.channels().end(); ++it) {
                 if (it.channel().xSampling != 1 || it.channel().ySampling != 1) continue;  // subsampled (YC) not supported
                 std::string ch = it.name();
+                if (deep && ch == "ZBack") continue;  // (the back of volume samples: flattening uses the front)
                 std::string name = ch;
                 bool mainPart = p == 0 || pname.empty() || pname == "rgba" || pname == "rgb";
                 if (!mainPart && ch.find('.') == std::string::npos) name = pname + "." + ch;
+                if (deep && ch == "Z") name = mainPart ? "depth.Z" : pname + ".depth.Z";  // the nearest sample's depth
+                bool dup = false;
+                for (auto& s : srcs) dup = dup || s.name == name;
+                if (dup) continue;  // a flat part already has it
                 srcs.push_back({p, ch, name});
             }
         }
-        if (imageParts.empty()) throw RenderError("EXR contains only deep data (not supported yet): " + path);
-        out.compression = compressionName(in.header(imageParts[0]).compression());
+        if (imageParts.empty() && deepParts.empty()) throw RenderError("EXR has no image parts: " + path);
+        out.compression = compressionName(in.header(imageParts.empty() ? deepParts[0] : imageParts[0]).compression());
+        out.deep = !deepParts.empty();
 
         // Channel order: R, G, B, A, then everything else as stored.
         ChannelSet cs;
@@ -211,6 +305,12 @@ ExrFile readExr(const std::string& path) {
             Imf::InputPart part(in, p);
             part.setFrameBuffer(fb);
             part.readPixels(dw.min.y, dw.max.y);
+        }
+        for (int p : deepParts) {
+            std::vector<std::pair<std::string, int>> chans;  // file channel -> its index in the image
+            for (size_t k = 0; k < order.size(); ++k)
+                if (srcs[order[k]].part == p) chans.push_back({srcs[order[k]].fileName, (int)(k + off)});
+            flattenDeep(in, p, chans, uni, *img);
         }
         flipRows(*img);
         if (lumaOnly) {

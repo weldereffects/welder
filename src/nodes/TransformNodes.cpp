@@ -1072,7 +1072,7 @@ public:
         const double W = fm.width, H = fm.height;
         lens::Lens L = lensAt(a.frame);
         if (stmap()) {  // R, G = where to sample the source, normalised (the classic STMap convention)
-            for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
                 for (int x = a.region.x1; x < a.region.x2; ++x) {
                     double sx, sy;
                     source(L, x + 0.5, y + 0.5, W, H, sx, sy);
@@ -1091,7 +1091,7 @@ public:
         std::vector<int> map(out.nch());
         for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
         Filter fl = parseFilter(params.str("filter", "cubic"));
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double sx, sy;
                 source(L, x + 0.5, y + 0.5, W, H, sx, sy);
@@ -1133,7 +1133,7 @@ public:
         std::vector<int> map(out.nch());
         for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
         Filter fl = parseFilter(params.str("filter", "cubic"));
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const float* mp = m->px(x, y);
                 sample(*src, mp[uc] * sf.width, mp[vc] * sf.height, fl, out.px(x, y), map);

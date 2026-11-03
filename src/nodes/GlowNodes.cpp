@@ -111,7 +111,7 @@ public:
         const bool only = params.flag("glow_only", false);
         const float mix = (float)params.num("mix", f, 1);
         const int n = out.nch();
-        for (int y = a.region.y1; y < a.region.y2; ++y) {
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y) {
             float* o = out.row(y);
             for (int x = a.region.x1; x < a.region.x2; ++x, o += n) {
                 float g[3] = {0, 0, 0};
@@ -241,7 +241,7 @@ public:
         ImagePtr mask = (view == "output" && input(2)) ? a.fetch(input(2), a.region) : nullptr;
         const int mA = mask ? (mask->ch("A") >= 0 ? mask->ch("A") : mask->ch("R")) : -1;
         const int n = out.nch();
-        for (int y = a.region.y1; y < a.region.y2; ++y) {
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y) {
             float* o = out.row(y);
             for (int x = a.region.x1; x < a.region.x2; ++x, o += n) {
                 float r[4] = {0, 0, 0, 0};

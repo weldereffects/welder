@@ -1,6 +1,9 @@
 // EXR I/O tests: every compression, multi-part, tiled, data windows, layers.
 // Files are created with the OpenEXR library directly, then read through Welder.
 #include <ImfChannelList.h>
+#include <ImfDeepFrameBuffer.h>
+#include <ImfDeepScanLineOutputFile.h>
+#include <ImfDeepTiledOutputFile.h>
 #include <ImfFrameBuffer.h>
 #include <ImfHeader.h>
 #include <ImfMultiPartOutputFile.h>
@@ -160,6 +163,60 @@ int main() {
         CHECK_NEAR(f.image->at(33, H - 1 - 17, 0), 0.33, 0.001);
         CHECK_NEAR(f.image->at(33, H - 1 - 17, 1), 0.17, 0.001);
     });
+
+    // Deep: 3x2 pixels. (0,0) empty; (1,0) one sample; (2,0) two samples stored back first;
+    // row 1 one opaque sample each. Flattened front to back: (2,0) R = 0.25 + 0.5 * 0.8.
+    auto writeDeep = [&](const std::string& p, bool tiled) {
+        const int DW = 3, DH = 2;
+        Imf::Header h(DW, DH);
+        h.compression() = Imf::ZIPS_COMPRESSION;
+        for (const char* c : {"R", "A", "Z"}) h.channels().insert(c, Imf::Channel(Imf::FLOAT));
+        std::vector<unsigned int> counts = {0, 1, 2, 1, 1, 1};
+        std::vector<std::vector<float>> R = {{}, {0.5f}, {0.8f, 0.25f}, {0.0f}, {0.1f}, {0.2f}};
+        std::vector<std::vector<float>> A = {{}, {0.5f}, {1.0f, 0.5f}, {1}, {1}, {1}};
+        std::vector<std::vector<float>> Z = {{}, {10}, {20, 5}, {1}, {2}, {3}};
+        std::vector<float*> pr(6), pa(6), pz(6);
+        for (int i = 0; i < 6; ++i) pr[i] = R[i].data(), pa[i] = A[i].data(), pz[i] = Z[i].data();
+        Imf::DeepFrameBuffer fb;
+        fb.insertSampleCountSlice(Imf::Slice(Imf::UINT, (char*)counts.data(), sizeof(unsigned int), sizeof(unsigned int) * DW));
+        fb.insert("R", Imf::DeepSlice(Imf::FLOAT, (char*)pr.data(), sizeof(float*), sizeof(float*) * DW, sizeof(float)));
+        fb.insert("A", Imf::DeepSlice(Imf::FLOAT, (char*)pa.data(), sizeof(float*), sizeof(float*) * DW, sizeof(float)));
+        fb.insert("Z", Imf::DeepSlice(Imf::FLOAT, (char*)pz.data(), sizeof(float*), sizeof(float*) * DW, sizeof(float)));
+        if (tiled) {
+            h.setTileDescription(Imf::TileDescription(2, 2, Imf::ONE_LEVEL));
+            h.setType(Imf::DEEPTILE);
+            Imf::DeepTiledOutputFile out(p.c_str(), h);
+            out.setFrameBuffer(fb);
+            out.writeTiles(0, out.numXTiles() - 1, 0, out.numYTiles() - 1);
+        } else {
+            h.setType(Imf::DEEPSCANLINE);
+            Imf::DeepScanLineOutputFile out(p.c_str(), h);
+            out.setFrameBuffer(fb);
+            out.writePixels(DH);
+        }
+    };
+    for (bool tiled : {false, true}) {
+        test(tiled ? "deep tiled file reads flattened" : "deep scanline file reads flattened", [&] {
+            std::string p = (tmp / (tiled ? "deep_tiled.exr" : "deep.exr")).string();
+            writeDeep(p, tiled);
+            ExrFile f = readExr(p);
+            CHECK(f.deep);
+            const Image& im = *f.image;
+            const int r = im.ch("R"), a = im.ch("A"), z = im.ch("depth.Z");
+            CHECK(r >= 0 && a >= 0 && z >= 0);
+            if (r < 0 || a < 0 || z < 0) return;
+            // Welder y = 1 - EXR y
+            CHECK_NEAR(im.at(0, 1, r), 0.0, 1e-6);
+            CHECK_NEAR(im.at(0, 1, a), 0.0, 1e-6);
+            CHECK_NEAR(im.at(1, 1, r), 0.5, 1e-6);
+            CHECK_NEAR(im.at(1, 1, z), 10.0, 1e-6);
+            CHECK_NEAR(im.at(2, 1, r), 0.65, 1e-5);  // the near half-transparent sample over the far opaque one
+            CHECK_NEAR(im.at(2, 1, a), 1.0, 1e-5);
+            CHECK_NEAR(im.at(2, 1, z), 5.0, 1e-6);   // the nearest
+            CHECK_NEAR(im.at(1, 0, r), 0.1, 1e-6);
+            CHECK_NEAR(im.at(2, 0, z), 3.0, 1e-6);
+        });
+    }
 
     test("bad files give clear errors", [&] {
         bool threw = false;

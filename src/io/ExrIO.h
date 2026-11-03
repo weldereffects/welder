@@ -22,8 +22,11 @@ struct ExrFile {
     std::vector<std::string> parts;  // part names (empty strings for unnamed parts)
     std::string compression;         // of the first part
     std::map<std::string, std::string> metadata;  // string header attributes (e.g. cryptomatte/<id>/manifest)
+    bool deep = false;                            // has deep parts (read flattened: see readExr)
 };
 
+// Deep parts (scanline or tiled) are flattened as they are read: each pixel's samples composited
+// front to back by depth into ordinary channels, with the nearest sample's depth as depth.Z.
 // Throws RenderError on failure.
 ExrFile readExr(const std::string& path);
 

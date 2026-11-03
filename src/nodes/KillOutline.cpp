@@ -113,7 +113,7 @@ public:
         MaskMix mm = MaskMix::setup(a, this, 2);
         const int oA = out.ch("A");
 
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const size_t i = (size_t)(y - big.y1) * W + (x - big.x1);
                 const float al = alpha[i];

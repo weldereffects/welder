@@ -494,7 +494,17 @@ private:
     // A render thread's read lock on the comp. While edits are waiting it first gives way (up to a
     // quarter second), so a stream of renders (playback's read-ahead) can't keep an edit out:
     // nodes added or changed during playback show up at once. (The UI thread never waits here.)
-    std::shared_lock<std::shared_timed_mutex> readComp();
+    // A read lock on the comp for a render thread; WELDER_DEBUG_EDITS reports holds that kept an edit waiting.
+    struct CompRead {
+        std::shared_lock<std::shared_timed_mutex> l;
+        const char* who = "?";
+        int64_t t0 = 0;
+        const std::atomic<bool>* waiting = nullptr;
+        CompRead() = default;
+        CompRead(CompRead&&) = default;
+        ~CompRead();
+    };
+    CompRead readComp(const char* who = "?");
     // The content of a viewer image (under the comp lock): the node's hash (its knobs and everything
     // upstream, at that scale), B's when comparing, and the project settings images depend on.
     uint64_t viewStamp(Engine& eng, Node* n, Node* b, double f, double sc);

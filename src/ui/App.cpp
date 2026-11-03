@@ -259,7 +259,7 @@ void App::texLoop() {
         const std::string nodeName = thumb ? name.substr(std::strlen(kThumb)) : name;
         crash::crumb(std::string(thumb ? "postage stamp of " : "texture of ") + nodeName + " at frame " + std::to_string(f));
         {
-            auto cl = readComp();
+            auto cl = readComp("textures");
             Node* n = comp ? comp->find(nodeName) : nullptr;
             if (!n) {
                 std::lock_guard<std::mutex> l(texM_);
@@ -342,7 +342,7 @@ void App::infoLoop() {
         ChannelSet cs;
         NodeInfo ni;
         {
-            auto cl = readComp();
+            auto cl = readComp("node info");
             Node* n = comp ? comp->find(name) : nullptr;
             try {
                 if (n) {
@@ -487,7 +487,11 @@ void App::message(const std::string& m) {
 
 // ------------------------------------------------------------------ editing
 
-void App::edit(std::function<void(Comp&)> fn) { pending_.push_back(std::move(fn)); }
+static int64_t gEditQueued = 0;
+void App::edit(std::function<void(Comp&)> fn) {
+    if (pending_.empty()) gEditQueued = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    pending_.push_back(std::move(fn));
+}
 
 std::string App::snapshot() const { return comp ? comp->toJson().dump() : "{}"; }
 
@@ -616,13 +620,23 @@ void App::revalidateFrames() {
     if (std::getenv("STRATA_DEBUG_AHEAD")) std::fprintf(stderr, "edit: kept %d of %zu cached frames\n", kept, frameCache_.size());
 }
 
-std::shared_lock<std::shared_timed_mutex> App::readComp() {
+static const bool kDebugEdits = std::getenv("WELDER_DEBUG_EDITS") != nullptr;
+App::CompRead::~CompRead() {
+    if (kDebugEdits && l.owns_lock() && waiting && *waiting)
+        std::fprintf(stderr, "EDITS held up by %s (held %lld ms)\n", who, (long long)(nowMs() - t0));
+}
+App::CompRead App::readComp(const char* who) {
     if (std::this_thread::get_id() != uiThread_ && editsWaiting_) {
         const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
         while (editsWaiting_ && !quit_ && std::chrono::steady_clock::now() < until)
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    return std::shared_lock<std::shared_timed_mutex>(compM);
+    CompRead r;
+    r.l = std::shared_lock<std::shared_timed_mutex>(compM);
+    r.who = who;
+    r.t0 = nowMs();
+    r.waiting = &editsWaiting_;
+    return r;
 }
 
 void App::applyEdits() {
@@ -631,14 +645,24 @@ void App::applyEdits() {
         return;
     }
     std::unique_lock<std::shared_timed_mutex> l(compM, std::try_to_lock);
+    static const bool dbg = std::getenv("WELDER_DEBUG_EDITS") != nullptr;
+    static int64_t waitFrom = 0;
     if (!l.owns_lock()) {
         // A render is reading the comp. Never wait for it: let a quick pass finish
         // (it is shown), stop a slow one, and apply on a later frame.
+        if (dbg && !editsWaiting_) {
+            waitFrom = nowMs();
+            std::fprintf(stderr, "EDITS waiting (busy %d preview %d refine %d)\n", (int)busy_, (int)passIsPreview_, (int)passIsRefine_);
+        }
         editsWaiting_ = true;
         if (shouldCancelPass()) engine_->cancel();
         for (auto& e : aheadEngines_) e->cancel();  // speculative work always gives way to an edit
         if (auxEngine_) auxEngine_->cancel();
         return;
+    }
+    if (dbg) {
+        const long long q = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() - gEditQueued;
+        std::fprintf(stderr, "EDITS applied %lld ms after queued (lock wait %lld ms)\n", q, editsWaiting_ ? (long long)(nowMs() - waitFrom) : 0LL);
     }
     editsWaiting_ = false;
     auto edits = std::move(pending_);
@@ -941,7 +965,7 @@ Box App::viewBox(const Format& fmt, const Box& d, double sc, const Box& region) 
 
 bool App::diskHasView(const std::string& nodeName, double f, double sc, const Box& region) {
     if (!disk_) return false;
-    auto cl = readComp();
+    auto cl = readComp("disk check");
     Node* n = comp ? comp->find(nodeName) : nullptr;
     if (!n) return false;
     try {
@@ -960,7 +984,7 @@ ViewResult App::renderView(Engine& eng, const std::string& nodeName, const std::
     r.node = nodeName;
     r.frame = f;
     r.scale = sc;
-    auto cl = readComp();
+    auto cl = readComp(&eng == engine_.get() ? "viewer" : "read-ahead / other viewer");
     eng.resetCancel();
     Node* n = comp ? comp->find(nodeName) : nullptr;
     if (!n) return r;
@@ -1972,7 +1996,7 @@ void App::patchLoop() {
         }
         ImagePtr im;
         try {
-            auto cl = readComp();
+            auto cl = readComp("tracker patch");
             Node* n = comp ? comp->find(rq.tracker) : nullptr;
             Node* src = n ? n->input(0) : nullptr;
             if (src) {

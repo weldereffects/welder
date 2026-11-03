@@ -419,6 +419,7 @@ public:
         md["input/height"] = f->format.height;
         md["input/pixel_aspect"] = f->format.pixelAspect;
         if (!f->compression.empty()) md["exr/compression"] = f->compression;
+        if (f->deep) md["exr/deep"] = "flattened (samples composited front to back; depth.Z = nearest)";
         {
             std::error_code ec;
             auto sz = std::filesystem::file_size(path(*ff), ec);

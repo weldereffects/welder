@@ -118,7 +118,7 @@ public:
         float pcol[3] = {(float)pc[0], (float)pc[1], (float)pc[2]};
         const float pl = std::max(1e-4f, luma(pcol[0], pcol[1], pcol[2]));
 
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float orig[3] = {o[R], o[G], o[Bc]};
@@ -212,7 +212,7 @@ public:
         const bool limit = params.flag("limit_to_screen", false);
         const std::string view = params.str("output", "result");
         const int W = D.width();
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 if (!D.contains(x, y)) continue;
                 const size_t i = (size_t)(y - D.y1) * W + (x - D.x1);
@@ -381,7 +381,7 @@ public:
         const std::string merge = params.str("operation", "over");
         const std::string view = params.str("output", "comp");
         MaskMix mm = MaskMix::setup(a, this, 2);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const float* A = Ai->px(x, y);
                 const float* B = Bi->px(x, y);
@@ -463,7 +463,7 @@ public:
         const float gain = (float)params.num("gain", f, 1), off = (float)params.num("offset", f, 0.5);
         const bool lum = params.flag("luminance", false);
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float *p1 = b1.px(x, y), *p2 = b2.px(x, y);
@@ -512,7 +512,7 @@ public:
             for (size_t i = 0; i < bl.data.size(); i += 3) bl.data[i] = t.data[i];
         }
         const int oR = out.ch("R"), oG = out.ch("G"), oB = out.ch("B");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const float* q = bl.px(x, y);
                 const float Y = q[0], cb = q[1] * 1.8556f, cr = q[2] * 1.5748f;
@@ -557,7 +557,7 @@ public:
         blurSum(*src, bl, {{fe.fwhm(), fe.fwhm(), 1}}, idx);
         const bool rescale = params.flag("premultiplied", false);
         const int A = out.ch("A"), R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float a0 = A >= 0 ? o[A] : 0;
@@ -614,7 +614,7 @@ public:
             const float a0 = h(i, j) + (h(i + 1, j) - h(i, j)) * sx, a1 = h(i, j + 1) + (h(i + 1, j + 1) - h(i, j + 1)) * sx;
             return a0 + (a1 - a0) * sy;
         };
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 const float c = core.map(cb.px(x, y)[A]);

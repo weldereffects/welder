@@ -390,6 +390,7 @@ if(STRATA_BUILD_UI)
   add_executable(welder_ui WIN32
     src/ui/main.cpp
     src/ui/SmokeTest.cpp
+    src/ui/Tablet.cpp
     src/ui/App.cpp
     src/ui/Viewer.cpp
     src/ui/ViewerGL.cpp

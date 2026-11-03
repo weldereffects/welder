@@ -334,7 +334,7 @@ protected:
     void mixBack(RenderArgs& a, const Image& src, Image& out) {
         const float m = mix(a.frame);
         if (m >= 1) return;
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 for (int c = 0; c < out.nch(); ++c) {
@@ -363,7 +363,7 @@ public:
         std::vector<int> rest(out.nch());
         for (int c = 0; c < out.nch(); ++c) rest[c] = (c == R || c == G || c == B) ? -1 : map[c];
         std::vector<int> one(1);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 sample(*src, x + 0.5, y + 0.5, Filter::impulse(), o, rest);
@@ -434,7 +434,7 @@ public:
         std::vector<std::pair<int, int>> restPairs;
         for (int c = 0; c < out.nch(); ++c)
             if (rest[c] >= 0) restPairs.push_back({c, rest[c]});
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
                 if (fast) {
@@ -509,7 +509,7 @@ public:
         const float bright = (float)params.num("brightness", f, 1), m = mix(f);
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
         const float flat = L.lz;  // a flat surface's shading: maps to mid grey
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float gx, gy;
                 p.grad(x, y, gx, gy);
@@ -554,7 +554,7 @@ public:
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
         const float m = mix(f);
         std::vector<float> orig(out.nch());
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float gx, gy;
                 p.grad(x, y, gx, gy);
@@ -613,7 +613,7 @@ public:
         const bool invert = params.flag("invert", false);
         const float m = mix(f);
         const size_t nk = colour ? 3 : 1;  // luminance: one plane, one Sobel
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float e[3];
                 for (size_t k = 0; k < nk; ++k) {
@@ -664,7 +664,7 @@ public:
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B"), A = out.ch("A");
         const bool circle = std::fabs(round - 2) < 1e-9;
         const float fr = (float)round, ifr = (float)(1.0 / round);
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 const float dx = (float)(std::fabs(x + 0.5 - cx) / hx), dy = (float)(std::fabs(y + 0.5 - cy) / hy);
                 // inside the clear middle: nothing to do (for any roundness, d >= max(dx, dy))
@@ -705,7 +705,7 @@ public:
         Edges ed("clamp", fb.intersect(src->bounds));
         std::vector<float> s1(out.nch()), s2(out.nch());
         const double ox = fb.x1 + fb.width() * 0.5, oy = fb.y1 + fb.height() * 0.5;  // the source's own centre
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double dx = x + 0.5 - cx, dy = y + 0.5 - cy;
                 double rho = round ? std::hypot(dx / hw, dy / hh) : std::max(std::fabs(dx) / hw, std::fabs(dy) / hh);
@@ -837,7 +837,7 @@ public:
             }
         }
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 double px = x + 0.5, py = y + 0.5, ox = 0, oy = 0, slope = 0;
                 // a ring's push: outward across the ring, which with an aspect is an ellipse
@@ -923,7 +923,7 @@ public:
         const std::string over = params.str("combine", defaultCombine());
         const float opacity = (float)params.num("opacity", f, 1);
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B"), A = out.ch("A");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
+        for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 // full-resolution coordinates relative to the centre: the pattern doesn't change with proxy
                 const double X = (x + 0.5) / sc - c[0], Y = (y + 0.5) / sc - c[1];

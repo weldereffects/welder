@@ -612,6 +612,7 @@ void blurSum(const Image& src, Image& out, const std::vector<BlurTerm>& terms, c
     const int n = out.nch();
     auto fdiv = [](int v, int d) { return v >= 0 ? v / d : -((-v + d - 1) / d); };
     for (const BlurTerm& t : terms) {
+        Engine::cancelPoint();  // (a glow is many blurs: an edit doesn't wait for all of them)
         if (t.w == 0) continue;
         const double sx = std::max(0.0, t.sx), sy = std::max(0.0, t.sy), big = std::max(sx, sy);
         int f = 1;
