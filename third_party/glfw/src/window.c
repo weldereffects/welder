@@ -963,6 +963,10 @@ GLFWAPI void glfwSetWindowAttrib(GLFWwindow* handle, int attrib, int value)
             return;
 
         case GLFW_MOUSE_PASSTHROUGH:
+            // Welder: Dear ImGui's multi-viewport backend sets this every frame for every window;
+            // on X11 each call resets the window's input shape. Only when it changes.
+            if (window->mousePassthrough == value)
+                return;
             window->mousePassthrough = value;
             _glfw.platform.setWindowMousePassthrough(window, value);
             return;

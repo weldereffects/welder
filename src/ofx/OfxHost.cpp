@@ -1192,6 +1192,63 @@ public:
         identity.clear();
     }
 
+    // The user pressed a push button (or edited `param`): kOfxActionInstanceChanged, bracketed by
+    // Begin / End. Values the plugin sets on its params meanwhile (a noise profile, say) are copied
+    // into "values", so they're saved with the comp and undo. Images it fetches render with `e`.
+    // True when the plugin changed any value.
+    bool instanceChanged(const std::string& param, double frame, Engine& e, std::string* err) {
+        if (!inst || !plugin) {
+            if (err) *err = "the plugin isn't loaded";
+            return false;
+        }
+        if (!inst->params.byName.count(param)) {
+            if (err) *err = "the plugin has no parameter '" + param + "'";
+            return false;
+        }
+        std::map<std::string, std::pair<bool, json>> before;
+        for (auto& p : inst->params.params) {
+            std::lock_guard l(p->m);
+            before[p->name] = {p->hasValue, p->value};
+        }
+        RenderCtx rc;
+        rc.engine = &e;
+        rc.frame = frame;
+        Format fmt = comp ? comp->format : Format();
+        rc.window = Box(0, 0, fmt.width, fmt.height);
+        CtxScope scope(&rc);
+        PropSet reason, in;
+        reason.setString(kOfxPropChangeReason, {kOfxChangeUserEdited});
+        in.setString(kOfxPropType, {kOfxTypeParameter});
+        in.setString(kOfxPropName, {param});
+        in.setString(kOfxPropChangeReason, {kOfxChangeUserEdited});
+        baseArgs(in, frame, e.scale());
+        OfxStatus st;
+        {
+            std::lock_guard l(inst->actionM);
+            plugin->action(kOfxActionBeginInstanceChanged, inst->handle(), &reason, nullptr);
+            st = plugin->action(kOfxActionInstanceChanged, inst->handle(), &in, nullptr);
+            plugin->action(kOfxActionEndInstanceChanged, inst->handle(), &reason, nullptr);
+        }
+        if (st > kOfxStatReplyDefault && err) *err = "the plugin reported an error" + msgSuffix();
+        bool changed = false;
+        json& values = params.data["values"];
+        if (!values.is_object()) values = json::object();
+        for (auto& p : inst->params.params) {
+            if (p->dims() == 0 && !p->isString()) continue;  // push buttons, groups, pages
+            std::lock_guard l(p->m);
+            auto& [had, old] = before[p->name];
+            if (p->hasValue && (!had || old != p->value)) {
+                values[p->name] = p->value;
+                changed = true;
+            }
+        }
+        if (changed) {
+            std::lock_guard l(identM);
+            identity.clear();
+        }
+        return changed;
+    }
+
     int maxInputs() const override { return bypass ? 1 : (int)inputClips.size(); }
     std::string inputLabel(int i) const override {
         if (bypass || i < 0 || i >= (int)inputClips.size()) return "";
@@ -1577,6 +1634,15 @@ std::vector<OfxParamInfo> ofxNodeParams(Node* node) {
         r.push_back(std::move(i));
     }
     return r;
+}
+
+bool ofxInstanceChanged(Node* node, const std::string& param, double frame, Engine& e, std::string* err) {
+    auto* n = dynamic_cast<OfxNode*>(node);
+    if (!n) {
+        if (err) *err = "not an OFX node";
+        return false;
+    }
+    return n->instanceChanged(param, frame, e, err);
 }
 
 std::vector<std::pair<std::string, std::string>> listOfxPluginsForUi() {

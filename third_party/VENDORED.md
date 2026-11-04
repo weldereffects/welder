@@ -6,7 +6,7 @@
 | imath | AcademySoftwareFoundation/Imath | v3.2.3 | BSD-3 | tests, python bindings, docs removed |
 | openfx | AcademySoftwareFoundation/openfx | main (headers only) | BSD-3 | |
 | imgui | ocornut/imgui | docking branch | MIT | |
-| glfw | glfw/glfw | 3.4 | zlib | |
+| glfw | glfw/glfw | 3.4 | zlib | patched: glfwSetWindowAttrib(GLFW_MOUSE_PASSTHROUGH) does nothing when the value is unchanged (window.c) |
 | stb | nothings/stb | master | public domain / MIT | stb_image, stb_image_write |
 | nlohmann | nlohmann/json | develop | MIT | |
 | fonts | googlefonts/roboto-2 | 2.001047 (Regular, Medium; hinted TTF) | Apache-2.0 | the editor's typeface; LICENSE-Roboto.txt alongside |

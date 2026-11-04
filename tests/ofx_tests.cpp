@@ -73,6 +73,30 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(img, 10, 10, "G"), 1.0, 1e-6);
     });
 
+    test("push button: the plugin reads the source and sets its params", [] {
+        auto c = comp(json::array({
+            {{"name", "Src"}, {"type", "Constant"}, {"params", {{"color", {0.4, 0.2, 0.1, 1}}}}},
+            {{"name", "P"}, {"type", "OFX"}, {"inputs", {"Src"}}, {"params", {{"plugin", "org.welder.test.profileButton"}}}},
+        }));
+        CHECK_NEAR(px(render(*c, "P"), 5, 5, "R"), 0.4, 1e-6);  // strength 1 before the button
+        Node* p = c->find("P");
+        bool hasButton = false;
+        for (auto& pi : ofxNodeParams(p)) hasButton |= pi.name == "analyse" && pi.type == "pushbutton";
+        CHECK(hasButton);
+        Engine e;
+        std::string err;
+        CHECK(ofxInstanceChanged(p, "analyse", 3, e, &err));
+        CHECK(err.empty());
+        p->paramsChanged();
+        CHECK(p->params.data["values"]["profile"] == "avgR=0.400 frame=3");
+        CHECK_NEAR(p->params.data["values"]["strength"].get<double>(), 0.5, 1e-9);
+        CHECK_NEAR(px(render(*c, "P"), 5, 5, "R"), 0.2, 1e-6);
+        // saved with the comp and back on reload
+        auto c2 = Comp::fromJson(c->toJson(), std::filesystem::temp_directory_path());
+        CHECK_NEAR(px(render(*c2, "P"), 5, 5, "R"), 0.2, 1e-6);
+        CHECK(!ofxInstanceChanged(p, "nope", 1, e, &err) && !err.empty());
+    });
+
     test("animated plugin params follow keyframes", [] {
         auto c = comp(json::array({
             {{"name", "Src"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},

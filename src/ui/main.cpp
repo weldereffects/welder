@@ -165,11 +165,27 @@ void guardLayout() {
             size = ImVec2(std::max(size.x, minW), std::max(size.y, minH));
             fix = true;
         }
-        size.x = std::min(size.x, vp->WorkSize.x);
-        size.y = std::min(size.y, vp->WorkSize.y);
+        // The area it must stay in: the main window, or with floating panels (a second screen) the
+        // monitor it's on (the nearest one when it's off every monitor).
+        ImVec2 areaPos = vp->WorkPos, areaSize = vp->WorkSize;
+        if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            const ImVec2 c(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
+            float best = 1e30f;
+            for (const ImGuiPlatformMonitor& m : ImGui::GetPlatformIO().Monitors) {
+                const float dx = std::max({m.WorkPos.x - c.x, 0.0f, c.x - (m.WorkPos.x + m.WorkSize.x)});
+                const float dy = std::max({m.WorkPos.y - c.y, 0.0f, c.y - (m.WorkPos.y + m.WorkSize.y)});
+                if (dx * dx + dy * dy < best) {
+                    best = dx * dx + dy * dy;
+                    areaPos = m.WorkPos;
+                    areaSize = m.WorkSize;
+                }
+            }
+        }
+        size.x = std::min(size.x, areaSize.x);
+        size.y = std::min(size.y, areaSize.y);
         // all of it on screen (so every edge can be grabbed)
-        const float x = std::clamp(pos.x, vp->WorkPos.x, vp->WorkPos.x + vp->WorkSize.x - size.x);
-        const float y = std::clamp(pos.y, vp->WorkPos.y, vp->WorkPos.y + vp->WorkSize.y - size.y);
+        const float x = std::clamp(pos.x, areaPos.x, areaPos.x + areaSize.x - size.x);
+        const float y = std::clamp(pos.y, areaPos.y, areaPos.y + areaSize.y - size.y);
         if (x != pos.x || y != pos.y) fix = true;
         if (fix) {
             ImGui::SetWindowPos(win, ImVec2(x, y), ImGuiCond_Always);
@@ -253,6 +269,13 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable | ImGuiConfigFlags_NavEnableKeyboard;
+    // Panels dragged out of the main window become windows of their own (a second screen). Not for
+    // scripted screenshots and tests (one window to capture), nor with WELDER_SINGLE_WINDOW=1.
+    // (The GLFW backend turns it off under Wayland, which can't place windows.)
+    // (WELDER_TEST_FLOATING: on for a scripted test too.)
+    if ((opt.screenshot.empty() && !opt.idScan && !envFlag("WELDER_SINGLE_WINDOW")) || envFlag("WELDER_TEST_FLOATING")) {
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    }
     io.ConfigWindowsMoveFromTitleBarOnly = true;
     static std::string iniPath = (fs::path(configDir()) / "layout.ini").string();
     io.ConfigDragClickToInputText = true;  // a click on a number field types into it; a drag scrubs it (classic)
@@ -840,7 +863,9 @@ int main(int argc, char** argv) {
             if (frameCount == std::max(end, resetAt) + 18)
                 for (const char* w : {"Nodes", "Viewer", "Timeline", "Node Graph", "Properties"})
                     if (ImGuiWindow* win = ImGui::FindWindowByName(w))
-                        std::fprintf(stderr, "PANEL %s pos %.0f,%.0f size %.0fx%.0f\n", w, win->Pos.x, win->Pos.y, win->Size.x, win->Size.y);
+                        std::fprintf(stderr, "PANEL %s pos %.0f,%.0f size %.0fx%.0f docked %d own window %d\n", w, win->Pos.x, win->Pos.y,
+                                     win->Size.x, win->Size.y, win->DockNode ? (int)win->DockIsActive : 0,
+                                     win->Viewport && win->Viewport != ImGui::GetMainViewport() ? 1 : 0);
         }
         // STRATA_TEST_MESS=1: wreck the workspace (Properties dropped into the toolbar, Messages
         // floating tiny and off screen), then report; STRATA_TEST_RESET_AT resets it and reports again.
@@ -1351,6 +1376,12 @@ int main(int argc, char** argv) {
         glClearColor(0.12f, 0.12f, 0.12f, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         if (!scanning) ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());  // the ID sweep needs no pixels
+        if (!scanning && (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)) {
+            // panels floating outside the main window: each draws (and swaps) its own window
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            glfwMakeContextCurrent(win);
+        }
         mark("drawing (OpenGL)");
         if (frameCount % 60 == 0) {  // OpenGL errors (out of GPU memory...) go in the crash breadcrumbs
             for (int k = 0; k < 4; ++k) {

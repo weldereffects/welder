@@ -22,6 +22,7 @@ void registerOfxPlugins();  // registers the "OFX" node type (plugins load lazil
 void listOfxPlugins(std::ostream& os);
 
 class Node;
+class Engine;
 
 // Parameter definitions of an OFX node's plugin instance, for building UI knobs.
 struct OfxParamInfo {
@@ -37,6 +38,12 @@ struct OfxParamInfo {
 };
 // Empty if `n` is not a loaded OFX node.
 std::vector<OfxParamInfo> ofxNodeParams(Node* n);
+
+// Tell an OFX node's plugin the user pressed push button `param` (or changed it): the
+// InstanceChanged action. Images the plugin asks for meanwhile render with `e` at `frame`. Values
+// the plugin sets are written into the node's "values". Returns true when any changed; `err` is
+// set when the plugin reports a problem. Call with the comp locked for writing (inside App::edit).
+bool ofxInstanceChanged(Node* n, const std::string& param, double frame, Engine& e, std::string* err = nullptr);
 
 // Plugins that load and describe successfully: (identifier, menu label).
 std::vector<std::pair<std::string, std::string>> listOfxPluginsForUi();

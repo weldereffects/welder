@@ -329,6 +329,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
       <p>Keys go to the panel under the mouse: <kbd>B</kbd> over the graph inserts a Blur, over the viewer it shows the blue channel.</p>
       <ul class="clean">
         <li>Drag a panel's tab to move, dock or float it; drag the line between panels to resize them.</li>
+        <li>Drag a tab out past the edge of the main window and the panel gets a window of its own, which you can put on a second screen; drag its tab back in to dock it again. (Not under Wayland, which doesn't let apps place windows: there floating panels stay inside the main window. <code>WELDER_SINGLE_WINDOW=1</code> keeps them inside everywhere.)</li>
         <li>Tap <kbd>Space</kbd> to maximize the panel under the mouse, again to restore. A maximized Viewer keeps the Timeline under it.</li>
         <li>The <strong>Workspace</strong> menu brings any panel to the front.</li>
       </ul>
@@ -550,7 +551,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <div class="card"><h4>Import</h4><p><strong>File › Import .nk Script…</strong>, drag a <code>.nk</code> onto the window, or copy nodes in a .nk app and <kbd>Ctrl</kbd><kbd>V</kbd> in Welder. Groups, gizmos, backdrops, expressions, roto, tracks and cameras come across.</p></div>
         <div class="card"><h4>Export</h4><p><strong>File › Export .nk Script…</strong>, or copy in Welder and paste in a .nk app. Welder-only nodes arrive as labelled NoOps.</p></div>
         <div class="card"><h4>Mapped classes</h4><p>Kronos and OFlow2 become OFlow, Keylight becomes ScreenKeyer, Bokeh becomes Defocus, Vectorfield becomes OCIOFileTransform.</p></div>
-        <div class="card"><h4>OFX plugins</h4><p>Loaded from <code>{{OFXDIR}}</code> and <code>OFX_PLUGIN_PATH</code>; they appear under the OFX button and in Tab search.</p></div>
+        <div class="card"><h4>OFX plugins</h4><p>Loaded from <code>{{OFXDIR}}</code> and <code>OFX_PLUGIN_PATH</code>; they appear under the OFX button and in Tab search. A plugin's buttons (NeatVideo's Prepare Noise Profile, say) are in its panel; what the plugin stores when you press one is saved with the script.</p></div>
       </div>
       <p class="muted" style="margin-top:14px">Untranslatable nodes pass their input through, show red, and are listed in Messages. Studio defaults (slate art, vendor, your slate gizmo) live in <code>{{CFG}}{{S}}studio.json</code>.</p>
     </section>
@@ -608,7 +609,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <tr><td>Welder crashed</td><td>On the next start it offers the report; send the <code>.txt</code>. Opening the script again offers its autosave</td></tr>
         <tr><td>The editor feels slow</td><td><strong>Viewer › Performance</strong>, then <strong>Copy report</strong> and send it</td></tr>
       </table></div>
-      <footer>Welder is open source. Environment variables: <code>WELDER_CACHE_DIR</code>, <code>WELDER_GIZMO_PATH</code>, <code>OFX_PLUGIN_PATH</code>, <code>WELDER_RESET_WORKSPACE=1</code>.</footer>
+      <footer>Welder is open source. Environment variables: <code>WELDER_CACHE_DIR</code>, <code>WELDER_GIZMO_PATH</code>, <code>OFX_PLUGIN_PATH</code>, <code>WELDER_RESET_WORKSPACE=1</code>, <code>WELDER_SINGLE_WINDOW=1</code>.</footer>
     </section>
   </main>
 </div>

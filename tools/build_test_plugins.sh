@@ -52,4 +52,6 @@ build Noise  "$OFX/Support/Plugins/Generator/noise.cpp" $SUPPORT
 build Retimer    "$OFX/Support/Plugins/Retimer/retimer.cpp" $SUPPORT
 build ChoiceParams "$OFX/Support/Plugins/ChoiceParams/choiceparams.cpp" $SUPPORT
 build RawInvert  "$OFX/Examples/Invert/invert.cpp"
+# Welder's own: a push button that reads the source and sets other params (tests/ofx_plugins)
+build ProfileButton "$(cd "$(dirname "$0")/.." && pwd)/tests/ofx_plugins/profile_button.cpp"
 echo "done -> $OUT"

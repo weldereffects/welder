@@ -237,32 +237,51 @@ bool initGL() {
     G.mOrtho = pGetUniformLocation(G.meshProg, "Ortho");
     G.lMVP = pGetUniformLocation(G.lineProg, "MVP");
     G.lPointSize = pGetUniformLocation(G.lineProg, "PointSize");
-    pGenVertexArrays(1, &G.vao);
     pGenBuffers(1, &G.lineVbo);
     G.ok = true;
     return true;
 }
 
+// Framebuffers and vertex arrays aren't shared between GL contexts, and a panel dragged out of the
+// main window draws in its own: one of each per context (the texture and depth buffer are shared).
+struct CtxGL {
+    GLuint fbo = 0, vao = 0;
+    GLuint color = 0;  // what fbo has attached, and at what size
+    int w = 0, h = 0;
+};
+CtxGL& ctxGL() {
+    static std::map<void*, CtxGL> all;
+    CtxGL& c = all[(void*)glfwGetCurrentContext()];
+    if (!c.vao) pGenVertexArrays(1, &c.vao);
+    return c;
+}
+
 bool ensureFbo(int w, int h) {
-    if (G.fbo && G.w == w && G.h == h) return true;
-    if (!G.fbo) {
-        pGenFramebuffers(1, &G.fbo);
+    if (!G.color) {
         glGenTextures(1, &G.color);
         pGenRenderbuffers(1, &G.depth);
     }
-    glBindTexture(GL_TEXTURE_2D, G.color);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    pBindRenderbuffer(kRenderbuffer, G.depth);
-    pRenderbufferStorage(kRenderbuffer, kDepth24, w, h);
-    pBindFramebuffer(kFramebuffer, G.fbo);
-    pFramebufferTexture2D(kFramebuffer, kColor0, GL_TEXTURE_2D, G.color, 0);
-    pFramebufferRenderbuffer(kFramebuffer, kDepthAttach, kRenderbuffer, G.depth);
-    bool ok = pCheckFramebufferStatus(kFramebuffer) == kFbComplete;
-    G.w = w;
-    G.h = h;
-    return ok;
+    if (G.w != w || G.h != h) {
+        glBindTexture(GL_TEXTURE_2D, G.color);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        pBindRenderbuffer(kRenderbuffer, G.depth);
+        pRenderbufferStorage(kRenderbuffer, kDepth24, w, h);
+        G.w = w;
+        G.h = h;
+    }
+    CtxGL& c = ctxGL();
+    if (!c.fbo) pGenFramebuffers(1, &c.fbo);
+    pBindFramebuffer(kFramebuffer, c.fbo);
+    if (c.color != G.color || c.w != w || c.h != h) {
+        pFramebufferTexture2D(kFramebuffer, kColor0, GL_TEXTURE_2D, G.color, 0);
+        pFramebufferRenderbuffer(kFramebuffer, kDepthAttach, kRenderbuffer, G.depth);
+        c.color = G.color;
+        c.w = w;
+        c.h = h;
+    }
+    return pCheckFramebufferStatus(kFramebuffer) == kFbComplete;
 }
 
 struct MeshBuf {
@@ -859,10 +878,10 @@ void renderJob(const ImDrawList*, const ImDrawCmd* cmd) {
         return;
     }
     const View& v = J.v;
-    pBindFramebuffer(kFramebuffer, G.fbo);
+    pBindFramebuffer(kFramebuffer, ctxGL().fbo);
     pBindSampler(0, 0);  // ImGui binds its own sampler to unit 0
     glViewport(0, 0, J.fw, J.fh);
-    pBindVertexArray(G.vao);
+    pBindVertexArray(ctxGL().vao);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);

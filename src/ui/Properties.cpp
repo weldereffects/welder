@@ -3086,7 +3086,27 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
         shown.insert("if_missing");
         shown.insert("version");
         for (auto& pi : ofx) {
-            if (pi.secret || pi.type == "page" || pi.type == "pushbutton") continue;
+            if (pi.secret || pi.type == "page") continue;
+            if (pi.type == "pushbutton") {
+                // Plugins with their own windows (noise profiling, settings dialogs) open them from these.
+                ImGui::Dummy(ImVec2(kit::labelWidth() - ImGui::GetStyle().ItemSpacing.x, 0));
+                ImGui::SameLine();
+                if (ImGui::Button((pi.label + "##ofxbtn_" + pi.name).c_str())) {
+                    app.checkpoint();
+                    std::string nm = n->name, param = pi.name;
+                    double f = app.frame;
+                    App* ap = &app;
+                    app.edit([ap, nm, param, f](Comp& c) {
+                        Node* m = c.find(nm);
+                        if (!m) return;
+                        std::string err;
+                        if (ofxInstanceChanged(m, param, f, ap->uiEngine(), &err)) m->paramsChanged();
+                        if (!err.empty()) ap->message(nm + "." + param + ": " + err);
+                    });
+                }
+                if (!pi.hint.empty() && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", pi.hint.c_str());
+                continue;
+            }
             KnobDef k;
             k.name = "values/" + pi.name;
             k.label = pi.label;
