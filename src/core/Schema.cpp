@@ -1455,6 +1455,29 @@ std::vector<NodeDef> build() {
                      "Motion blur from motion vectors (pixels per frame, e.g. forward.u / forward.v from BlenderRender or "
                      "ScanlineRender). Objects smear over a still background; with depth, foreground edges stay correct."});
     }
+    d.push_back({"NormalLight", "Color",
+                 withMask({C("mode", "mode", "add", {"add", "multiply", "light only"}),
+                           C("type", "light", "directional", {"directional", "point"}),
+                           When(Tip(F("azimuth", "azimuth", 45, -180, 180), "0 = from the right, 90 = from the camera, 180 = from the left"),
+                                "type=directional"),
+                           When(Tip(F("elevation", "elevation", 30, -90, 90), "Up from the horizon"), "type=directional"),
+                           When(Tip(XYZ("light_position", "position (camera space)", json::array({0, 1, -2}), -100, 100),
+                                    "Where the light is, in the P layer's units (SurfacePasses: metres, camera at 0, looking down -z)"),
+                                "type=point"),
+                           When(F("falloff", "falloff (power)", 2, 0, 4), "type=point"),
+                           When(Tip(F("range", "range", 1, 0.01, 100), "The distance where the light is at half strength"), "type=point"),
+                           Col("color", "colour", 1), F("intensity", "intensity", 1, 0, 10),
+                           When(F("ambient", "ambient", 0.2, 0, 2), "mode=multiply"),
+                           Tip(F("wrap", "wrap", 0, 0, 1), "Lets the light reach round past the terminator: softer, like a bigger source"),
+                           Tip(F("specular", "specular", 0, 0, 4), "A highlight (Blinn-Phong); uses P for the view direction when there is one"),
+                           F("roughness", "roughness", 0.4, 0.02, 1),
+                           Div("Layers"),
+                           Tip(S("normals", "normals layer", "N"), "Camera-space unit normals: <layer>.X / .Y / .Z (from src, or the normals input)"),
+                           Tip(S("position", "position layer", "P"), "Camera-space position, for point lights and highlights"),
+                           B("unpremult", "unpremultiply", true)}),
+                 "Relights the plate from its normals (N from SurfacePasses or a CG render): a directional or point light with "
+                 "wrap and a highlight. add puts a light on top of the shot; multiply lights it with this light only; "
+                 "light only gives the light pass. Stack several for more lights."});
     d.push_back({"Median", "Filter", withMask({Ch("channels", "channels", "rgba"), F("size", "size", 3, 0, 25, "Radius in pixels")}),
                  "Each pixel becomes the median of its neighbourhood: removes specks and dust, keeps edges."});
     d.push_back({"DirBlur", "Filter",
@@ -2035,6 +2058,45 @@ std::vector<NodeDef> build() {
                          C("view", "view", "plate + depth.Z", {"plate + depth.Z", "depth (grey)"})}),
                  "Video Depth Anything: depth for the whole shot that holds steady from frame to frame (no flicker), as depth.Z. "
                  "Feed it to DepthMix's depth input, ZDefocus, or anything that reads depth. Runs on the ML worker."});
+    d.push_back({"SurfacePasses", "AI",
+                 frames({Tip(C("moge", "scene model", "large", {"large", "base", "small"}),
+                             "MoGe-2 (MIT): depth, normals and position for the whole frame. large: the most accurate"),
+                         Tip(I("resolution_level", "detail", 9, 0, 9), "MoGe-2's working resolution: 9 keeps the finest detail"),
+                         Tip(I("max_size", "max size", 1920, 256, 4096), "The frames are made this small (long side) for the models; "
+                                                                        "the passes are scaled back up to the plate"),
+                         Tip(B("lock_fov", "one field of view for the shot", true),
+                             "Estimate the lens once (the median over a few frames) and hold it, so P lines up from frame to frame"),
+                         When(Tip(F("fov_x", "horizontal FOV (0 = estimate)", 0, 0, 170),
+                                  "Known horizontal field of view in degrees; 0 lets MoGe-2 estimate it"), "lock_fov=true"),
+                         Div("People"),
+                         Tip(B("people", "refine people (Sapiens2)", true),
+                             "Find the people with Sapiens2 segmentation, crop each so Sapiens2 runs at its native 1024 x 768, "
+                             "and paste its normals back over MoGe-2's"),
+                         When(Tip(C("sapiens", "people model", "1b", {"1b", "0.8b", "0.4b"}),
+                                  "Sapiens2 (Sapiens2 License: no biometric processing, surveillance or deepfakes). 1b: best"), "people=true"),
+                         When(Tip(B("heads", "crop heads too", true), "Run each head again at the full model size: finer faces"), "people=true"),
+                         When(Tip(F("min_person", "smallest person (frame height)", 0.08, 0.01, 1),
+                                  "People shorter than this fraction of the frame keep MoGe-2's normals"), "people=true"),
+                         When(I("max_people", "max people", 8, 1, 32), "people=true"),
+                         When(Tip(F("feather", "edge softness (px)", 3, 0, 20), "How softly the people's normals blend in"), "people=true"),
+                         Div("Temporal"),
+                         Tip(B("temporal", "steady (no flicker)", true),
+                             "Line up the frames before and after with optical flow and average them where the flow holds: "
+                             "details stay, flicker goes"),
+                         When(Tip(I("radius", "frames each side", 2, 1, 6), "How many frames before and after are averaged in"), "temporal=true"),
+                         When(Tip(C("flow", "optical flow", "RAFT", {"RAFT", "DIS (fast)"}),
+                                  "RAFT (torchvision): accurate. DIS (OpenCV): quick, on the CPU"), "temporal=true"),
+                         When(I("flow_size", "flow size", 1024, 256, 2048), "temporal=true"),
+                         When(Tip(B("split_cuts", "split at cuts", true), "Never average across a cut"), "temporal=true"),
+                         Div("Output"),
+                         Tip(I("edge_clean", "depth edge clean-up (px)", 1, 0, 8),
+                             "Pull depth's in-between pixels at silhouettes to the background (like a FilterErode on depth)"),
+                         B("fp32", "full precision (slower)", false),
+                         C("view", "view", "plate", {"plate", "normals", "depth (grey)", "position", "people"})}),
+                 "Normals, depth and position for relighting, all in camera space: N, depth.Z and P (plus people.A, the "
+                 "person matte). MoGe-2 for the scene, Sapiens2 for people (each person and head cropped to its native "
+                 "size), and optical flow to average neighbouring frames so nothing flickers. Feed it to NormalLight. "
+                 "Runs on the ML worker."});
     d.push_back({"TrackMask", "AI",
                  frames({InfoRow("trackmask", ""),
                          Btn("trackmask_clear_frame", "Clear this frame", "Remove this frame's clicks and box"),

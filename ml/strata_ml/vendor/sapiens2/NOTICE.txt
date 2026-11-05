@@ -1,0 +1,5 @@
+Sapiens2 inference code from https://github.com/facebookresearch/sapiens2 (commit 7e5bae88456ac418ff0e58e74106c9fe192055d4),
+Copyright (c) Meta Platforms, Inc. and affiliates, under the Sapiens2 License (LICENSE.md in this folder).
+backbone.py is sapiens/backbones/standalone/sapiens2.py unchanged; heads.py keeps the network parts of
+the NormalHead and SegHead. The weights are not included: Welder downloads them from Hugging Face
+(facebook/sapiens2-normal-*, facebook/sapiens2-seg-*), under the same licence.

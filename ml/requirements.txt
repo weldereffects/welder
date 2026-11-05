@@ -11,6 +11,8 @@ packaging
 # Video Depth Anything (its code is bundled in strata_ml/vendor)
 einops
 tqdm
+# MoGe-2 (its model code is bundled in strata_ml/vendor/moge), pinned
+utils3d_moge @ https://github.com/EasternJournalist/utils3d-moge/archive/62f09d58509485564e24d5d9f6aac9ee9ebc0c37.zip
 # SAM 2.1 (its code is bundled in strata_ml/vendor/sam2pkg)
 hydra-core
 # LTX-2.5 (Lightricks' official pipelines), pinned to a tested commit

@@ -3872,6 +3872,90 @@ int main(int argc, char** argv) {
         CHECK(s0.models.size() == 1 && s0.models[0] == "video-depth-anything-small");
         ml::setHome("");
     });
+    test("SurfacePasses: the worker's normals / geometry become N, depth.Z, P, people.A; views; the job; NormalLight", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_surface";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 64, H = 48, w = W / 2, h = H / 2;
+        auto d = home / "jobs" / "surf";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}, {"progress", 1}, {"message", "ok"}}.dump();
+        std::ofstream(d / "result.json")
+            << json{{"outputs", {{"normals", {{"frames", {1}}, {"width", w}, {"height", h}}}, {"geometry", {{"frames", {1}}, {"width", w}, {"height", h}}}}},
+                    {"near", 2.0}}.dump();
+        // normals: facing the camera, tilted right (not unit length: the node normalises); people 1
+        std::vector<float> nm, geo;
+        for (int i = 0; i < w * h; ++i) {
+            for (float v : {0.6f, 0.0f, 0.8f, 1.0f}) nm.push_back(v * (i % 2 ? 2.0f : 1.0f));
+            for (float v : {4.0f, 0.5f, -0.25f, -4.0f}) geo.push_back(v);
+        }
+        for (int i = 0; i < w * h; ++i) nm[i * 4 + 3] = 1.0f;
+        CHECK(ml::writeNpy((d / "out" / "normals.1.npy").string(), nm.data(), w, h, 4, false));
+        CHECK(ml::writeNpy((d / "out" / "geometry.1.npy").string(), geo.data(), w, h, 4, false));
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}}}},
+                                   {{"name", "SP"}, {"type", "SurfacePasses"}, {"inputs", {"K"}}, {"params", {{"ml", {{"main", {{"result", "surf"}}}}}}}},
+                                   {{"name", "SN"}, {"type", "SurfacePasses"}, {"inputs", {"K"}},
+                                    {"params", {{"view", "normals"}, {"people", false}, {"moge", "small"}, {"ml", {{"main", {{"result", "surf"}}}}}}}},
+                                   {{"name", "SG"}, {"type", "SurfacePasses"}, {"inputs", {"K"}},
+                                    {"params", {{"view", "depth (grey)"}, {"ml", {{"main", {{"result", "surf"}}}}}}}},
+                                   {{"name", "S0"}, {"type", "SurfacePasses"}, {"inputs", {"K"}}},
+                                   // light from the right (azimuth 0): N . L = 0.6
+                                   {{"name", "LA"}, {"type", "NormalLight"}, {"inputs", {"SP"}}, {"params", {{"azimuth", 0}, {"elevation", 0}}}},
+                                   {{"name", "LO"}, {"type", "NormalLight"}, {"inputs", {"SP"}},
+                                    {"params", {{"azimuth", 180}, {"elevation", 0}, {"mode", "light only"}}}},
+                                   {{"name", "LM"}, {"type", "NormalLight"}, {"inputs", {"SP"}},
+                                    {"params", {{"azimuth", 90}, {"elevation", 0}, {"mode", "multiply"}, {"ambient", 0.5}}}},
+                                   {{"name", "LP"}, {"type", "NormalLight"}, {"inputs", {"SP"}},
+                                    {"params", {{"type", "point"}, {"light_position", {10.5, -0.25, -4}}, {"falloff", 0}, {"mode", "light only"}}}},
+                                   {{"name", "LX"}, {"type", "NormalLight"}, {"inputs", {"K"}}}}),
+                     W, H);
+        auto r = render(*c, "SP");
+        CHECK_NEAR(px(r, 10, 10, "N.X"), 0.6, 1e-4);
+        CHECK_NEAR(px(r, 11, 10, "N.Z"), 0.8, 1e-4);
+        CHECK_NEAR(px(r, 10, 10, "depth.Z"), 0.25, 1e-5);  // 1 / 4 m
+        CHECK_NEAR(px(r, 10, 10, "P.X"), 0.5, 1e-5);
+        CHECK_NEAR(px(r, 10, 10, "P.Z"), -4, 1e-5);
+        CHECK_NEAR(px(r, 10, 10, "people.A"), 1, 1e-4);
+        CHECK_NEAR(px(r, 10, 10, "G"), 0.5, 1e-5);  // the plate passes through
+        auto sn = render(*c, "SN");
+        CHECK_NEAR(px(sn, 10, 10, "R"), 0.8, 1e-4);  // 0.6 * 0.5 + 0.5
+        CHECK_NEAR(px(sn, 10, 10, "G"), 0.5, 1e-4);
+        auto sg = render(*c, "SG");
+        CHECK_NEAR(px(sg, 10, 10, "R"), 0.5, 1e-4);  // near 2 m / 4 m
+        auto s0 = render(*c, "S0");
+        CHECK_NEAR(px(s0, 10, 10, "N.Z"), 0, 1e-6);
+        CHECK_NEAR(px(s0, 10, 10, "B"), 0.5, 1e-5);
+        auto la = render(*c, "LA");
+        CHECK_NEAR(px(la, 10, 10, "R"), 0.5 + 0.5 * 0.6, 1e-4);
+        auto lo = render(*c, "LO");
+        CHECK_NEAR(px(lo, 10, 10, "R"), 0, 1e-5);  // from the left: the surface faces away
+        auto lm = render(*c, "LM");
+        CHECK_NEAR(px(lm, 10, 10, "G"), 0.5 * (0.5 + 0.8), 1e-4);
+        auto lp = render(*c, "LP");
+        CHECK_NEAR(px(lp, 10, 10, "B"), 0.6, 1e-4);  // a point straight to the right of the pixel
+        bool threw = false;
+        try {
+            render(*c, "LX");
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        CHECK(threw);  // no N layer
+        Engine e;
+        auto* sp = dynamic_cast<mlnodes::MLNode*>(c->find("SP"));
+        auto s = sp->spec("main", e);
+        CHECK(s.task == "surface");
+        CHECK(s.error.empty());
+        CHECK(s.models.size() == 3 && s.models[0] == "moge-2-vitl-normal" && s.models[1] == "sapiens2-seg-1b" &&
+              s.models[2] == "sapiens2-normal-1b");
+        CHECK(s.params.value("radius", 0) == 2 && s.params.value("flow", std::string()) == "RAFT");
+        auto sN = dynamic_cast<mlnodes::MLNode*>(c->find("SN"))->spec("main", e);
+        CHECK(sN.models.size() == 1 && sN.models[0] == "moge-2-vits-normal");
+        const json& reg = ml::registry();
+        if (reg.contains("models"))
+            for (auto& id : s.models) CHECK(reg["models"].contains(id));
+        ml::setHome("");
+    });
     test("TrackMask: clicks to the worker's coordinates, the matte in alpha (grow / soften / invert), current vs old results", [] {
         auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm";
         std::filesystem::remove_all(home);

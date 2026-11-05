@@ -40,6 +40,8 @@ own source and build scripts are public, so you can rebuild Welder against a mod
 | Python 3.12 runtime (Windows, for the .nk importer) | PSF-2.0 | `licenses/Python.txt` |
 | SAM 2 code (the segmentation tools) | Apache-2.0 | `bin/ml/strata_ml/vendor/sam2pkg/LICENSE` |
 | Video Depth Anything code (the depth tools) | Apache-2.0 | `bin/ml/strata_ml/vendor/video_depth_anything/LICENSE` |
+| MoGe-2 code (SurfacePasses) | MIT (its DINOv2 part: Apache-2.0) | `bin/ml/strata_ml/vendor/moge/LICENSE` |
+| Sapiens2 inference code (SurfacePasses) | Sapiens2 License | `bin/ml/strata_ml/vendor/sapiens2/LICENSE.md` |
 
 The AI models these tools use are not included. They are downloaded from Hugging Face when you
 first use them, each under the licence on its Hugging Face page. Check a model's licence before

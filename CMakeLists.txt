@@ -137,6 +137,7 @@ add_library(strata_core STATIC
   src/nodes/RetimeNodes.cpp
   src/nodes/Splat.cpp
   src/nodes/MLNodes.cpp
+  src/nodes/RelightNodes.cpp
   src/nodes/ColorMgmtNodes.cpp
   src/color/Color.cpp
   src/ml/ML.cpp
@@ -349,6 +350,9 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
   add_test(NAME ml_worker
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_worker.py
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  add_test(NAME ml_surface
+           COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_surface.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   add_test(NAME nk_importer
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_nk2strata.py
