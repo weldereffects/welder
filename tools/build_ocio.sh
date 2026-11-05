@@ -41,7 +41,7 @@ build() {  # name srcdir args...
 
 build zlib "$SRC/zlib" -DZLIB_BUILD_EXAMPLES=OFF
 # zlib installs both libz.a and a shared lib; keep the static one only
-rm -f "$OUT"/lib/libz.so* "$OUT"/lib/libzlib.dll.a "$OUT"/bin/zlib*.dll 2>/dev/null || true
+rm -f "$OUT"/lib/libz.so* "$OUT"/lib/libz.*dylib "$OUT"/lib/libz.dylib "$OUT"/lib/libzlib.dll.a "$OUT"/bin/zlib*.dll 2>/dev/null || true
 [ -f "$OUT/lib/libzlibstatic.a" ] && cp "$OUT/lib/libzlibstatic.a" "$OUT/lib/libz.a"
 build expat "$SRC/libexpat/expat" -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF \
       -DEXPAT_BUILD_DOCS=OFF -DEXPAT_SHARED_LIBS=OFF -DEXPAT_BUILD_FUZZERS=OFF

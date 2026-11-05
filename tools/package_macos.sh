@@ -60,6 +60,17 @@ MAC="$APP/Contents/MacOS"
 RES="$APP/Contents/Resources"
 mkdir -p "$MAC" "$RES" "$STAGE/docs" "$STAGE/tools"
 cp "$BUILD/welder_ui" "$BUILD/welder" "$MAC/"
+# Everything but the OS is linked in statically: a program that needs any other dylib (one that
+# only exists on the build machine, e.g. @rpath/libz.1.dylib) would fail to start on every Mac with
+# "Welder cannot be opened because of a problem".
+for exe in "$MAC/welder_ui" "$MAC/welder"; do
+  bad=$(otool -L "$exe" | tail -n +2 | awk '{print $1}' | grep -v -E '^(/usr/lib/|/System/Library/)' || true)
+  if [ -n "$bad" ]; then
+    echo "error: $(basename "$exe") links libraries that aren't part of macOS:" >&2
+    echo "$bad" >&2
+    exit 1
+  fi
+done
 mkdir -p "$RES/fonts" && cp "$ROOT/third_party/fonts/"Roboto-*.ttf "$ROOT/third_party/fonts/LICENSE-Roboto.txt" "$RES/fonts/"
 [ "$HAVE_NCNN" = 1 ] && mkdir -p "$RES/models" && cp -r "$ROOT/models/rife" "$RES/models/rife"
 mkdir -p "$RES/ml"
