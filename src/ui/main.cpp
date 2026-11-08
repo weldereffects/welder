@@ -291,7 +291,9 @@ int main(int argc, char** argv) {
     };
     const bool safeMode = opt.safeMode || envFlag("WELDER_SAFE_MODE") || lastStartFailed;
     if (safeMode) {
-        crash::crumb(lastStartFailed ? "safe mode: the last start did not finish" : "safe mode: asked for");
+        const char* why = lastStartFailed ? "safe mode: the last start did not finish" : "safe mode: asked for";
+        crash::crumb(why);
+        std::fprintf(stderr, "%s (no splash, no floating panel windows, default layout)\n", why);
         opt.resetWorkspace = true;
     }
 
@@ -440,6 +442,8 @@ int main(int argc, char** argv) {
     }
     ui.graph.needsFrame = true;
     app.requestView();
+    const double editorShownAt = glfwGetTime();
+    bool startupMarked = false;
     if (safeMode && interactive)
         app.message(lastStartFailed
                         ? "Welder didn't finish starting last time, so it started in safe mode: no splash screen, no "
@@ -1477,7 +1481,10 @@ int main(int argc, char** argv) {
             for (GLenum e = glGetError(); e != 0; e = glGetError()) std::fprintf(stderr, "GL error after the UI render 0x%x\n", e);
 
         ++frameCount;
-        if (frameCount == 30) {  // the editor is up and drawing: this start worked
+        // The editor is up and drawing (a few frames, a few seconds: idle, it draws only ~2 a second):
+        // this start worked.
+        if (!startupMarked && frameCount >= 5 && glfwGetTime() - editorShownAt >= 3.0) {
+            startupMarked = true;
             startupDone();
             crash::crumb("editor up");
         }
