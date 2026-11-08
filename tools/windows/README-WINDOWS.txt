@@ -888,6 +888,15 @@ THE EDITOR
   Layout is saved to %APPDATA%\Welder\layout.ini. Workspace > Reset Workspace (Shift+F12) puts
   every panel back; Welder-reset-workspace.bat starts Welder with the default layout.
 
+IF WELDER WON'T START
+  A blank window, or a window that closes right after the splash screen:
+  start Welder-safe-mode.bat (no splash screen, no floating panel windows,
+  the default layout). Welder also starts in safe mode by itself when the
+  last start didn't finish. If it closes with a crash report, please attach
+  the report to an issue at github.com/weldereffects/welder/issues. Reports
+  are in %APPDATA%\Welder\crashes. Also install the latest graphics driver
+  from NVIDIA, AMD or Intel: the one Windows Update installs is often older.
+
 QUICK TOUR (command line)
   Double-click try-it.bat. It runs the self-tests, renders the demo comps,
   and translates + renders the sample .nk script.

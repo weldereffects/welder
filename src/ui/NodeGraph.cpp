@@ -39,6 +39,10 @@ ImVec2 pos(const Node* n) {
     return ImVec2(n->ui.value("x", 0.0f), n->ui.value("y", 0.0f));
 }
 void setPos(Node* n, ImVec2 p) {
+    if (!std::isfinite(p.x) || !std::isfinite(p.y)) {  // (a NaN would be saved as null: issue #14)
+        crash::crumb("node graph: non-finite position for " + n->name + " ignored");
+        return;
+    }
     n->ui["x"] = std::round(p.x);
     n->ui["y"] = std::round(p.y);
 }

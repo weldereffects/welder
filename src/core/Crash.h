@@ -21,4 +21,8 @@ std::string takePreviousReport();
 // The folder reports go to.
 const std::string& dir();
 
+// Windows, for the editor (it has no console): after writing a report, tell the user in a message
+// box where it is, instead of the window just vanishing. Off by default (command-line tools).
+void showDialogOnCrash(bool on);
+
 }  // namespace strata::crash

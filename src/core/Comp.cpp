@@ -3,12 +3,32 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <functional>
 #include <set>
 #include <sstream>
 
 namespace strata {
+
+namespace {
+// A node's place in the graph must be finite numbers. JSON has no NaN, so a NaN position was
+// saved as null, and a null position then stopped the whole comp from opening (json
+// type_error 302, issue #14). Bad values are dropped: the graph places those nodes itself.
+bool cleanUi(json& ui) {
+    if (!ui.is_object()) return false;
+    bool fixed = false;
+    for (const char* k : {"x", "y", "w", "h"}) {
+        auto it = ui.find(k);
+        if (it == ui.end()) continue;
+        if (!it->is_number() || (it->is_number_float() && !std::isfinite(it->get<double>()))) {
+            ui.erase(it);
+            fixed = true;
+        }
+    }
+    return fixed;
+}
+}  // namespace
 
 namespace {
 
@@ -107,7 +127,10 @@ std::unique_ptr<Comp> Comp::fromJson(const json& j, const std::filesystem::path&
         n->name = name;
         n->comp = c.get();
         if (jn.contains("params")) n->params.data = jn["params"];
-        if (jn.contains("ui") && jn["ui"].is_object()) n->ui = jn["ui"];
+        if (jn.contains("ui") && jn["ui"].is_object()) {
+            n->ui = jn["ui"];
+            if (cleanUi(n->ui)) c->warnings.push_back(name + " had no valid position in the node graph: placed it again");
+        }
         n->group = jn.value("group", "");
         byName[name] = n.get();
         std::vector<json> ins;
@@ -201,7 +224,10 @@ json Comp::toJson() const {
             for (auto& [k, in] : n->knobInputs) jn["knob_inputs"].push_back({k, in ? json(in->name) : json(nullptr)});
         }
         if (!n->group.empty()) jn["group"] = n->group;
-        if (!n->ui.empty()) jn["ui"] = n->ui;
+        if (!n->ui.empty()) {
+            jn["ui"] = n->ui;
+            cleanUi(jn["ui"]);  // never write a null position (see cleanUi)
+        }
         j["nodes"].push_back(jn);
     }
     return j;
@@ -227,6 +253,7 @@ Node* Comp::addNode(const std::string& type, const std::string& baseName, const 
     n->comp = this;
     n->params.data = params.is_object() ? params : json::object();
     n->ui = ui.is_object() ? ui : json::object();
+    cleanUi(n->ui);
     n->init();  // may throw; nothing has been added yet
     nodes.push_back(std::move(n));
     return nodes.back().get();

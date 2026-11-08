@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <atomic>
 #include <thread>
@@ -37,6 +38,12 @@
 #include "Splash.h"
 #include "nodes/Track.h"
 #include "core/Brand.h"
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace fs = std::filesystem;
 using namespace strata;
@@ -49,6 +56,7 @@ struct Options {
     double frame = -1;
     int width = 1600, height = 960;
     bool resetWorkspace = false;  // --reset-workspace: start with the default layout (forgets the saved one)
+    bool safeMode = false;  // --safe-mode: no splash, no floating panels, the default layout (see main)
     int idScan = 0;  // --idscan <step px>: sweep the mouse over the window and report ImGui ID conflicts
     bool smoke = false;  // --smoke [files...]: the startup / open / play / autosave check (SmokeTest.cpp)
     std::vector<std::string> smokeItems;
@@ -66,6 +74,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--graph-level") o.level = next();
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--reset-workspace" || a == "--reset-layout") o.resetWorkspace = true;
+        else if (a == "--safe-mode" || a == "--safe") o.safeMode = true;
         else if (a == "--ofx-path") o.ofxPath = next();
         else if (a == "--idscan") {
             o.idScan = std::max(2, std::atoi(next().c_str()));
@@ -216,6 +225,34 @@ bool envFlag(const char* name) {
     return v && *v && std::string(v) != "0";
 }
 
+// GLFW's last complaint (why a window or context couldn't be made), for the messages below.
+std::string gGlfwError;
+void onGlfwError(int code, const char* what) {
+    char m[512];
+    std::snprintf(m, sizeof m, "GLFW error 0x%x: %s", code, what ? what : "");
+    gGlfwError = m;
+    crash::crumb(m);
+    std::fprintf(stderr, "%s\n", m);
+}
+
+// A problem that stops Welder before its window is up. welder_ui.exe has no console on Windows,
+// so stderr alone would leave the user with a window that flashes and vanishes: say it in a box.
+void fatal(const std::string& msg) {
+    crash::crumb("fatal: " + msg);
+    std::fprintf(stderr, "error: %s\n", msg.c_str());
+#if defined(_WIN32)
+    const int n = MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, nullptr, 0);
+    std::wstring w(n > 0 ? n : 1, L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, w.data(), n);
+    MessageBoxW(nullptr, w.c_str(), L"Welder could not start", MB_OK | MB_ICONERROR | MB_TOPMOST);
+#endif
+}
+
+const char* kDriverHelp =
+    "This usually means the graphics driver is missing or too old. Install the latest driver from "
+    "your GPU maker's website (NVIDIA, AMD or Intel); the one Windows Update installs is often older. "
+    "Welder needs OpenGL 3.3, which a virtual machine or a Remote Desktop session may not provide.";
+
 }  // namespace
 
 // Files dropped on the window (GLFW calls this during event polling).
@@ -234,12 +271,39 @@ int main(int argc, char** argv) {
         volatile int* p = nullptr;
         *p = 1;
     }
+    // Safe start. A marker file is written now and removed once the editor has drawn its first
+    // frames (or quits normally). If it is still there, the last start never got that far (a crash or
+    // a blank window the user had to close): this one starts the safe way, with no splash, no floating
+    // panel windows and the default layout, and says so. --safe-mode / WELDER_SAFE_MODE=1 ask for it.
+    const bool interactive = opt.screenshot.empty() && !opt.idScan && !opt.smoke;
+    crash::showDialogOnCrash(interactive);
+    const fs::path startupMarker = fs::path(configDir()) / "startup.pending";
+    bool lastStartFailed = false;
+    if (interactive) {
+        std::error_code ec;
+        lastStartFailed = fs::exists(startupMarker, ec);
+        fs::create_directories(startupMarker.parent_path(), ec);
+        std::ofstream(startupMarker) << "Welder is starting (this file is removed once the editor is up)\n";
+    }
+    auto startupDone = [&] {
+        std::error_code ec;
+        if (interactive) fs::remove(startupMarker, ec);
+    };
+    const bool safeMode = opt.safeMode || envFlag("WELDER_SAFE_MODE") || lastStartFailed;
+    if (safeMode) {
+        crash::crumb(lastStartFailed ? "safe mode: the last start did not finish" : "safe mode: asked for");
+        opt.resetWorkspace = true;
+    }
+
+    glfwSetErrorCallback(onGlfwError);
     if (!glfwInit()) {
-        std::fprintf(stderr, "error: cannot initialise the window system\n");
+        fatal("Welder cannot open a window: the window system did not start.\n\n" + gGlfwError);
+        startupDone();
         return 1;
     }
     // The splash stays up while plug-ins are found and the file loads (not for scripted screenshots).
-    const bool useSplash = opt.screenshot.empty() && !opt.idScan && !envFlag("WELDER_NO_SPLASH") && !envFlag("STRATA_NO_SPLASH");
+    const bool useSplash = opt.screenshot.empty() && !opt.idScan && !safeMode && !envFlag("WELDER_NO_SPLASH") &&
+                           !envFlag("STRATA_NO_SPLASH");
     if (useSplash) splash::show();
     registerBuiltinNodes();
     registerOfxPlugins();
@@ -255,13 +319,23 @@ int main(int argc, char** argv) {
     if (useSplash) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);  // shown once loading is done
     GLFWwindow* win = glfwCreateWindow(opt.width, opt.height, "Welder", nullptr, nullptr);
     if (!win) {
-        std::fprintf(stderr, "error: cannot create an OpenGL 3.3 window\n");
+        splash::close(nullptr, 0);
+        fatal(std::string("Welder could not create its OpenGL 3.3 window.\n\n") + kDriverHelp +
+              (gGlfwError.empty() ? "" : "\n\nDetails: " + gGlfwError));
+        startupDone();  // nothing safe mode would change
         return 1;
     }
     splash::setWindowIcon(win);
     splash::pump();
     tablet::init(win);  // pen pressure for paint strokes
     glfwMakeContextCurrent(win);
+    {  // which GPU and driver: in every crash report from here on
+        auto str = [](GLenum e) {
+            const GLubyte* v = glGetString(e);
+            return v ? std::string((const char*)v) : std::string("?");
+        };
+        crash::crumb("OpenGL " + str(GL_VERSION) + " | " + str(GL_RENDERER) + " | " + str(GL_VENDOR));
+    }
     glfwSetDropCallback(win, onDrop);
     glfwSwapInterval(opt.idScan ? 0 : 1);
 
@@ -273,7 +347,8 @@ int main(int argc, char** argv) {
     // scripted screenshots and tests (one window to capture), nor with WELDER_SINGLE_WINDOW=1.
     // (The GLFW backend turns it off under Wayland, which can't place windows.)
     // (WELDER_TEST_FLOATING: on for a scripted test too.)
-    if ((opt.screenshot.empty() && !opt.idScan && !envFlag("WELDER_SINGLE_WINDOW")) || envFlag("WELDER_TEST_FLOATING")) {
+    if ((opt.screenshot.empty() && !opt.idScan && !safeMode && !envFlag("WELDER_SINGLE_WINDOW")) ||
+        envFlag("WELDER_TEST_FLOATING")) {
         io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     }
     io.ConfigWindowsMoveFromTitleBarOnly = true;
@@ -365,6 +440,12 @@ int main(int argc, char** argv) {
     }
     ui.graph.needsFrame = true;
     app.requestView();
+    if (safeMode && interactive)
+        app.message(lastStartFailed
+                        ? "Welder didn't finish starting last time, so it started in safe mode: no splash screen, no "
+                          "floating panel windows, and the default layout (the old one is kept as layout.ini.bak). "
+                          "If this keeps happening, please report it at github.com/weldereffects/welder/issues"
+                        : "Safe mode: no splash screen, no floating panel windows, the default layout");
 
     bool layoutBuilt = false, confirmQuit = false, focusGraph = true;
     const bool profileUi = std::getenv("STRATA_UI_PROFILE") != nullptr;
@@ -1396,6 +1477,10 @@ int main(int argc, char** argv) {
             for (GLenum e = glGetError(); e != 0; e = glGetError()) std::fprintf(stderr, "GL error after the UI render 0x%x\n", e);
 
         ++frameCount;
+        if (frameCount == 30) {  // the editor is up and drawing: this start worked
+            startupDone();
+            crash::crumb("editor up");
+        }
         if (static const char* tr = std::getenv("STRATA_TEST_RENDER"); tr && *tr && frameCount > 5) {
             static double lastPrint = 0;
             BatchStatus st = app.batchStatus();
@@ -1499,6 +1584,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    startupDone();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

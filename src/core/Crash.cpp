@@ -33,6 +33,7 @@ namespace strata::crash {
 namespace {
 
 std::string gDir, gApp;
+std::atomic<bool> gDialog{false};
 const auto gStart = std::chrono::steady_clock::now();
 
 // breadcrumbs: a small ring; a torn line in a report is harmless
@@ -190,6 +191,12 @@ void report(const char* what, EXCEPTION_POINTERS* ep, CONTEXT* ctx) {
         std::fclose(f);
     }
     writeDump(ep, path);
+    if (gDialog && !path.empty()) {
+        std::string msg = gApp + " ran into a problem and has to close.\n\nA crash report was saved here:\n" + path +
+                          "\n\nPlease attach it to an issue at github.com/weldereffects/welder/issues. If it happens every time "
+                          "you start " + gApp + ", the next start will use safe mode.";
+        MessageBoxA(nullptr, msg.c_str(), (gApp + " crashed").c_str(), MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+    }
 }
 
 LONG WINAPI onException(EXCEPTION_POINTERS* ep) {
@@ -234,6 +241,8 @@ void onTerminate() {
 }  // namespace
 
 const std::string& dir() { return gDir; }
+
+void showDialogOnCrash(bool on) { gDialog = on; }
 
 void crumb(const std::string& what) {
     unsigned i = gCrumbNext.fetch_add(1) % kCrumbs;
