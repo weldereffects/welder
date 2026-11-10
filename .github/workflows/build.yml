@@ -20,6 +20,10 @@ on:
         description: "Mac: build OpenColorIO, FFmpeg and ncnn too (off = a quick compile check, far fewer minutes)"
         type: boolean
         default: true
+      release_tag:
+        description: "Attach these builds to an existing release (e.g. v0.1.6). Empty: no release"
+        type: string
+        default: ""
 
 # one build per branch / tag at a time (a release can arrive as both its tag and its publishing)
 concurrency:
@@ -74,7 +78,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: macos-14, arch: arm64 }          # Apple silicon (macos-15 arm64 runners are often unavailable)
+          - { runner: macos-15, arch: arm64 }          # Apple silicon (GitHub retired the macos-14 machines)
           - { runner: macos-15-intel, arch: x86_64 }   # Intel
     runs-on: ${{ matrix.runner }}
     steps:
@@ -125,7 +129,12 @@ jobs:
   release:
     # Windows and Linux are enough to publish: a Mac build that fails or can't get a machine
     # (GitHub's Apple silicon runners are often short) doesn't hold the release back.
-    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.linux.result == 'success' && needs.windows.result == 'success'
+    # By hand (release_tag set): attach whatever was built, e.g. a Mac build that failed the first time.
+    if: >-
+      always() && (
+        (startsWith(github.ref, 'refs/tags/v') && needs.linux.result == 'success' && needs.windows.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' &&
+         !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')))
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     permissions: { contents: write }
@@ -137,4 +146,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: out/*
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
           generate_release_notes: true
