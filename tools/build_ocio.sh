@@ -58,7 +58,13 @@ cp "$SRC/pystring/pystring.h" "$OUT/include/pystring/"
 CXX=g++
 AR=ar
 if [ "$WIN" = "--windows" ]; then CXX=x86_64-w64-mingw32-g++-posix; AR=x86_64-w64-mingw32-ar; fi
-$CXX -O2 -fPIC -std=c++17 -c "$SRC/pystring/pystring.cpp" -o "$B/pystring/pystring.o"
+PYFLAGS=()
+# compiled by hand, so not through the CMake toolchain: the arm64 cross-build needs its -arch here too
+if [ "$(uname)" = Darwin ] && [ "${WELDER_MAC_ARCH:-$(uname -m)}" != "$(uname -m)" ]; then
+  CXX=clang++
+  PYFLAGS=(-arch "$WELDER_MAC_ARCH")
+fi
+$CXX -O2 -fPIC -std=c++17 ${PYFLAGS[@]+"${PYFLAGS[@]}"} -c "$SRC/pystring/pystring.cpp" -o "$B/pystring/pystring.o"
 $AR rcs "$OUT/lib/libpystring.a" "$B/pystring/pystring.o"
 
 # MinGW's ifstream takes a std::filesystem::path, not a std::wstring (MSVC takes both)
