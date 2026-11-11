@@ -35,6 +35,9 @@ if [ "$WIN" = "--windows" ]; then
 else
   ARGS+=(--enable-pthreads)
   if [ "$(uname)" = Darwin ]; then  # nothing from Apple's frameworks: Welder links only what it names
+    if [ "${WELDER_MAC_ARCH:-$(uname -m)}" != "$(uname -m)" ]; then  # arm64 on an Intel Mac
+      ARGS+=(--enable-cross-compile --target-os=darwin --arch=aarch64 --cc="clang -arch arm64" --cxx="clang++ -arch arm64")
+    fi
     ARGS+=(--disable-iconv --disable-securetransport --disable-videotoolbox --disable-audiotoolbox
            --disable-avfoundation --disable-coreimage --disable-appkit --disable-metal)
   fi

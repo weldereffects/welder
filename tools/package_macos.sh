@@ -12,7 +12,15 @@
 # Output: dist/welder-<version>-macos-<arch>.zip (Welder.app, docs, examples)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-ARCH=$(uname -m)   # arm64 | x86_64
+ARCH=${WELDER_MAC_ARCH:-$(uname -m)}   # arm64 | x86_64; another than this Mac's cross-compiles
+CROSS=0
+if [ "$ARCH" != "$(uname -m)" ]; then
+  [ "$ARCH" = arm64 ] || { echo "error: can only cross-compile for arm64 (asked for $ARCH)" >&2; exit 1; }
+  CROSS=1
+  export CMAKE_TOOLCHAIN_FILE="$ROOT/cmake/macos-arm64.cmake"   # read by every cmake run below
+  export WELDER_MAC_ARCH   # build_ffmpeg.sh too
+  echo "== cross-compiling for arm64 on $(uname -m)"
+fi
 BUILD="$ROOT/build-macos-$ARCH"
 VERSION=$(sed -n 's/^project(welder VERSION \([0-9.]*\).*/\1/p' "$ROOT/CMakeLists.txt")
 TOP="welder-$VERSION-macos-$ARCH"
@@ -48,10 +56,16 @@ fi
 cmake -S "$ROOT" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release ${ARGS[@]+"${ARGS[@]}"}
 cmake --build "$BUILD" -j"$NCPU" ${CI:+-- -k 0}   # on CI: every error in one go
 
-echo "== engine tests"
-"$BUILD/welder_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
-echo "== EXR tests"
-"$BUILD/welder_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
+if [ "$CROSS" = 1 ]; then
+  echo "== tests skipped: arm64 programs don't run on this $(uname -m) Mac"
+  lipo -info "$BUILD/welder_ui" "$BUILD/welder"
+  lipo "$BUILD/welder_ui" -verify_arch arm64 && lipo "$BUILD/welder" -verify_arch arm64
+else
+  echo "== engine tests"
+  "$BUILD/welder_tests" | grep -E -A3 "^ *FAIL|checks, " | head -60
+  echo "== EXR tests"
+  "$BUILD/welder_exr_tests" 2>/dev/null | grep -E -A3 "^ *FAIL|checks, " | head -30
+fi
 
 # ---- Welder.app: programs in Contents/MacOS, everything else in Contents/Resources (as signing requires)
 rm -rf "$STAGE"

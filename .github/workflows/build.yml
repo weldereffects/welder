@@ -78,8 +78,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - { runner: macos-15, arch: arm64 }          # Apple silicon (GitHub retired the macos-14 machines)
-          - { runner: macos-15-intel, arch: x86_64 }   # Intel
+          # Apple silicon is cross-compiled on an Intel machine: GitHub's Apple silicon machines are
+          # often all taken ("not acquired ... capacity constraints") and the job is cancelled.
+          - { runner: macos-15-intel, arch: arm64 }
+          - { runner: macos-15-intel, arch: x86_64 }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -90,6 +92,7 @@ jobs:
           key: deps-macos-${{ matrix.arch }}-${{ hashFiles('tools/build_ocio.sh', 'tools/build_ffmpeg.sh', 'tools/build_ncnn.sh') }}
       - name: build and package
         env:
+          WELDER_MAC_ARCH: ${{ matrix.arch }}
           STRATA_BUILD_DEPS: ${{ (github.event_name == 'workflow_dispatch' && !inputs.mac_deps) && '0' || '1' }}
           # signing / notarization, once there is an Apple Developer account (repository secrets):
           MAC_SIGN_ID: ${{ secrets.MAC_SIGN_ID }}
