@@ -763,7 +763,10 @@ COMPRESSION = {"none": "none", "Zip (1 scanline)": "zips", "Zip (16 scanlines)":
 # right tangent (relative when flag bit 13 is set). The feather curve stores
 # offsets from the main curve. Floats are decimal or IEEE-754 bits in hex (x43d68000).
 
-ROTO_TOOLS = {7: "paint", 8: "eraser", 9: "clone", 10: "reveal", 13: "blur"}
+# Stroke tool ('tt'). Nuke numbers its tools in the toolbox's order: brush, eraser, clone, reveal,
+# dodge, burn, blur, sharpen, smear - from 17 in the scripts Nuke 16 writes, from 7 in older ones.
+_ROTO_TOOL_ORDER = ["paint", "eraser", "clone", "reveal", "dodge", "burn", "blur", "sharpen", "smear"]
+ROTO_TOOLS = {base + k: t for base in (7, 17) for k, t in enumerate(_ROTO_TOOL_ORDER)}
 ROTO_LIFE = {0: "all", 1: "to", 2: "single", 3: "from", 4: "range"}
 
 
@@ -999,17 +1002,25 @@ def roto_item(group, warn):
     name = str(group[1]) if len(group) > 1 else "Shape"
     ctype = next((str(x) for x in group[2:5] if not isinstance(x, list) and not roto_is_num(x)), "bezier")
     attrs = roto_attrs(group)
+    # A shape's curve and feather come as {{cc ..} {cc ..} / idem}; a paint stroke's as a bare {cc ..}.
     curves = next((x for x in group[2:] if isinstance(x, list) and x and isinstance(x[0], list) and x[0] and x[0][0] == "cc"), None)
-    if curves is None:
+    if curves is not None:
+        main = curves[0]
+        feather = curves[1] if len(curves) > 1 and isinstance(curves[1], list) else None
+    else:
+        main = next((x for x in group[2:] if isinstance(x, list) and x and x[0] == "cc"), None)
+        feather = None
+    if main is None:
         warn("roto item '%s' has no curve data; skipped" % name)
         return None
-    main = curves[0]
-    feather = curves[1] if len(curves) > 1 and isinstance(curves[1], list) else None
     times, cps, flags = roto_points(main)
     if not cps:
         return None
     nkeys = max(1, len(times))
-    is_stroke = "bs" in attrs or ctype in ("stroke", "brush")
+    # Strokes: Nuke writes them as open catmullrom curves, and leaves out every attribute at its
+    # default (a 25 px brush has no 'bs')
+    tt = int(roto_float(attrs.get("tt", 0)))
+    is_stroke = "bs" in attrs or ctype in ("stroke", "brush", "catmullrom") or (tt in ROTO_TOOLS and tt >= 17)
     item = {"name": name}
     if is_stroke:
         tool = ROTO_TOOLS.get(int(roto_float(attrs.get("tt", 7))), None)
@@ -1086,8 +1097,9 @@ def roto_item(group, warn):
         item["visible"] = False
     ltt = int(roto_float(attrs.get("ltt", 0)))
     if ltt in ROTO_LIFE and ltt != 0:
-        item["life"] = {"type": ROTO_LIFE[ltt], "start": roto_float(attrs.get("ltn", 0)),
-                        "end": roto_float(attrs.get("ltm", 0))}
+        # frames left out are at Nuke's default, frame 1
+        item["life"] = {"type": ROTO_LIFE[ltt], "start": roto_float(attrs.get("ltn", 1)),
+                        "end": roto_float(attrs.get("ltm", 1))}
     t, mx = roto_transform(group)
     if t:
         item["transform"] = t

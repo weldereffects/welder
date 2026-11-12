@@ -534,6 +534,58 @@ class RotoImport(unittest.TestCase):
         self.assertEqual(brush["color"], [1.0, 0.0, 0.0, 1.0])
         self.assertTrue(any("roto" in w["message"] for w in report["warnings"]))
 
+    def test_rotopaint_strokes_nuke16(self):
+        # As Nuke 16 writes them (issue #5): open catmullrom curves with a bare {cc ..}, tool numbers
+        # from 17 (brush) / 19 (clone), and attributes at their defaults left out (no 'bs', no 'ltn')
+        nk = """Root {
+ format "2048 1556 0 0 2048 1556 1 2K"
+}
+CheckerBoard2 {
+ inputs 0
+ name CheckerBoard1
+}
+RotoPaint {
+ curves {{{v x3f99999a}
+  {f 0}
+  {n
+   {layer Root
+    {f 2097152}
+    {t x44800000 x44428000}
+    {cubiccurve Brush1 512 catmullrom
+     {cc
+      {f 2080}
+      {px 1
+       {x42200000 x42200000 1}
+       {x42a00000 x42200000 1}}}
+     {tx 1 x42700000 x42200000}
+     {a r x3f408313 g xbd1ba5e0 b x3d9374c0 ro 0 go 0 bo 0 ao 0 bu 1 str 1 spx x44800000 spy x44428000 sb 1 ltt x40000000 tt x41880000}}
+    {cubiccurve Clone1 512 catmullrom
+     {cc
+      {f 2080}
+      {px 1
+       {x43480000 x43480000 1}
+       {x43960000 x43480000 1}}}
+     {tx 1 x43700000 x43480000}
+     {a ro 0 go 0 bo 0 ao 0 opc x3dcccccd bs x42ee0000 bu 1 src 1 stx xc3fa0000 sty xc3bf0000 str 1 spx x44800000 spy x44428000 sb 1 ltt x40000000 tt x41980000}}}}}}
+ name RotoPaint1
+}
+"""
+        _, report, n = convert(nk)
+        shapes = n["RotoPaint1"]["params"]["shapes"]
+        self.assertFalse(any("no curve data" in w["message"] for w in report["warnings"]))
+        clone, brush = shapes
+        self.assertEqual(brush["kind"], "stroke")
+        self.assertEqual(brush["tool"], "paint")
+        self.assertEqual(brush["points"], [[40.0, 40.0, 1.0], [80.0, 40.0, 1.0]])
+        self.assertEqual(brush["size"], 25.0)  # left out: Nuke's default
+        self.assertEqual(brush["color"], [0.752, -0.038, 0.072, 1.0])
+        self.assertEqual(brush["life"], {"type": "single", "start": 1.0, "end": 1.0})
+        self.assertNotIn("transform", brush)  # {tx 1 x y}: only the pivot
+        self.assertEqual(clone["tool"], "clone")
+        self.assertEqual(clone["size"], 119.0)
+        self.assertEqual(clone["offset"], [-500.0, -382.0])
+        self.assertEqual(clone["opacity"], 0.1)
+
     def test_roto_layers_and_matrix(self):
         # Root (only a pivot: dropped) > L1 (translate 10, extra matrix: translate 5, 7) > L2 (translate 3) > Bezier1
         ident = " ".join(["0"] * 10)
