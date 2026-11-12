@@ -32,6 +32,9 @@
 #include "../core/Comp.h"
 #include "../core/Engine.h"
 #include "../core/Platform.h"
+#include "../core/Brand.h"
+#include "../core/Crash.h"
+#include <fstream>
 #include "ofxCore.h"
 #include "ofxImageEffect.h"
 #include "ofxMemory.h"
@@ -281,7 +284,7 @@ struct EffectObj {
 };
 
 struct PluginEntry {
-    std::string id, binary, bundle;
+    std::string id, binary, bundle, binaryKey;
     OfxPlugin* plugin = nullptr;
     bool loaded = false, failed = false;
     std::string error;
@@ -861,6 +864,7 @@ struct Registry {
     std::vector<std::unique_ptr<PluginEntry>> plugins;
     std::vector<std::string> errors;
     std::set<std::string> loadedBinaries;
+    std::vector<std::string> blocked;  // binaries skipped because they crashed Welder (see quarantine)
 };
 Registry& registry() {
     static Registry r;
@@ -897,6 +901,77 @@ std::vector<std::string> searchPaths() {
     return r;
 }
 
+// ---- crash quarantine (issue #8)
+// A plugin that crashes while it is being loaded or described took Welder down at every start
+// (the toolbar lists the plugins, so they all load as the editor opens). While Welder calls a
+// plugin binary for discovery, the binary's path is written to ofx-loading.txt in the settings
+// folder; it is removed when the call returns. If Welder dies in the middle, the file is still
+// there at the next start: that binary goes on the blocked list (ofx-blocked.txt) and is skipped,
+// with a message, instead of crashing again. ofxUnblockPlugins() clears the list.
+namespace quarantine {
+bool enabled() {
+    const char* e = std::getenv("STRATA_OFX_NO_QUARANTINE");
+    return !(e && *e && *e != '0');
+}
+fs::path dir() { return fs::path(brand::configDir()); }
+fs::path markerFile() { return dir() / "ofx-loading.txt"; }
+fs::path blockedFile() { return dir() / "ofx-blocked.txt"; }
+
+std::set<std::string> readBlocked() {
+    std::set<std::string> r;
+    std::ifstream in(blockedFile());
+    for (std::string line; std::getline(in, line);) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (!line.empty()) r.insert(line);
+    }
+    return r;
+}
+void writeBlocked(const std::set<std::string>& b) {
+    std::error_code ec;
+    if (b.empty()) { fs::remove(blockedFile(), ec); return; }
+    std::ofstream out(blockedFile(), std::ios::trunc);
+    for (auto& x : b) out << x << "\n";
+}
+// At the start of a scan: a marker left behind means that binary crashed the last run.
+std::set<std::string>& blocked() {
+    static std::set<std::string> b = [] {
+        if (!enabled()) return std::set<std::string>{};
+        std::set<std::string> r = readBlocked();
+        std::error_code ec;
+        std::ifstream in(markerFile());
+        std::string crashed;
+        std::getline(in, crashed);
+        in.close();
+        if (!crashed.empty()) {
+            r.insert(crashed);
+            writeBlocked(r);
+        }
+        fs::remove(markerFile(), ec);
+        return r;
+    }();
+    return b;
+}
+// Marks a discovery call into `binary` for as long as it lives (nested calls keep the outer mark).
+struct Guard {
+    static inline thread_local int depth = 0;
+    bool active = false;
+    explicit Guard(const std::string& binary) {
+        if (!enabled() || depth++ > 0) return;
+        active = true;
+        crash::crumb("OFX: loading " + binary);
+        std::ofstream out(markerFile(), std::ios::trunc);
+        out << binary << "\n";
+        out.flush();
+    }
+    ~Guard() {
+        --depth;
+        if (!active) return;
+        std::error_code ec;
+        fs::remove(markerFile(), ec);
+    }
+};
+}  // namespace quarantine
+
 void loadBinary(const fs::path& bundle) {
     Registry& reg = registry();
     std::string stem = bundle.filename().string();
@@ -907,6 +982,13 @@ void loadBinary(const fs::path& bundle) {
     std::string key = fs::weakly_canonical(bin, ec).string();
     if (reg.loadedBinaries.count(key)) return;
     reg.loadedBinaries.insert(key);
+    if (quarantine::blocked().count(key)) {
+        reg.errors.push_back("skipped " + bin.string() + ": it crashed Welder while loading (to try it again, use "
+                             "Edit > Preferences > OFX > Retry blocked plugins, or delete " + quarantine::blockedFile().string() + ")");
+        reg.blocked.push_back(key);
+        return;
+    }
+    quarantine::Guard guard(key);
 
     std::string loadErr;
     void* dl = platform::loadLibrary(bin, &loadErr);
@@ -931,6 +1013,7 @@ void loadBinary(const fs::path& bundle) {
         e->binary = bin.string();
         e->bundle = bundle.string();
         e->plugin = p;
+        e->binaryKey = key;
         reg.plugins.push_back(std::move(e));
     }
 }
@@ -971,6 +1054,7 @@ bool PluginEntry::ensureLoaded() {
     std::lock_guard l(loadM);
     if (loaded) return true;
     if (failed) return false;
+    quarantine::Guard guard(binaryKey);  // (a crash in here blocks the binary next time)
     plugin->setHost(&g_host);
     if (action(kOfxActionLoad, nullptr, nullptr, nullptr) > kOfxStatReplyDefault) {
         failed = true; error = "load action failed"; return false;
@@ -1018,6 +1102,7 @@ EffectObj* PluginEntry::contextDescriptor(const std::string& ctx) {
     d->props.setString(kOfxImageEffectPropContext, {ctx});
     PropSet in;
     in.setString(kOfxImageEffectPropContext, {ctx});
+    quarantine::Guard guard(binaryKey);
     if (action(kOfxImageEffectActionDescribeInContext, d->handle(), &in, nullptr) > kOfxStatReplyDefault) return nullptr;
     EffectObj* r = d.get();
     ctxDesc[ctx] = std::move(d);
@@ -1660,6 +1745,19 @@ std::vector<std::pair<std::string, std::string>> listOfxPluginsForUi() {
     }
     std::sort(r.begin(), r.end(), [](auto& a, auto& b) { return a.second < b.second; });
     return r;
+}
+
+std::vector<std::string> ofxBlockedPlugins() {
+    Registry& reg = registry();
+    std::lock_guard l(reg.m);
+    scanLocked();
+    std::set<std::string> all = quarantine::blocked();
+    return std::vector<std::string>(all.begin(), all.end());
+}
+
+void ofxUnblockPlugins() {
+    quarantine::blocked().clear();
+    quarantine::writeBlocked({});
 }
 
 void listOfxPlugins(std::ostream& os) {

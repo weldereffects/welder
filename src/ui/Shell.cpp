@@ -40,7 +40,7 @@ static void doOpen(App& app, UiState& ui) {
 }
 
 static void doImport(App& app, UiState& ui) {
-    openFileDialog(ui, "Import .nk script (.nk)", false, {".nk"}, [&app, &ui](const std::string& p) {
+    openFileDialog(ui, "Import .nk script (.nk, .nkind, .nknc)", false, {".nk", ".nkind", ".nknc"}, [&app, &ui](const std::string& p) {
         std::string err;
         if (!app.importNk(p, &err)) app.message("error: " + err);
         ui.graph.needsFrame = true;
@@ -479,6 +479,10 @@ void drawToolbar(App& app, UiState& ui) {
     if (!ui.ofxScanned) {
         ui.ofxScanned = true;
         ui.ofxPlugins = listOfxPluginsForUi();
+        if (auto blocked = ofxBlockedPlugins(); !blocked.empty())
+            app.message(std::to_string(blocked.size()) + " OFX plugin" + (blocked.size() > 1 ? "s" : "") +
+                        " skipped because it crashed Welder while loading (Edit > Preferences > OFX to retry): " +
+                        fs::path(blocked.front()).filename().string() + (blocked.size() > 1 ? ", ..." : ""));
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 6));
     ImGui::Begin(ui.win("Nodes").c_str(), nullptr, ImGuiWindowFlags_NoScrollbar);  // floating, it keeps a title bar to move it by
@@ -668,14 +672,50 @@ static void drawPreferences(App& app, UiState& ui) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Graphite: neutral greys, amber accent (the default)\nForge: warm charcoal, orange accent\n"
                           "Midnight: cool blue-black, teal accent\nNeutral: true mid grey, for judging colour");
+    kit::rowLabel("UI scale", "Size of text, buttons and spacing. Automatic follows the display (HiDPI on Windows and Linux;\n"
+                              "on macOS a Retina display is already sharp at 100%). Takes effect the next time Welder starts.");
+    ImGui::SetNextItemWidth(260);
+    {
+        static const float kScales[] = {0, 0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.5f};
+        auto label = [](float v) { return v <= 0 ? std::string("Automatic") : std::to_string((int)std::lround(v * 100)) + "%"; };
+        if (ImGui::BeginCombo("##uiscale", label(app.uiScaleSetting).c_str())) {
+            for (float v : kScales)
+                if (ImGui::Selectable(label(v).c_str(), std::fabs(v - app.uiScaleSetting) < 1e-3f)) {
+                    app.uiScaleSetting = v;
+                    app.saveSettings();
+                    app.message("UI scale: " + label(v) + " (takes effect when Welder restarts)");
+                }
+            ImGui::EndCombo();
+        }
+    }
     ImGui::SeparatorText("Node Graph");
     if (kit::checkbox("Right-angle pipes", &app.rightAnglePipes,
                       "Pipes run straight down and across with square corners, instead of in straight lines from node to node"))
+        app.saveSettings();
+    if (kit::checkbox("Middle-drag zooms", &app.middleDragZooms,
+                      "A middle-button drag zooms the node graph and the viewers (drag right or up to zoom in),\n"
+                      "for tablet pens without a scroll wheel. Off: it pans, as before. Alt+middle-drag always zooms.\n"
+                      "Alt+left-drag still pans."))
         app.saveSettings();
     if (kit::checkbox("Alt+drag cuts pipes", &app.altDragCuts,
                       "Alt+drag across pipes in the node graph to disconnect them (one undo step).\n"
                       "Off: Alt+drag pans the graph. The middle mouse button always pans."))
         app.saveSettings();
+    {
+        static std::vector<std::string> blocked;
+        static bool fetched = false;
+        if (!fetched) { blocked = ofxBlockedPlugins(); fetched = true; }
+        if (!blocked.empty()) {
+            ImGui::SeparatorText("OFX");
+            ImGui::TextWrapped("These plugins crashed Welder while it was loading them, so they are skipped:");
+            for (auto& b : blocked) ImGui::BulletText("%s", b.c_str());
+            if (ImGui::Button("Retry blocked plugins")) {
+                ofxUnblockPlugins();
+                blocked.clear();
+                app.message("blocked OFX plugins will be tried again the next time Welder starts");
+            }
+        }
+    }
     ImGui::SeparatorText("Autosave");
     kit::rowLabel("every", "A copy of the comp goes to the settings folder this often while it has unsaved changes.\n"
                            "After a crash, opening the script (or starting Welder, for an untitled comp) offers it back.\n0: off");

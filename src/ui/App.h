@@ -208,10 +208,12 @@ public:
     void clearRecent();
     std::string themeName = "graphite";  // the setting: Preferences > Appearance (ui/Theme.cpp)
     bool themeChosen = false;            // picked in Preferences (only then is it saved, so the default can change)
+    float uiScaleSetting = 0;            // the setting: Preferences > Appearance > UI scale (0 = automatic); applied at start
     bool uncPaths = true;         // the setting: mapped drive paths (S:\\...) become \\\\server\\share\\... (core/NetPath.h)
     bool askMatchProject = true;  // the setting: offer to match the project to a new script's first Read
     bool rightAnglePipes = false; // the setting: node graph pipes drawn with square corners
     bool altDragCuts = true;      // the setting: Alt+drag in the node graph cuts pipes (off: it pans)
+    bool middleDragZooms = false; // the setting: a middle-button drag zooms (tablets without a wheel); Alt+middle-drag always does
     bool matchArmed = false;      // this script has had no media yet (the first Read's file brings the offer)
     double playbackCacheGB = 0;  // the setting; 0 = automatic (a quarter of the RAM, 3..64 GB)
     void setPlaybackCacheGB(double gb);
@@ -253,6 +255,9 @@ public:
     // ------------------------------------------------------------ files
     bool newComp();
     bool open(const std::string& path, std::string* err);
+    // Nodes the last .nk import couldn't translate exactly (node -> what the importer said), shown
+    // in the graph with a coloured outline (issue #11). Cleared when another script is opened.
+    std::map<std::string, std::string> importWarnings;
     bool save(const std::string& path, std::string* err);  // atomic: a crash mid-save leaves the old script
 
     // ---- autosave: every autosaveSecs (0: off) while there are unsaved changes, a copy of the comp

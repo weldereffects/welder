@@ -37,6 +37,8 @@ struct ExrWriteOptions {
     std::string compression = "zip";  // none rle zips zip piz pxr24 b44 b44a dwaa dwab
     float dwaLevel = 45.0f;
     bool dataWindowFromBbox = false;  // write only the image's bbox (may extend past the format)
+    std::string timecode;             // "HH:MM:SS:FF": the TimeCode attribute (empty: none)
+    double fps = 0;                   // > 0: the FramesPerSecond attribute
 };
 
 // Writes the channels of `img`. The data window is the format box (or the

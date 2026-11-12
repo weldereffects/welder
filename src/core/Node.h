@@ -91,6 +91,17 @@ public:
     // that cache derived state can refresh it.
     virtual void paramsChanged() {}
 
+    // A stand-in for a node type this build doesn't know (it passes input 0 through).
+    virtual bool isPlaceholder() const { return false; }
+
+    // Facts about the frame that travel down the graph with it (for now "timecode" and "fps", set
+    // by AddTimeCode and written into the files by Write). By default the first input's, at the
+    // time this node asks it for.
+    virtual json metadata(double frame) {
+        Node* in = inputs.empty() ? nullptr : inputs[0];
+        return in ? in->metadata(inputTime(0, frame)) : json();
+    }
+
     // Number of inputs the editor should offer (connected or not).
     virtual int maxInputs() const { return 1; }
     // Label for input i in the editor ("B", "A", "mask", "Source", ...).

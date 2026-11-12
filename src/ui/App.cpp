@@ -394,8 +394,10 @@ void App::loadSettings() {
             askMatchProject = j.value("ask_match_project", askMatchProject);
             rightAnglePipes = j.value("graph_right_angle_pipes", rightAnglePipes);
             altDragCuts = j.value("graph_alt_drag_cuts", altDragCuts);
+            middleDragZooms = j.value("middle_drag_zooms", middleDragZooms);
             uncPaths = j.value("unc_paths", uncPaths);
             autosaveSecs = j.value("autosave_seconds", autosaveSecs);
+            if (j.contains("ui_scale") && j["ui_scale"].is_number()) uiScaleSetting = j["ui_scale"].get<float>();
             if (j.contains("ui_theme") && j["ui_theme"].is_string()) {  // ("theme" was written by every save before: ignored)
                 themeName = j["ui_theme"].get<std::string>();
                 themeChosen = true;
@@ -436,8 +438,11 @@ void App::saveSettings() {
     j["ask_match_project"] = askMatchProject;
     j["graph_right_angle_pipes"] = rightAnglePipes;
     j["graph_alt_drag_cuts"] = altDragCuts;
+    j["middle_drag_zooms"] = middleDragZooms;
     j["unc_paths"] = uncPaths;
     j["autosave_seconds"] = autosaveSecs;
+    if (uiScaleSetting > 0) j["ui_scale"] = uiScaleSetting;
+    else j.erase("ui_scale");
     if (themeChosen) j["ui_theme"] = themeName;
     j["recent_files"] = recentFiles;
     j["gpu"] = gpu::enabled();
@@ -3236,6 +3241,7 @@ bool App::open(const std::string& path, std::string* err) {
     }
     adoptComp(loaded);
     compPath = absolutePath(path);
+    importWarnings.clear();
     undo_.clear();
     redo_.clear();
     dirty = false;
@@ -3501,7 +3507,12 @@ bool App::importNk(const std::string& nkPath, std::string* err) {
         json r = json::parse(rf);
         message("imported " + nk.filename().string() + ": " + std::to_string(r.value("nodes_total", 0)) + " nodes, " +
                 std::to_string(r.value("with_warnings", 0)) + " with warnings");
-        for (auto& w : r["warnings"]) message("  " + w.value("node", "") + ": " + w.value("message", ""));
+        importWarnings.clear();
+        for (auto& w : r["warnings"]) {
+            message("  " + w.value("node", "") + ": " + w.value("message", ""));
+            std::string& m = importWarnings[w.value("node", "")];
+            m += (m.empty() ? "" : "\n") + w.value("message", "");
+        }
     } catch (...) {
     }
     return true;

@@ -1391,8 +1391,19 @@ class Translator:
     # ------------------------------------------------------------- script
 
     def run(self):
-        with open(self.path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
+        with open(self.path, "rb") as f:
+            raw = f.read()
+        # Nuke Indie (.nkind) and Non-commercial (.nknc) scripts are the same text as .nk when they
+        # are plain; when the edition saved them encrypted they can't be read (issue #18).
+        sample = raw[:65536]
+        binary = sum(1 for b in sample if b < 9 or (13 < b < 32)) if sample else 0
+        if sample and (binary > len(sample) // 20 or b"{" not in sample):
+            ext = os.path.splitext(self.path)[1].lower()
+            raise SystemExit("%s doesn't look like a Nuke script as text%s. Copy the nodes in Nuke (Ctrl+C) and "
+                             "paste them into Welder's node graph instead, or save the script as .nk if your edition can."
+                             % (os.path.basename(self.path),
+                                " (Nuke saves %s scripts encrypted)" % ext if ext in (".nkind", ".nknc") else ""))
+        text = raw.decode("utf-8", errors="replace")
         cmds = split_commands(text)
         self.process(cmds, prefix="", group_inputs=None)
         return self.result()
@@ -2673,6 +2684,16 @@ class Translator:
                 warn("reverse_input is not supported yet")
             self.translated += 1
             return self.emit(nk_name, klass, "TimeOffset", main[:1], params, k)
+
+        if klass == "AddTimeCode":
+            if "startcode" in k:
+                params["startcode"] = str(k["startcode"]).strip('"').strip("{}").strip()
+            num("fps", dest="fps")
+            if flag("useFrame"):
+                params["use_frame"] = True
+            num("frame", dest="frame")
+            self.translated += 1
+            return self.emit(nk_name, klass, "AddTimeCode", main[:1], params, k)
 
         if klass in ("OFlow2", "OFlow", "Kronos"):
             # the classic optical-flow retimers -> OFlow (same knobs, Welder names)

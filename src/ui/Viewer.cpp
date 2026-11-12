@@ -648,7 +648,15 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         v.pan.x += before.x - after.x;
         v.pan.y += before.y - after.y;
     }
-    if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+    const bool midZoom = app.middleDragZooms || io.KeyAlt;  // middle-drag zoom: tablets without a wheel (issue #23)
+    if (ImGui::IsItemActive() && midZoom && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+        const ImVec2 anchor = io.MouseClickedPos[ImGuiMouseButton_Middle];  // about where the drag started
+        const ImVec2 before = toImage(anchor);
+        v.zoom = std::clamp(v.zoom * std::pow(1.006f, io.MouseDelta.x - io.MouseDelta.y), 0.02f, 64.0f);
+        const ImVec2 after = toImage(anchor);
+        v.pan.x += before.x - after.x;
+        v.pan.y += before.y - after.y;
+    } else if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
                                   (io.KeyAlt && !io.KeyCtrl && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
         v.pan.x -= io.MouseDelta.x / v.zoom;
         v.pan.y += io.MouseDelta.y / v.zoom;

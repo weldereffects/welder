@@ -1367,6 +1367,9 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
         else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) s.nav = View3DState::Nav::Track;
         else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) s.nav = View3DState::Nav::Dolly;
     }
+    // Preferences > Middle-drag zooms: a middle drag dollies without Alt (tablets, issue #23)
+    if (hovered && !alt && app.middleDragZooms && s.nav == View3DState::Nav::None && ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
+        s.nav = View3DState::Nav::Dolly;
     if (s.nav != View3DState::Nav::None) {
         bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
                     ImGui::IsMouseDown(ImGuiMouseButton_Right);

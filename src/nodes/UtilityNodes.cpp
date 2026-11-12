@@ -1,9 +1,14 @@
 // Channel and time nodes: Shuffle, Remove, FrameHold, TimeOffset, Dot, NoOp.
 #include "core/Expr.h"
+#include "core/Comp.h"
 #include "ValueNodes.h"
 #include <cmath>
+#include <cstdio>
+#include <algorithm>
 
 #include "NodeUtils.h"
+#include "Cam3D.h"
+#include <optional>
 
 namespace strata {
 
@@ -98,7 +103,18 @@ public:
 };
 
 // FrameHold: first_frame, increment (0 = hold forever; N = step every N frames).
-class FrameHoldNode : public Node {
+// Time nodes and pass-throughs carry a camera too, so a FrameHold on a camera freezes it (the
+// usual projection setup, issue #24) and a Dot or TimeOffset in a camera's pipe doesn't lose it.
+class CameraThrough : public cam3d::CameraSource {
+public:
+    std::optional<cam3d::Camera> camera(double frame) override {
+        Node* self = dynamic_cast<Node*>(this);
+        if (!self || self->inputs.empty() || !self->inputs[0]) return std::nullopt;
+        return cam3d::cameraAt(self->inputs[0], self->inputTime(0, frame));
+    }
+};
+
+class FrameHoldNode : public Node, public CameraThrough {
 public:
     double inputTime(int, double frame) override {
         double first = params.num("first_frame", frame, 1);
@@ -111,14 +127,58 @@ public:
 };
 
 // TimeOffset: offset (frames). Input is evaluated at frame - offset.
-class TimeOffsetNode : public Node {
+class TimeOffsetNode : public Node, public CameraThrough {
 public:
     double inputTime(int, double frame) override { return frame - params.num("offset", frame, 0); }
     int identityInput(double) override { return 0; }
     void render(RenderArgs&, Image&) override {}
 };
 
-class PassNode : public Node {
+// AddTimeCode: stamps a timecode on every frame (the classic node): startcode on frame `frame`
+// (or the project's first frame), counting up at fps (0: the project's). Write puts it in the
+// EXR header (TimeCode and FramesPerSecond attributes). Issue #13.
+class AddTimeCodeNode : public Node, public CameraThrough {
+public:
+    int identityInput(double) override { return 0; }
+    void render(RenderArgs&, Image&) override {}
+    void init() override {
+        long tc = 0;
+        if (!parseTimecode(params.str("startcode", "01:00:00:00"), &tc))
+            throw RenderError(name + ": startcode must look like HH:MM:SS:FF, e.g. 01:00:00:00");
+    }
+    static bool parseTimecode(const std::string& s, long* frames, int rate = 0) {
+        int h = 0, m = 0, sec = 0, f = 0;
+        char a, b, c;
+        if (std::sscanf(s.c_str(), "%d%c%d%c%d%c%d", &h, &a, &m, &b, &sec, &c, &f) != 7) return false;
+        if (h < 0 || m < 0 || m > 59 || sec < 0 || sec > 59 || f < 0) return false;
+        if (rate > 0) *frames = ((long)h * 3600 + m * 60 + sec) * rate + f;
+        else *frames = 0;
+        return true;
+    }
+    int rate(double frame) const {
+        double fps = params.num("fps", frame, 0);
+        if (fps <= 0 && comp) fps = comp->fps;
+        return std::max(1, (int)std::lround(fps > 0 ? fps : 24));
+    }
+    json metadata(double frame) override {
+        json md = Node::metadata(frame);
+        if (!md.is_object()) md = json::object();
+        const int r = rate(frame);
+        long start = 0;
+        if (!parseTimecode(params.str("startcode", "01:00:00:00"), &start, r)) return md;
+        const double first = params.flag("use_frame", false) ? params.num("frame", frame, 1) : (comp ? comp->firstFrame : 1);
+        long t = start + (long)std::floor(frame - first + 0.5);
+        const long day = 24L * 3600 * r;
+        t = ((t % day) + day) % day;
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "%02ld:%02ld:%02ld:%02ld", t / (3600L * r), (t / (60L * r)) % 60, (t / r) % 60, t % r);
+        md["timecode"] = buf;
+        md["fps"] = params.num("fps", frame, 0) > 0 ? params.num("fps", frame, 0) : (comp ? comp->fps : 24.0);
+        return md;
+    }
+};
+
+class PassNode : public Node, public CameraThrough {
 public:
     int identityInput(double) override { return 0; }
     void render(RenderArgs&, Image&) override {}
@@ -132,6 +192,7 @@ void registerUtilityNodes() {
     r.add("Remove", [] { return std::make_unique<RemoveNode>(); });
     r.add("FrameHold", [] { return std::make_unique<FrameHoldNode>(); });
     r.add("TimeOffset", [] { return std::make_unique<TimeOffsetNode>(); });
+    r.add("AddTimeCode", [] { return std::make_unique<AddTimeCodeNode>(); });
     r.add("Dot", [] { return std::make_unique<PassNode>(); });
     r.add("NoOp", [] { return std::make_unique<PassNode>(); });
 }

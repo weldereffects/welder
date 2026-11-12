@@ -43,7 +43,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Global", "Space (hold)", "right-click menu", false},
         // ---- Node Graph
         {"Node Graph", "Tab", "create a node by name", true},
-        {"Node Graph", "/", "find a node by name", true},
+        {"Node Graph", "/ or Ctrl+F", "find a node by name", true},
         {"Node Graph", "B / C / G / M / T / W / R / K", "insert Blur / ColorCorrect / Grade / Merge / Transform / Write / Read / Copy", true},
         {"Node Graph", "Shift+(node key)", "create the node in a new branch", true},
         {"Node Graph", ".", "insert a Dot", true},
@@ -456,7 +456,7 @@ void handleHotkeys(App& app, UiState& ui) {
             g.createAtValid = true;
         }
         if (key(ImGuiKey_Tab)) { g.openTab = true; return; }
-        if (key(ImGuiKey_Slash)) { g.openFind = true; return; }
+        if (key(ImGuiKey_Slash) || key(ImGuiKey_F, true)) { g.openFind = true; return; }  // (Ctrl+F too: issue #10)
         // Node hotkeys; Shift creates the node in a new branch.
         struct NK { ImGuiKey k; const char* type; };
         const NK nodeKeys[] = {{ImGuiKey_B, "Blur"}, {ImGuiKey_C, "ColorCorrect"}, {ImGuiKey_G, "Grade"},

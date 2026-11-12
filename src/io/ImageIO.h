@@ -4,6 +4,7 @@
 //   .dpx                         -> 8 / 10 / 12 / 16-bit (RasterIO)
 //   .tif .tiff                   -> 8 / 16-bit integer, 16 / 32-bit float (RasterIO)
 //   .hdr                         -> float, linear
+//   .psd .psb                    -> read only: the composite and every layer as channels (PsdIO.h)
 // Integer files go through `decode` / `encode` (an OCIO conversion) or sRGB;
 // float files (EXR, HDR, float TIFF) are left as they are.
 #pragma once
@@ -34,6 +35,8 @@ struct WriteOptions {
     int bitDepth = 0;                    // 0: the format's default (DPX 10, TIFF 16, PNG 8); TIFF 32 = float
     std::string tiffCompression = "zip"; // none, lzw, zip, packbits
     double fps = 0;                      // written into DPX headers
+    std::string timecode;                // "HH:MM:SS:FF" (AddTimeCode): the EXR header
+    double timecodeFps = 0;              // its rate (EXR FramesPerSecond)
 };
 
 ExrFile readImage(const std::string& path, const ReadOptions& o = {});

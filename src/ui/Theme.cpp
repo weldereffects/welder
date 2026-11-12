@@ -104,7 +104,7 @@ void applyTheme(const std::string& requested) {
     s.ScrollbarSize = 10;
     s.GrabMinSize = 10;
     s.DockingSeparatorSize = 3;
-    if (scale > 1.0f) s.ScaleAllSizes(scale);
+    if (scale != 1.0f) s.ScaleAllSizes(scale);  // (below 1 too: the UI scale preference can shrink it)
 
     ImVec4* c = s.Colors;
     const ImVec4 accent = v4(p.accent);

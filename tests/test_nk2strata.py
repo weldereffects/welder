@@ -59,6 +59,39 @@ Merge2 { inputs 2 name M }
 """)
         self.assertEqual(n["M"]["inputs"], ["B_side", "A_side"])  # input 0 = B = top of stack
 
+    def test_addtimecode(self):  # issue #13
+        _, report, n = convert("""
+Constant { inputs 0 name C }
+AddTimeCode { startcode 10:00:00:00 fps 25 useFrame true frame 1001 name TC }
+""")
+        self.assertEqual(n["TC"]["type"], "AddTimeCode")
+        p = n["TC"]["params"]
+        self.assertEqual(p["startcode"], "10:00:00:00")
+        self.assertEqual(p["fps"], 25)
+        self.assertTrue(p["use_frame"])
+        self.assertEqual(p["frame"], 1001)
+
+    def test_encrypted_nkind_is_reported(self):  # issue #18
+        with tempfile.NamedTemporaryFile("wb", suffix=".nkind", delete=False) as f:
+            f.write(bytes(range(256)) * 64)
+            path = f.name
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                nk2strata.convert(path)
+            self.assertIn("encrypted", str(cm.exception))
+        finally:
+            os.unlink(path)
+
+    def test_plain_nkind_imports(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".nkind", delete=False) as f:
+            f.write("Constant { inputs 0 name C }\nBlur { size 3 name B }\n")
+            path = f.name
+        try:
+            comp, _ = nk2strata.convert(path)
+            self.assertEqual(sorted(n["name"] for n in comp["nodes"]), ["B", "C"])
+        finally:
+            os.unlink(path)
+
     def test_set_push_and_mask(self):
         _, _, n = convert("""
 Constant { inputs 0 name Src }

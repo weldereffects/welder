@@ -642,7 +642,7 @@ void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths
             if (seen.insert(pat).second) make.push_back({"Read", {{"file", pat}}});
         } else if (depth > 0) {
             return;  // a folder's other files: ignored
-        } else if (e == ".nk") nkFiles.push_back(p);
+        } else if (e == ".nk" || e == ".nkind" || e == ".nknc") nkFiles.push_back(p);
         else if (brand::isCompFile(p)) comps.push_back(p);
         else if (e == ".obj") make.push_back({"ReadGeo", {{"file", p}}});
         else if (e == ".ply") make.push_back({"ReadSplat", {{"file", p}}});
@@ -864,10 +864,24 @@ void graphPasteNodes(App& app, UiState& ui, const json& arr) {
     std::set<std::string> pastedNames;
     for (auto& jn : arr) pastedNames.insert(jn.value("name", ""));
     auto topLevel = [&](const json& jn) { return !jn.contains("group") || !pastedNames.count(jn.value("group", "")); };
+    // A pasted node's position may be null or missing (clipboards from older builds, issue #14):
+    // only finite numbers count, anything else is placed by the graph.
+    auto finiteXY = [](const json& jn, float& x, float& y) {
+        if (!jn.contains("ui") || !jn["ui"].is_object()) return false;
+        const json& u = jn["ui"];
+        auto num = [&](const char* k, float& out) {
+            auto it = u.find(k);
+            if (it == u.end() || !it->is_number()) return false;
+            out = it->get<float>();
+            return std::isfinite(out);
+        };
+        return num("x", x) && num("y", y);
+    };
     ImVec2 lo(1e9f, 1e9f);
-    for (auto& jn : arr)
-        if (topLevel(jn) && jn.contains("ui") && jn["ui"].contains("x"))
-            lo = ImVec2(std::min(lo.x, jn["ui"].value("x", 0.0f)), std::min(lo.y, jn["ui"].value("y", 0.0f)));
+    for (auto& jn : arr) {
+        float x, y;
+        if (topLevel(jn) && finiteXY(jn, x, y)) lo = ImVec2(std::min(lo.x, x), std::min(lo.y, y));
+    }
     std::string sel = app.selection.size() == 1 ? *app.selection.begin() : "";
     ImVec2 at = ui.graph.mouseGraph;
     if (Node* sn = app.node(sel)) {
@@ -887,16 +901,22 @@ void graphPasteNodes(App& app, UiState& ui, const json& arr) {
     ImVec2 off(lo.x < 1e8f ? at.x - lo.x : 0, lo.y < 1e8f ? at.y - lo.y : 0);
     std::string level = ui.graph.level;
     app.checkpoint();
-    app.edit([&app, arr, sel, off, level, pastedNames](Comp& c) {
+    app.edit([&app, arr, sel, off, level, pastedNames, finiteXY](Comp& c) {
         std::map<std::string, std::string> rename;
         std::vector<Node*> made;
         std::vector<bool> top;
         for (auto& jn : arr) {
             bool isTop = !jn.contains("group") || !pastedNames.count(jn.value("group", ""));
-            json uij = jn.value("ui", json::object());
-            if (isTop && uij.contains("x")) {
-                uij["x"] = uij.value("x", 0.0f) + off.x;
-                uij["y"] = uij.value("y", 0.0f) + off.y;
+            json uij = jn.contains("ui") && jn["ui"].is_object() ? jn["ui"] : json::object();
+            float px, py;
+            if (finiteXY(jn, px, py)) {
+                if (isTop) {
+                    uij["x"] = px + off.x;
+                    uij["y"] = py + off.y;
+                }
+            } else {
+                uij.erase("x");  // (null / NaN / text: let the graph place it)
+                uij.erase("y");
             }
             Node* n = nullptr;
             try {
@@ -2167,6 +2187,25 @@ void drawNodeGraph(App& app, UiState& ui) {
     }
 
     // ---- nodes
+    // Problems (issue #11): red for a node that can't work (a type this build doesn't know, or the
+    // viewer's render failed in it), amber for one the .nk import could only approximate.
+    std::string renderErrNode, renderErr;
+    {
+        const std::string e = app.result().error;
+        const size_t colon = e.find(": ");
+        if (colon != std::string::npos && colon > 0 && app.node(e.substr(0, colon))) {
+            renderErrNode = e.substr(0, colon);
+            renderErr = e.substr(colon + 2);
+        }
+    }
+    auto problemOf = [&](const Node* n, bool* severe) -> std::string {
+        *severe = true;
+        if (n->isPlaceholder()) return "unknown node type '" + n->type + "': this build can't run it, it passes its input through";
+        if (n->name == renderErrNode) return renderErr;
+        *severe = false;
+        auto it = app.importWarnings.find(n->name);
+        return it != app.importWarnings.end() ? "imported from the .nk script with changes:\n" + it->second : std::string();
+    };
     for (auto& up : comp.nodes) {
         Node* n = up.get();
         if (!vis(n) || isBackdrop(n)) continue;
@@ -2237,6 +2276,18 @@ void drawNodeGraph(App& app, UiState& ui) {
         if (n->type == "Group")  // a container: a second frame inside
             dl->AddRect(ImVec2(p0.x + 3 * g.zoom, p0.y + 3 * g.zoom), ImVec2(p1.x - 3 * g.zoom, p1.y - 3 * g.zoom), IM_COL32(255, 255, 255, 60), rad, 0, 1.0f);
         if (disabled) dl->AddLine(p0, p1, theme().muted, 1.5f);
+        {
+            bool severe = false;
+            const std::string problem = problemOf(n, &severe);
+            if (!problem.empty()) {
+                const ImU32 pc = severe ? IM_COL32(230, 60, 50, 255) : IM_COL32(235, 165, 40, 255);
+                const float e = std::max(1.5f, 2.5f * g.zoom);
+                if (severe) dl->AddRectFilled(p0, p1, IM_COL32(200, 40, 30, 70), rad);
+                dl->AddRect(ImVec2(p0.x - e, p0.y - e), ImVec2(p1.x + e, p1.y + e), pc, rad + e, 0, std::max(1.5f, 2.0f * g.zoom));
+                if (hovered && ImGui::IsMouseHoveringRect(p0, p1) && g.drag == GraphState::Drag::None)
+                    ImGui::SetTooltip("%s", (n->name + ": " + problem).c_str());
+            }
+        }
         // postage stamp: the image, letterboxed in a dark inset at the top
         const float stampH = stampHeight(n) * g.zoom;
         const Stamp* stamp = stampH > 0 && g.zoom > 0.25f ? stampFor(app, n) : nullptr;
@@ -2388,6 +2439,9 @@ void drawNodeGraph(App& app, UiState& ui) {
         } else if (io.KeyAlt && !io.KeyCtrl && app.altDragCuts && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             g.drag = GraphState::Drag::Cut;  // Alt+drag across pipes: cut them
             g.cutStart = io.MousePos;
+        } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && (app.middleDragZooms || io.KeyAlt)) {
+            g.drag = GraphState::Drag::Zoom;  // (tablets: a pen has no wheel, issue #23)
+            g.zoomAnchor = io.MousePos;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) || (io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
             g.drag = GraphState::Drag::Pan;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
@@ -2528,6 +2582,16 @@ void drawNodeGraph(App& app, UiState& ui) {
                     app.message(ends.size() == 1 ? "cut 1 pipe" : "cut " + std::to_string(ends.size()) + " pipes");
                 }
             }
+            break;
+        }
+        case GraphState::Drag::Zoom: {
+            // right / up zooms in, left / down out, about where the drag started
+            const ImVec2 before = G(g.zoomAnchor);
+            g.zoom = std::clamp(g.zoom * std::pow(1.006f, io.MouseDelta.x - io.MouseDelta.y), 0.15f, 3.0f);
+            const ImVec2 after = G(g.zoomAnchor);
+            g.pan.x += before.x - after.x;
+            g.pan.y += before.y - after.y;
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) g.drag = GraphState::Drag::None;
             break;
         }
         case GraphState::Drag::Pan:
@@ -2870,6 +2934,8 @@ void drawNodeGraph(App& app, UiState& ui) {
         if (ImGui::MenuItem("View selected", "1", false, app.selection.size() == 1)) app.viewPipe(1, *app.selection.begin());
         if (ImGui::MenuItem("Properties", "Enter", false, !app.selection.empty()))
             for (auto& s : app.selection) app.openPanel(s);
+        if (ImGui::MenuItem("Properties in a floating window", nullptr, false, !app.selection.empty()))
+            for (auto& s : app.selection) openFloatPanel(app, ui, s);
         if (ImGui::MenuItem("Delete", "Del", false, !app.selection.empty())) graphDelete(app);
         ImGui::Separator();
         Node* one = app.selection.size() == 1 ? app.node(*app.selection.begin()) : nullptr;
@@ -2889,6 +2955,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         if (ImGui::MenuItem("Precomp around selection", nullptr, false, !app.selection.empty())) graphPrecomp(app, ui);
         if (one && one->type == "Backdrop" && ImGui::MenuItem("Convert backdrop to Precomp")) graphConvertBox(app, one);
         if (one && isPrecomp(one) && ImGui::MenuItem("Convert Precomp to backdrop")) graphConvertBox(app, one);
+        if (ImGui::MenuItem("Find node...", "Ctrl+F")) g.openFind = true;
         if (ImGui::MenuItem("Auto-align", "Alt+Shift+A")) graphAutoAlign(app, ui);
         if (ImGui::MenuItem("Sticky note")) createNode(app, ui, "StickyNote", {{"label", "note"}});
         if (ImGui::MenuItem("Frame all", "F")) {
