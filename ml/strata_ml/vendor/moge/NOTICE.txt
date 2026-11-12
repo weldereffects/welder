@@ -1,0 +1,4 @@
+MoGe-2 inference code from https://github.com/microsoft/MoGe (commit 74fbce054ebed49800de42d0ad0e83495065719a),
+MIT License (LICENSE in this folder), except moge/model/modules/dinov2, which is DINOv2 code by Meta AI
+under the Apache 2.0 licence. Only the MoGe-2 model (model/v2.py) and what it imports are kept.
+The weights are not included: Welder downloads them from Hugging Face (Ruicheng/moge-2-*).

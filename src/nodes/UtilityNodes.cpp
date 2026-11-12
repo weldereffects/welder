@@ -157,6 +157,7 @@ void registerCameraTrackerNodes();
 void registerScanlineRender();
 void registerSplatNodes();
 void registerMLNodes();
+void registerRelightNodes();
 void registerColorMgmtNodes();
 void registerMergeExtraNodes();
 void registerKillOutline();
@@ -210,6 +211,7 @@ void registerBuiltinNodes() {
     registerCameraTrackerNodes();
     registerSplatNodes();
     registerMLNodes();
+    registerRelightNodes();
     registerColorMgmtNodes();
     registerMergeExtraNodes();
     registerKillOutline();

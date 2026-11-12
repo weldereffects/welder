@@ -23,6 +23,7 @@ def registry():
         "reconstruct": _lazy("reconstruct", "run"),
         "depth": _lazy("depth", "run"),
         "segment": _lazy("segment", "run"),
+        "surface": _lazy("surface", "run"),
         "nerf_train": _lazy("nerf", "train"),
         "nerf_render": _lazy("nerf", "render"),
     }

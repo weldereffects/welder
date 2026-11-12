@@ -1810,7 +1810,7 @@ bool whenOk(const Node* n, const NodeDef& def, const KnobDef& k) {
     std::string key = k.when.substr(0, eq), vals = k.when.substr(eq + 1);
     std::string defv;
     for (auto& o : def.knobs)
-        if (o.name == key && o.def.is_string()) defv = o.def.get<std::string>();
+        if (o.name == key && !o.def.is_null()) defv = o.def.is_string() ? o.def.get<std::string>() : o.def.dump();
     std::string cur = getString(n, key, defv);
     size_t p = 0;
     while (p <= vals.size()) {

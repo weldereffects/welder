@@ -677,6 +677,11 @@ THE EDITOR
                    through the shot with Track; click again where it slips
     NeRF           a NeRF with joint camera optimisation; Train, then Render
                    through any camera
+    SurfacePasses  normals, depth and position for relighting (N, depth.Z, P,
+                   people.A): MoGe-2 for the scene, Sapiens2 for people (each
+                   person and head cropped to its native size), optical flow
+                   to average neighbouring frames so nothing flickers. Feed
+                   it to NormalLight (Color group) to relight the plate
     ReadSplat / SplatRender (3D group) read and render splat .ply files.
     They run on your NVIDIA GPU (24 GB, e.g. RTX 3090 / 4090; LTX also wants
     ~64 GB of system RAM, or set "weights" to disk) through the ML worker, a

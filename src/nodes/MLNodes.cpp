@@ -479,6 +479,108 @@ public:
     }
 };
 
+// ================================================================= SurfacePasses
+// Normals, depth and position for relighting (ml/strata_ml/tasks/surface.py): MoGe-2 for the scene,
+// Sapiens2 for people (each person and each head cropped to its native size), then optical flow lines
+// up the neighbouring frames and averages them so the passes don't flicker. The worker writes
+// "normals" (X Y Z people) and "geometry" (depth X Y Z), all in camera space with Welder's axes
+// (x right, y up, z towards the viewer); the node adds them as N, depth.Z (1 / distance), P and
+// people.A.
+class SurfacePassesNode : public MLNode {
+public:
+    int maxInputs() const override { return 1; }
+    std::string inputLabel(int) const override { return "src"; }
+    bool timeDependent() const override { return true; }
+    std::string slotLabel(const std::string&) const override { return "Generate passes"; }
+    ChannelSet channels(Engine& e, double f) override {
+        return inputChannels(e, input(0), f, {"N.X", "N.Y", "N.Z", "depth.Z", "P.X", "P.Y", "P.Z", "people.A"});
+    }
+    void render(RenderArgs& a, Image& out) override {
+        copyInput(a, out, input(0));
+        Image nm(a.region, {"X", "Y", "Z", "people"}), geo(a.region, {"depth", "X", "Y", "Z"});
+        const bool haveN = fillFromOutput(a, nm, "main", "normals", {{0, 0}, {1, 1}, {2, 2}, {3, 3}});
+        const bool haveG = fillFromOutput(a, geo, "main", "geometry", {{0, 0}, {1, 1}, {2, 2}, {3, 3}});
+        if (!haveN && !haveG) return;
+        const int NX = out.ch("N.X"), NY = out.ch("N.Y"), NZ = out.ch("N.Z"), Z = out.ch("depth.Z");
+        const int PX = out.ch("P.X"), PY = out.ch("P.Y"), PZ = out.ch("P.Z"), PA = out.ch("people.A");
+        const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B"), A = out.ch("A");
+        const std::string view = params.str("view", "plate");
+        auto r = resultJson("main");
+        for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int x = a.region.x1; x < a.region.x2; ++x) {
+                float* p = out.px(x, y);
+                float n[3] = {0, 0, 1};
+                if (haveN) {
+                    // bilinear filtering shortens the normals between pixels: make them unit again
+                    const float* s = nm.px(x, y);
+                    const float l = std::sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
+                    if (l > 1e-6f) {
+                        n[0] = s[0] / l;
+                        n[1] = s[1] / l;
+                        n[2] = s[2] / l;
+                    }
+                    if (NX >= 0) p[NX] = n[0];
+                    if (NY >= 0) p[NY] = n[1];
+                    if (NZ >= 0) p[NZ] = n[2];
+                    if (PA >= 0) p[PA] = std::clamp(s[3], 0.0f, 1.0f);
+                }
+                const float* g = haveG ? geo.px(x, y) : nullptr;
+                const float d = g ? g[0] : 0.0f;
+                if (g) {
+                    if (Z >= 0) p[Z] = d > 1e-6f ? 1.0f / d : 0.0f;  // the classic depth.Z
+                    if (PX >= 0) p[PX] = g[1];
+                    if (PY >= 0) p[PY] = g[2];
+                    if (PZ >= 0) p[PZ] = g[3];
+                }
+                float v[3];
+                if (view == "normals" && haveN) {
+                    for (int k = 0; k < 3; ++k) v[k] = n[k] * 0.5f + 0.5f;
+                } else if (view == "depth (grey)" && g) {
+                    // near white, far black: the near end of this frame's depth range at 1
+                    const double near = r ? r->value("near", 1.0) : 1.0;
+                    v[0] = v[1] = v[2] = d > 1e-6f ? std::clamp((float)(near / d), 0.0f, 1.0f) : 0.0f;
+                } else if (view == "position" && g) {
+                    for (int k = 0; k < 3; ++k) v[k] = g[k + 1];
+                } else if (view == "people" && haveN) {
+                    v[0] = v[1] = v[2] = PA >= 0 ? p[PA] : 0.0f;
+                } else {
+                    continue;
+                }
+                if (R >= 0) p[R] = v[0];
+                if (G >= 0) p[G] = v[1];
+                if (B >= 0) p[B] = v[2];
+                if (A >= 0) p[A] = 1;
+            }
+    }
+    JobSpec spec(const std::string&, Engine& e) override {
+        JobSpec s;
+        s.task = "surface";
+        s.inputs = {{"src", 0, true}};
+        auto [a, b] = range(e);
+        s.first = a;
+        s.last = b;
+        s.params = pick(params, {{"resolution_level", 9}, {"max_size", 1920}, {"lock_fov", true}, {"fov_x", 0.0},
+                                 {"people", true}, {"heads", true}, {"min_person", 0.08}, {"max_people", 8},
+                                 {"feather", 3.0}, {"temporal", true}, {"radius", 2}, {"flow", "RAFT"},
+                                 {"flow_size", 1024}, {"split_cuts", true}, {"edge_clean", 1}, {"fp32", false}});
+        const std::string moge = params.str("moge", "large"), sap = params.str("sapiens", "1b");
+        s.params["moge"] = moge;
+        s.params["sapiens"] = sap;
+        const std::map<std::string, std::string> mogeIds = {
+            {"large", "moge-2-vitl-normal"}, {"base", "moge-2-vitb-normal"}, {"small", "moge-2-vits-normal"}};
+        auto it = mogeIds.find(moge);
+        if (it == mogeIds.end()) s.error = "unknown MoGe-2 size '" + moge + "'";
+        else s.models.push_back(it->second);
+        if (params.flag("people", true)) {
+            if (sap != "0.4b" && sap != "0.8b" && sap != "1b") s.error = "unknown Sapiens2 size '" + sap + "'";
+            s.models.push_back("sapiens2-seg-" + sap);
+            s.models.push_back("sapiens2-normal-" + sap);
+        }
+        if (!input(0)) s.error = "connect the src input";
+        return s;
+    }
+};
+
 // ================================================================= TrackMask
 // Click an object (or drag a box round it) on a frame; SAM 2.1 masks it and follows it through
 // the shot. The clicks ("prompts": [{frame, points: [[x, y, 1 object / 0 not it]], box}], full-res
@@ -727,6 +829,7 @@ void registerMLNodes() {
     r.add("Reconstruct", [] { return std::make_unique<mlnodes::ReconstructNode>(); });
     r.add("Depth", [] { return std::make_unique<mlnodes::DepthNode>(); });
     r.add("TrackMask", [] { return std::make_unique<mlnodes::TrackMaskNode>(); });
+    r.add("SurfacePasses", [] { return std::make_unique<mlnodes::SurfacePassesNode>(); });
     r.add("NeRF", [] { return std::make_unique<mlnodes::NeRFNode>(); });
 }
 }  // namespace strata
