@@ -21,6 +21,7 @@
 #include "core/ThreadBudget.h"
 #include "core/NetPath.h"
 #include "io/ImageIO.h"
+#include "io/PsdIO.h"
 #include "io/MovieIO.h"
 #include "io/RasterIO.h"
 #include "nodes/NodeUtils.h"
@@ -194,6 +195,157 @@ int main(int argc, char** argv) {
     auto tmp = std::filesystem::temp_directory_path() / "welder_tests";
     std::filesystem::create_directories(tmp);
 
+    test("comp with null / non-numeric node positions opens and saves clean (issue #14)", [] {
+        json j = json::parse(R"({
+            "nodes": [
+                {"name": "C", "type": "Constant", "params": {"color": [1, 0, 0, 1]}, "ui": {"x": null, "y": null}},
+                {"name": "B", "type": "Blur", "inputs": ["C"], "ui": {"x": "oops", "y": 12}},
+                {"name": "G", "type": "Grade", "inputs": ["B"], "ui": {"x": -8000.0, "y": 2800.0}}
+            ]})");
+        auto c = Comp::fromJson(j, std::filesystem::temp_directory_path());
+        CHECK(c->nodes.size() == 3);
+        CHECK(!c->warnings.empty());
+        json out = c->toJson();
+        for (auto& jn : out["nodes"]) {
+            if (!jn.contains("ui")) continue;
+            for (const char* k : {"x", "y"})
+                if (jn["ui"].contains(k)) CHECK(jn["ui"][k].is_number());
+        }
+        CHECK(c->find("G")->ui.value("x", 0.0) == -8000.0);
+    });
+    test("FrameHold / TimeOffset / Dot carry a camera (issue #24)", [] {
+        json j = json::parse(R"({
+            "nodes": [
+                {"name": "Cam", "type": "Camera", "params": {"translate": [{"keys": [[1, 0], [11, 10]]}, 0, 5]}},
+                {"name": "Hold", "type": "FrameHold", "inputs": ["Cam"], "params": {"first_frame": 1}},
+                {"name": "Off", "type": "TimeOffset", "inputs": ["Cam"], "params": {"offset": 5}},
+                {"name": "D", "type": "Dot", "inputs": ["Hold"]}
+            ]})");
+        auto c = Comp::fromJson(j, std::filesystem::temp_directory_path());
+        auto live = cam3d::cameraAt(c->find("Cam"), 11);
+        auto held = cam3d::cameraAt(c->find("Hold"), 11);
+        auto viaDot = cam3d::cameraAt(c->find("D"), 11);
+        auto offset = cam3d::cameraAt(c->find("Off"), 11);
+        CHECK(live && held && viaDot && offset);
+        if (live && held && viaDot && offset) {
+            CHECK(std::fabs(live->C.x - 10) < 1e-6);
+            CHECK(std::fabs(held->C.x - 0) < 1e-6);    // frozen on frame 1
+            CHECK(std::fabs(viaDot->C.x - 0) < 1e-6);  // through the Dot
+            CHECK(std::fabs(offset->C.x - 5) < 1e-6);  // frame 11 - 5 = 6
+        }
+    });
+    test("AddTimeCode: timecode metadata per frame, through time nodes (issue #13)", [] {
+        json j = json::parse(R"({
+            "frame_range": [1001, 1100], "fps": 24,
+            "nodes": [
+                {"name": "C", "type": "Constant"},
+                {"name": "TC", "type": "AddTimeCode", "inputs": ["C"], "params": {"startcode": "01:00:00:00"}},
+                {"name": "TC25", "type": "AddTimeCode", "inputs": ["C"], "params": {"startcode": "10:00:00:00", "fps": 25, "use_frame": true, "frame": 1}},
+                {"name": "Hold", "type": "FrameHold", "inputs": ["TC"], "params": {"first_frame": 1001}},
+                {"name": "G", "type": "Grade", "inputs": ["TC"]}
+            ]})");
+        auto c = Comp::fromJson(j, std::filesystem::temp_directory_path());
+        CHECK(c->find("TC")->metadata(1001).value("timecode", "") == "01:00:00:00");
+        CHECK(c->find("TC")->metadata(1025).value("timecode", "") == "01:00:01:00");
+        CHECK(c->find("G")->metadata(1026).value("timecode", "") == "01:00:01:01");      // passed down
+        CHECK(c->find("Hold")->metadata(1050).value("timecode", "") == "01:00:00:00");   // held
+        CHECK(c->find("TC25")->metadata(26).value("timecode", "") == "10:00:01:00");
+        CHECK(c->find("C")->metadata(1).is_null());
+        bool threw = false;
+        try {
+            Comp::fromJson(json::parse(R"({"nodes": [{"name": "T", "type": "AddTimeCode", "params": {"startcode": "nope"}}]})"),
+                           std::filesystem::temp_directory_path());
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        CHECK(threw);
+    });
+    test("PSD: composite and layers as channels, raw and RLE data, unicode names (issue #12)", [] {
+        // a 4 x 2, 8-bit RGB document: "BG" (full canvas, RLE, opaque blue) under "Sky glow"
+        // (columns 1-2, raw, red at alpha 128, hidden), unicode name "Glüh" for a third, tiny layer
+        std::vector<uint8_t> f;
+        auto u8 = [&](int v) { f.push_back((uint8_t)v); };
+        auto u16 = [&](int v) { u8(v >> 8); u8(v); };
+        auto u32 = [&](uint32_t v) { u16((int)(v >> 16)); u16((int)(v & 0xffff)); };
+        auto str = [&](const std::string& t) { f.insert(f.end(), t.begin(), t.end()); };
+        auto patch32 = [&](size_t at, uint32_t v) { for (int k = 0; k < 4; ++k) f[at + k] = (uint8_t)(v >> (24 - 8 * k)); };
+        const int W = 4, H = 2;
+        str("8BPS"); u16(1); for (int i = 0; i < 6; ++i) u8(0); u16(3); u32(H); u32(W); u16(8); u16(3);
+        u32(0); u32(0);
+        size_t lmAt = f.size(); u32(0);
+        size_t liAt = f.size(); u32(0);
+        u16(3);
+        struct L { int t, l, b, r; std::string name; bool hidden; std::vector<std::pair<int, std::vector<uint8_t>>> ch; std::string uni; };
+        auto rleRow = [](const std::vector<uint8_t>& row) {  // a literal run per row
+            std::vector<uint8_t> o = {(uint8_t)(row.size() - 1)};
+            o.insert(o.end(), row.begin(), row.end());
+            return o;
+        };
+        auto rlePlane = [&](uint8_t v, int w, int h) {  // compression 1: counts then rows
+            std::vector<uint8_t> o = {0, 1};
+            std::vector<std::vector<uint8_t>> rows;
+            for (int y = 0; y < h; ++y) rows.push_back(rleRow(std::vector<uint8_t>((size_t)w, v)));
+            for (auto& r : rows) { o.push_back(0); o.push_back((uint8_t)r.size()); }
+            for (auto& r : rows) o.insert(o.end(), r.begin(), r.end());
+            return o;
+        };
+        auto rawPlane = [&](uint8_t v, int w, int h) {
+            std::vector<uint8_t> o = {0, 0};
+            o.insert(o.end(), (size_t)w * h, v);
+            return o;
+        };
+        std::vector<L> layers = {
+            {0, 0, 2, 4, "BG", false, {{-1, rlePlane(255, 4, 2)}, {0, rlePlane(0, 4, 2)}, {1, rlePlane(0, 4, 2)}, {2, rlePlane(255, 4, 2)}}, ""},
+            {0, 1, 2, 3, "Sky glow", true, {{-1, rawPlane(128, 2, 2)}, {0, rawPlane(255, 2, 2)}, {1, rawPlane(0, 2, 2)}, {2, rawPlane(0, 2, 2)}}, ""},
+            {1, 3, 2, 4, "x", false, {{0, rawPlane(255, 1, 1)}, {1, rawPlane(255, 1, 1)}, {2, rawPlane(255, 1, 1)}}, "Glüh"},
+        };
+        for (auto& l : layers) {
+            u32(l.t); u32(l.l); u32(l.b); u32(l.r);
+            u16((int)l.ch.size());
+            for (auto& [id, data] : l.ch) { u16(id & 0xffff); u32((uint32_t)data.size()); }
+            str("8BIMnorm"); u8(255); u8(0); u8(l.hidden ? 2 : 0); u8(0);
+            size_t exAt = f.size(); u32(0);
+            u32(0); u32(0);
+            u8((int)l.name.size()); str(l.name);
+            while ((f.size() - exAt - 4 - 8) % 4) u8(0);
+            if (!l.uni.empty()) {
+                str("8BIMluni");
+                std::vector<int> cps = {'G', 'l', 0xFC, 'h'};
+                u32(4 + 2 * (uint32_t)cps.size());
+                u32((uint32_t)cps.size());
+                for (int c : cps) u16(c);
+            }
+            patch32(exAt, (uint32_t)(f.size() - exAt - 4));
+        }
+        for (auto& l : layers) for (auto& [id, data] : l.ch) f.insert(f.end(), data.begin(), data.end());
+        if ((f.size() - liAt - 4) % 2) u8(0);
+        patch32(liAt, (uint32_t)(f.size() - liAt - 4));
+        u32(0);  // global layer mask
+        patch32(lmAt, (uint32_t)(f.size() - lmAt - 4));
+        // composite: raw, R G B A planes: blue everywhere, opaque
+        u16(0);
+        for (uint8_t v : {0, 0, 255, 255}) f.insert(f.end(), (size_t)W * H, v);
+
+        const auto path = std::filesystem::temp_directory_path() / "welder_test_layers.psd";
+        { std::ofstream o(path, std::ios::binary); o.write((const char*)f.data(), (std::streamsize)f.size()); }
+        ExrFile r = readImage(path.string());
+        const Image& im = *r.image;
+        CHECK(r.format.width == 4 && r.format.height == 2);
+        CHECK(im.ch("BG.B") >= 0 && im.ch("Sky_glow.R") >= 0 && im.ch("Gl_h.R") >= 0);
+        auto at = [&](const char* c, int x, int yTop) { return im.at(x, 1 - yTop, im.ch(c)); };
+        CHECK(std::fabs(at("B", 0, 0) - 1) < 1e-5 && std::fabs(at("A", 3, 1) - 1) < 1e-5);  // composite
+        CHECK(std::fabs(at("BG.B", 2, 1) - 1) < 1e-5);                                      // RLE layer
+        CHECK(std::fabs(at("Sky_glow.A", 1, 0) - 128 / 255.0f) < 1e-5);                     // raw layer, placed
+        CHECK(std::fabs(at("Sky_glow.R", 2, 1) - 128 / 255.0f) < 1e-5);                     // premultiplied
+        CHECK(at("Sky_glow.A", 0, 0) == 0 && at("Sky_glow.A", 3, 0) == 0);                   // outside its box
+        CHECK(std::fabs(at("Gl_h.A", 3, 1) - 1) < 1e-5 && at("Gl_h.A", 3, 0) == 0);          // bottom-right pixel only
+        CHECK(r.metadata["psd/Sky_glow"].find("visible=0") != std::string::npos);
+        CHECK(r.metadata["psd/layers"] == "BG Sky_glow Gl_h");
+        bool threw = false;
+        try { writeImage((std::filesystem::temp_directory_path() / "nope.psd").string(), im, r.format); } catch (const RenderError&) { threw = true; }
+        CHECK(threw);
+        std::filesystem::remove(path);
+    });
     test("merge over (premultiplied)", [] {
         auto c = comp(json::array({
             {{"name", "B"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 1, 1}}}}},

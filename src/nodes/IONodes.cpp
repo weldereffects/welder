@@ -528,6 +528,13 @@ public:
         o.dwaLevel = (float)params.num("dwa_level", frame, 45.0);
         o.exrBboxDataWindow = params.str("data_window", "format") == "bbox";
         o.raw = params.flag("raw", false);
+        {  // timecode from upstream (AddTimeCode), for the file's header
+            const json md = in->metadata(frame);
+            if (md.is_object() && md.contains("timecode") && md["timecode"].is_string()) {
+                o.timecode = md["timecode"].get<std::string>();
+                o.timecodeFps = md.value("fps", comp->fps);
+            }
+        }
         if (!o.raw) {
             bool fl = writesFloat(p, o);
             std::string cs = params.str("colorspace", "default");

@@ -453,6 +453,7 @@ void openFileDialog(UiState& ui, const std::string& title, bool saving, std::vec
                     std::function<void(const std::string&)> onOk, const std::string& startDir) {
     FileDialogState& d = ui.fileDialog;
     d.open = true;
+    d.overwriteArmed.clear();
     d.saving = saving;
     d.pickDir = false;
     d.allowNext = false;
@@ -984,8 +985,15 @@ void drawFileDialog(App& app, UiState& ui) {
         else if (!d.saving && !d.pickDir && !pattern && !fs::exists(P(chosen), ec)) d.error = "file does not exist";
         else {
             if (d.saving && !d.exts.empty() && P(chosen).extension().empty()) chosen += d.exts[0];
-            d.error.clear();
-            return finish({chosen}, false);
+            // Saving over a file that's there: warn once, Save again replaces it (issue #15).
+            if (d.saving && !pattern && fs::is_regular_file(P(chosen), ec) && d.overwriteArmed != chosen) {
+                d.overwriteArmed = chosen;
+                d.error = P(chosen).filename().string() + " already exists. Click Save again to replace it.";
+            } else {
+                d.overwriteArmed.clear();
+                d.error.clear();
+                return finish({chosen}, false);
+            }
         }
     }
     if (cancel) {

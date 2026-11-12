@@ -349,9 +349,25 @@ int main(int argc, char** argv) {
     // scripted screenshots and tests (one window to capture), nor with WELDER_SINGLE_WINDOW=1.
     // (The GLFW backend turns it off under Wayland, which can't place windows.)
     // (WELDER_TEST_FLOATING: on for a scripted test too.)
-    if ((opt.screenshot.empty() && !opt.idScan && !safeMode && !envFlag("WELDER_SINGLE_WINDOW")) ||
+    // Under a Wayland session Welder runs through XWayland, where a window can't learn where it is
+    // on the desktop (its position always reads 0,0). Floating panels work in desktop coordinates,
+    // so there clicks landed in the wrong place and dragged nodes and windows snapped back (issue
+    // #9, Ubuntu 22.04). The backend only notices native Wayland, so XWayland is checked here;
+    // WELDER_FLOATING_PANELS=1 turns floating panels on anyway.
+    bool waylandSession = false;
+#if defined(__linux__)
+    {
+        const char* st = std::getenv("XDG_SESSION_TYPE");
+        const char* wd = std::getenv("WAYLAND_DISPLAY");
+        waylandSession = (st && std::string(st) == "wayland") || (wd && *wd);
+    }
+#endif
+    const bool floatingWanted = envFlag("WELDER_FLOATING_PANELS") || !waylandSession;
+    if ((opt.screenshot.empty() && !opt.idScan && !safeMode && !envFlag("WELDER_SINGLE_WINDOW") && floatingWanted) ||
         envFlag("WELDER_TEST_FLOATING")) {
         io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    } else if (waylandSession && !floatingWanted) {
+        crash::crumb("Wayland session: panels stay inside the main window (WELDER_FLOATING_PANELS=1 to float them)");
     }
     io.ConfigWindowsMoveFromTitleBarOnly = true;
     static std::string iniPath = (fs::path(configDir()) / "layout.ini").string();
@@ -376,11 +392,20 @@ int main(int argc, char** argv) {
     }
     ml::setAppDir(app.exeDir);
     std::string font = findFont(app.exeDir);
+    // UI scale. Windows / Linux report a HiDPI display through the content scale (window units are
+    // pixels there), so text and spacing are scaled up by it. macOS works in points: a Retina
+    // window is already the right size and the backend draws it at full pixel density (fonts are
+    // rasterized for the framebuffer scale), so scaling by the content scale again made the whole
+    // UI twice as big (issue #17). Preferences > Appearance > UI scale overrides either.
     float scale = 1.0f;
     {
         float xs = 1, ys = 1;
         glfwGetWindowContentScale(win, &xs, &ys);
+#if !defined(__APPLE__)
         scale = std::max(1.0f, xs);
+#endif
+        if (app.uiScaleSetting > 0) scale = std::clamp(app.uiScaleSetting, 0.5f, 3.0f);
+        else if (const char* e = std::getenv("WELDER_UI_SCALE"); e && std::atof(e) > 0) scale = std::clamp((float)std::atof(e), 0.5f, 3.0f);
     }
     // Roboto: Regular for labels and menus (the default font), Medium for values, names and
     // headers, a small Medium for the uppercase section headers
@@ -413,7 +438,8 @@ int main(int argc, char** argv) {
     // Open a file from the command line.
     if (!opt.file.empty()) {
         std::string err;
-        bool ok = fs::path(opt.file).extension() == ".nk" ? app.importNk(opt.file, &err) : app.open(opt.file, &err);
+        const std::string fe = fs::path(opt.file).extension().string();
+        bool ok = (fe == ".nk" || fe == ".nkind" || fe == ".nknc") ? app.importNk(opt.file, &err) : app.open(opt.file, &err);
         if (!ok) app.message("error: " + err);
     }
     app.applyEdits();

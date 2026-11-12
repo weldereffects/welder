@@ -41,6 +41,14 @@ if [ "${STRATA_BUILD_DEPS:-0}" = 1 ]; then
     "$ROOT/tools/build_ncnn.sh" "$DEPS/src/ncnn" "$NCNN_MAC"
   fi
 fi
+# A release must not ship without colour management or movies (0.1.4 for Apple silicon went out
+# without FFmpeg: no .mov / .mp4, issue #21). With the dependencies being built, a missing one is
+# an error; WELDER_ALLOW_MISSING_DEPS=1 packages anyway (a quick test build).
+if [ "${STRATA_BUILD_DEPS:-0}" = 1 ] && [ "${WELDER_ALLOW_MISSING_DEPS:-0}" != 1 ]; then
+  for lib in "$OCIO_MAC/lib/libOpenColorIO.a" "$FFMPEG_MAC/lib/libavcodec.a"; do
+    [ -f "$lib" ] || { echo "error: $lib is missing (its build failed?): not packaging a build without it" >&2; exit 1; }
+  done
+fi
 ARGS=()
 [ -f "$OCIO_MAC/lib/libOpenColorIO.a" ] && ARGS+=(-DSTRATA_OCIO_DIR="$OCIO_MAC") || echo "(no OpenColorIO: $OCIO_MAC)"
 [ -f "$FFMPEG_MAC/lib/libavcodec.a" ] && ARGS+=(-DSTRATA_FFMPEG_DIR="$FFMPEG_MAC") || echo "(no FFmpeg: $FFMPEG_MAC)"

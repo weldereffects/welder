@@ -1,5 +1,6 @@
 #include "../core/Crash.h"
 #include "ImageIO.h"
+#include "PsdIO.h"
 
 #include <algorithm>
 #include <cctype>
@@ -35,7 +36,7 @@ float linearToSrgb(float v) {
 bool isSupportedImagePath(const std::string& path) {
     std::string e = ext(path);
     return e == ".exr" || e == ".png" || e == ".jpg" || e == ".jpeg" || e == ".tga" || e == ".bmp" || e == ".hdr" ||
-           e == ".dpx" || e == ".tif" || e == ".tiff";
+           e == ".dpx" || e == ".tif" || e == ".tiff" || e == ".psd" || e == ".psb";
 }
 
 bool writesFloat(const std::string& path, const WriteOptions& o) {
@@ -77,6 +78,7 @@ ExrFile readImage(const std::string& path, const ReadOptions& o) {
     crash::crumb("read image " + path);
     std::string e = ext(path);
     if (e == ".exr") return readExr(path);
+    if (isPsdPath(path)) return readPsd(path, o);
     if (!isSupportedImagePath(path)) throw RenderError("unsupported image format: " + path);
     raster::Raster r = e == ".dpx" ? raster::readDpx(path) : e == ".tif" || e == ".tiff" ? raster::readTiff(path) : readStb(path);
     return fromRaster(r, o);
@@ -180,10 +182,12 @@ void writeImage(const std::string& path, const Image& src, const Format& fmt, co
         eo.compression = o.compression;
         eo.dwaLevel = o.dwaLevel;
         eo.dataWindowFromBbox = o.exrBboxDataWindow;
+        eo.timecode = o.timecode;
+        eo.fps = o.timecodeFps;
         writeExr(path, src, fmt, eo);
         return;
     }
-    if (!isSupportedImagePath(path)) throw RenderError("unsupported output format: " + path);
+    if (!isSupportedImagePath(path) || isPsdPath(path)) throw RenderError("unsupported output format: " + path);
     raster::Raster r = toRaster(src, fmt, o, e != ".jpg" && e != ".jpeg" && e != ".hdr", !writesFloat(path, o));
     int bits = o.bitDepth ? o.bitDepth : defaultBitDepth(path);
 

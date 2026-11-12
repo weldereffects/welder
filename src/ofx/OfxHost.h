@@ -45,6 +45,11 @@ std::vector<OfxParamInfo> ofxNodeParams(Node* n);
 // set when the plugin reports a problem. Call with the comp locked for writing (inside App::edit).
 bool ofxInstanceChanged(Node* n, const std::string& param, double frame, Engine& e, std::string* err = nullptr);
 
+// Plugin binaries that crashed Welder while being loaded, and are skipped from then on (issue #8).
+std::vector<std::string> ofxBlockedPlugins();
+// Forget them: they are tried again the next time Welder starts.
+void ofxUnblockPlugins();
+
 // Plugins that load and describe successfully: (identifier, menu label).
 std::vector<std::pair<std::string, std::string>> listOfxPluginsForUi();
 

@@ -133,7 +133,8 @@ struct GraphState {
     ImVec2 canvasOrigin = {0, 0}, canvasSize = {0, 0};  // where the graph is on screen (drops land there)
     float zoom = 1.0f;
     bool needsFrame = true;
-    enum class Drag { None, Move, Marquee, Pan, FromInput, FromOutput, Resize, Cut } drag = Drag::None;
+    enum class Drag { None, Move, Marquee, Pan, FromInput, FromOutput, Resize, Cut, Zoom } drag = Drag::None;
+    ImVec2 zoomAnchor;  // Zoom drag: the screen point that stays put
     ImVec2 cutStart;    // Alt+drag: where the cutting line started (screen)
     std::string level;  // the group shown ("" = the top level)
     ImVec2 resizeOrig;  // backdrop size when a resize started
@@ -309,6 +310,7 @@ struct PickerState {
 struct FileDialogState {
     bool open = false;
     bool saving = false;
+    std::string overwriteArmed;  // saving: the existing file the user was warned about (Save again replaces it)
     bool pickDir = false;    // choose a folder (Open returns it)
     bool allowNext = false;  // "Next": use the selection and stay open (several Reads)
     std::string title, dir, filename;
@@ -365,7 +367,16 @@ struct DopeSheetState {
 // UiState::dropOpenComp for File > New / Close Comp (asks about unsaved changes like an open does)
 inline const char* kNewComp = "\x01new";
 
+// A node's properties in a window of its own (issue #25): OK keeps the changes, Cancel puts the
+// knobs back as they were when it was opened. It can sit anywhere (another screen too).
+struct FloatPanel {
+    std::string node;
+    json params;     // the knobs when it opened (what Cancel restores)
+    bool focus = true;
+};
+
 struct UiState {
+    std::vector<FloatPanel> floatPanels;
     ViewerState viewer;
     CurveEditorState curves;
     DopeSheetState dope;
@@ -471,6 +482,7 @@ void drawDopeSheet(App& app, UiState& ui);
 void tickPlayback(App& app, UiState& ui);
 void drawNodeGraph(App& app, UiState& ui);
 void drawProperties(App& app, UiState& ui);
+void openFloatPanel(App& app, UiState& ui, const std::string& name);  // issue #25
 void drawMessages(App& app, UiState& ui);
 void drawDialogs(App& app, UiState& ui);
 

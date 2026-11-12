@@ -81,6 +81,7 @@ add_library(strata_core STATIC
   src/core/NetPath.cpp
   src/io/ExrIO.cpp
   src/io/ImageIO.cpp
+  src/io/PsdIO.cpp
   src/io/RasterIO.cpp
   src/io/MovieIO.cpp
   src/core/Process.cpp

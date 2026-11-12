@@ -1229,6 +1229,11 @@ std::vector<NodeDef> build() {
     // ---------------------------------------------------------------- Time
     d.push_back({"FrameHold", "Time", {I("first_frame", "first frame", 1, 0, 10000), I("increment", "increment", 0, 0, 100)}, ""});
     d.push_back({"TimeOffset", "Time", {I("offset", "time offset (frames)", 0, -1000, 1000)}, ""});
+    d.push_back({"AddTimeCode", "Time",
+                 {S("startcode", "start code", "01:00:00:00"), F("fps", "fps", 0, 0, 120, "frames per second of the timecode (0: the project's)"),
+                  B("use_frame", "start frame", false), I("frame", "frame", 1, -100000, 100000)},
+                 "Stamps a timecode on the frames: the start code on the project's first frame (or the given frame), "
+                 "counting up from there. Write puts it in the header of EXR files."});
     {
         const std::vector<std::string> edge = {"hold", "loop", "bounce", "black"};
         d.push_back({"Retime", "Time",

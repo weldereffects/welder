@@ -3007,6 +3007,12 @@ void nodePanel(App& app, UiState& ui, Node* n, bool* keepOpen) {
     bool open = ImGui::CollapsingHeader((n->name + "###hdr").c_str(), keepOpen, ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
     ImGui::PopStyleColor(2);
+    if (keepOpen && ImGui::BeginPopupContextItem("panel_menu")) {  // (not on a floating panel itself)
+        if (ImGui::MenuItem("Float this panel (OK / Cancel)")) openFloatPanel(app, ui, n->name);
+        ImGui::EndPopup();
+    }
+    if (keepOpen && ImGui::IsItemHovered() && !ImGui::IsPopupOpen("panel_menu"))
+        ImGui::SetTooltip("Right-click: float this panel in a window of its own, with Cancel to undo what you try");
     {
         const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -3335,6 +3341,8 @@ void setParamComp(json& v, int n, int k, double val, double frame, const std::ve
     setComp(v, n, k, val, frame, defs);
 }
 
+void drawFloatPanels(App& app, UiState& ui);
+
 void drawProperties(App& app, UiState& ui) {
     ImGui::Begin(ui.win("Properties").c_str());
     if (!app.panelsToExpand.empty()) {  // a node was just opened: the bin's tab to the front (focus stays where it is)
@@ -3383,6 +3391,58 @@ void drawProperties(App& app, UiState& ui) {
     if (!ImGui::GetCurrentWindow()->SkipItems) app.panelsToExpand.clear();  // (shown: done; hidden: next time it shows)
     drawExprEditor(app);
     ImGui::End();
+    drawFloatPanels(app, ui);
+}
+
+void openFloatPanel(App& app, UiState& ui, const std::string& name) {
+    Node* n = app.node(name);
+    if (!n) return;
+    for (auto& f : ui.floatPanels)
+        if (f.node == name) { f.focus = true; return; }
+    ui.floatPanels.push_back({name, n->params.data, true});
+}
+
+void drawFloatPanels(App& app, UiState& ui) {
+    std::vector<std::string> done;
+    for (auto& f : ui.floatPanels) {
+        Node* n = app.node(f.node);
+        if (!n) { done.push_back(f.node); continue; }
+        ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 30, ImGui::GetFontSize() * 26), ImGuiCond_FirstUseEver);
+        if (f.focus) { ImGui::SetNextWindowFocus(); f.focus = false; }
+        bool open = true;
+        const std::string title = f.node + " (" + n->type + ")###float_" + f.node;
+        if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoDocking)) {
+            const float bar = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+            ImGui::BeginChild("knobs", ImVec2(0, -bar));
+            nodePanel(app, ui, n, nullptr);
+            ImGui::EndChild();
+            ImGui::Separator();
+            const bool changed = n->params.data != f.params;
+            if (ImGui::Button("OK")) done.push_back(f.node);
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!changed);
+            if (ImGui::Button("Cancel")) {
+                const std::string name = f.node;
+                const json before = f.params;
+                app.checkpoint();
+                app.edit([name, before](Comp& c) {
+                    if (Node* m = c.find(name)) {
+                        m->params.data = before;
+                        m->paramsChanged();
+                    }
+                });
+                done.push_back(f.node);
+            }
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(changed ? "Put the knobs back as they were when this window opened" : "Nothing changed yet");
+            ImGui::SameLine();
+            ImGui::TextDisabled(changed ? "changed" : "");
+        }
+        ImGui::End();
+        if (!open) done.push_back(f.node);  // closing it keeps the changes (like OK)
+    }
+    std::erase_if(ui.floatPanels, [&](const FloatPanel& f) { return std::find(done.begin(), done.end(), f.node) != done.end(); });
 }
 
 // A knob button's action, as if clicked (tests).

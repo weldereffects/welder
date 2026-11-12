@@ -36,6 +36,7 @@ namespace {
 // the rest of the graph still renders, and is reported as a warning.
 class UnknownNode : public Node {
 public:
+    bool isPlaceholder() const override { return true; }
     int identityInput(double) override { return 0; }
     void render(RenderArgs&, Image&) override {}
 };

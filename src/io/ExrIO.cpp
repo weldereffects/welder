@@ -12,6 +12,9 @@
 #include <ImfDeepTiledInputPart.h>
 #include <ImfFrameBuffer.h>
 #include <ImfHeader.h>
+#include <ImfStandardAttributes.h>
+#include <ImfFramesPerSecond.h>
+#include <ImfTimeCode.h>
 #include <ImfStringAttribute.h>
 #include <ImfInputPart.h>
 #include <ImfMultiPartInputFile.h>
@@ -23,6 +26,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -350,6 +354,12 @@ void writeExr(const std::string& path, const Image& src, const Format& fmt, cons
     try {
         Imf::Header h(disp, dw, (float)fmt.pixelAspect);
         h.compression() = cit->second;
+        if (!o.timecode.empty()) {
+            int hh = 0, mm = 0, ss = 0, ff = 0;
+            if (std::sscanf(o.timecode.c_str(), "%d:%d:%d:%d", &hh, &mm, &ss, &ff) == 4)
+                Imf::addTimeCode(h, Imf::TimeCode(hh, mm, ss, ff));
+        }
+        if (o.fps > 0) Imf::addFramesPerSecond(h, Imf::guessExactFps(o.fps));
         if (cit->second == Imf::DWAA_COMPRESSION || cit->second == Imf::DWAB_COMPRESSION) h.dwaCompressionLevel() = o.dwaLevel;
         const bool half = o.type == ExrPixelType::Half;
         Imf::PixelType pt = half ? Imf::HALF : Imf::FLOAT;
