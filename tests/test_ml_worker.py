@@ -255,6 +255,32 @@ class WorkerTests(unittest.TestCase):
                 self.assertIn(v["model"], r["models"], k)
         m = r["models"]["ltx-ic-alpha-gen"]
         self.assertIn("gated", _explain("huggingface_hub.errors.GatedRepoError: 401 Client Error", m))
+        xet = "RuntimeError: Task error: File reconstruction error: Internal Writer Error: Background writer channel closed"
+        self.assertIn("Download again", _explain(xet, m))
+
+    def test_download_retries_without_xet(self):
+        from strata_ml import models
+        from strata_ml.util import JobContext
+        jd = os.path.join(self.home, "jobs", "dl")
+        os.makedirs(jd)
+        ctx = JobContext(self.home, jd)
+        calls = []
+
+        def fake_run(ctx_, args, env, dest, total, err_path):
+            calls.append(env.get("HF_HUB_DISABLE_XET"))
+            if len(calls) == 1:
+                return 1, "RuntimeError: Task error: File reconstruction error: Internal Writer Error: Background writer channel closed"
+            return 0, ""
+
+        real = models._run_download
+        models._run_download = fake_run
+        try:
+            res = models.download(ctx, {"model": "ltx-ic-alpha-gen"})
+        finally:
+            models._run_download = real
+            ctx.close()
+        self.assertEqual(calls, [None, "1"])
+        self.assertIn("downloaded", res["message"])
 
     def test_splat_training_refines_cameras(self):
         means, cols, cams, imgs = synthetic_scene()

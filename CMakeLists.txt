@@ -103,6 +103,7 @@ add_library(strata_core STATIC
   src/nodes/KillOutline.cpp
   src/nodes/MoGraphFx.cpp
   src/nodes/MoGraphGen.cpp
+  src/nodes/FilmLookNodes.cpp
   src/nodes/LensFlare.cpp
   src/nodes/KeyingExtraNodes.cpp
   src/nodes/SplineFlow.cpp

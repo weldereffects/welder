@@ -1214,6 +1214,55 @@ std::vector<NodeDef> build() {
             Col4("head_color", "head colour", json::array({0.85, 1, 0.9, 1})), Col4("trail_color", "trail colour", json::array({0.1, 0.9, 0.35, 1})),
             File("font", "font"), I("seed", "seed", 0, 0, 1000)}),
             "Columns of characters raining down the screen, bright at the head and fading behind."});
+        // film looks
+        auto burnLook = [](std::vector<KnobDef> k) {
+            std::vector<KnobDef> r = {I("sites", "burn sites", 3, 1, 32), I("seed", "seed", 0, 0, 1000),
+                                      F("scale", "noise size (px)", 200, 4, 4000), F("roughness", "roughness", 0.6, 0, 2, "How ragged the burn front is"),
+                                      F("evolve", "evolve", 0.5, 0, 5, "How fast the front crawls on its own"),
+                                      Div("edge"), F("edge_width", "glowing edge (px)", 30, 0, 500), F("edge_brightness", "edge brightness", 1.5, 0, 10),
+                                      Col4("hot_color", "hot colour", json::array({1, 0.9, 0.6, 1})), Col4("burn_color", "burn colour", json::array({1, 0.42, 0.08, 1})),
+                                      F("char_width", "scorch (px)", 60, 0, 1000), Col4("char_color", "scorch colour", json::array({0.1, 0.04, 0.015, 1})),
+                                      F("glow", "glow", 1, 0, 10), Same(F("glow_size", "size (px)", 80, 1, 2000)), F("flicker", "flicker", 0.2, 0, 1)};
+            r.insert(r.begin(), k.begin(), k.end());
+            return r;
+        };
+        d.push_back({"FilmBurn", "Stylize",
+            withMask(burnLook({F("progress", "progress", 0.5, 0, 1, "0: untouched, 1: burned right through. Animate it"),
+                               C("hole", "burned through to", "white", {"white", "black", "transparent"}),
+                               When(F("hole_brightness", "brightness", 1, 0, 10), "hole=white")})),
+            "Film burning in the gate: holes start at a few spots and spread with progress, with a glowing edge, scorch and flicker."});
+        d.push_back({"FilmBurnTransition", "MoGraph", trans(burnLook({})),
+            "A burns away to reveal B: the cut is hidden in a spreading film burn."});
+        auto leak = [](std::vector<KnobDef> k) {
+            std::vector<KnobDef> r = {I("count", "leaks", 4, 1, 24), I("seed", "seed", 0, 0, 1000),
+                                      C("from", "from", "left", {"anywhere", "left", "right", "top", "bottom", "corners"}),
+                                      F("size", "size (x height)", 0.6, 0.01, 4), F("stretch", "stretch", 1.8, 0.05, 10), F("angle", "angle", 20, -180, 180),
+                                      F("intensity", "intensity", 0.6, 0, 10), F("speed", "speed", 0.3, 0, 10), F("drift", "drift", 0.25, 0, 2),
+                                      F("breathe", "breathe", 0.5, 0, 1, "How much each leak brightens and fades over time"),
+                                      Col4("color1", "colours", json::array({1, 0.45, 0.1, 1})), Same(Col4("color2", "", json::array({1, 0.12, 0.08, 1})), true),
+                                      Same(Col4("color3", "", json::array({1, 0.8, 0.35, 1})), true)};
+            r.insert(r.end(), k.begin(), k.end());
+            return r;
+        };
+        {
+            auto k = gen(leak({}));
+            for (auto& kd : k)
+                if (kd.name == "combine") kd.def = "screen";
+            d.push_back({"LightLeak", "Stylize", k, "Soft warm light spilling onto the frame from one side, drifting and breathing. Screens over the bg."});
+        }
+        d.push_back({"LightLeakDissolve", "MoGraph",
+            trans(leak({Div("dissolve"), F("dissolve_width", "dissolve width", 0.4, 0.01, 1), F("flash", "flash", 0.15, 0, 4),
+                        C("blend", "light blend", "screen", {"screen", "add"})})),
+            "A dissolve hidden under a flare of leaked light that peaks at the middle."});
+        d.push_back({"Dust", "Stylize",
+            withMask({F("specks", "specks per frame", 20, 0, 2000), F("size", "speck size (px)", 3, 0.3, 100), F("size_variance", "size variance", 0.7, 0, 1),
+                      F("hairs", "hairs per frame", 3, 0, 200), F("hair_length", "hair length (px)", 40, 2, 1000), F("hair_width", "hair width (px)", 1, 0.1, 20),
+                      I("scratches", "scratches", 1, 0, 20), F("scratch_width", "scratch width (px)", 1.5, 0.1, 20),
+                      F("scratch_opacity", "scratch opacity", 0.5, 0, 1), I("scratch_life", "scratch life (frames)", 48, 1, 10000),
+                      Div(""), C("polarity", "dirt is", "dark", {"dark", "light", "mixed"}), F("opacity", "opacity", 0.9, 0, 1),
+                      F("softness", "softness (px)", 0.7, 0.05, 20), I("hold", "hold (frames)", 1, 1, 100), I("seed", "seed", 0, 0, 1000),
+                      F("weave", "gate weave (px)", 0, 0, 20, "The whole picture drifts a little, like film in a projector gate")}),
+            "Dust, hairs and scratches on the print, new every frame (dark: dirt on the print, light: dirt on the negative)."});
         d.push_back({"LCDScreen", "MoGraph", withMask({F("pixel_size", "screen pixel size", 6, 1, 100, "The screen's pixel pitch in output pixels"),
             C("layout", "subpixels", "RGB stripes", {"RGB stripes", "BGR stripes", "dots", "none"}), F("gap", "gap", 0.15, 0, 0.45),
             F("grid_darkness", "gap darkness", 0.6, 0, 1), F("subpixel_strength", "subpixel strength", 1, 0, 1), F("brightness", "brightness", 3, 0, 8),
@@ -1382,6 +1431,21 @@ std::vector<NodeDef> build() {
                  "Each output channel is a mix of the input's red, green and blue (a 3 x 3 matrix)."});
     d.push_back({"Posterize", "Color", colorMask({Ch("channels", "channels", "rgb"), F("Colors", "colors", 10, 2, 64)}),
                  "Reduces each channel to that many levels."});
+    d.push_back({"MultiTone", "Color",
+                 colorMask({Ch("channels", "channels", "rgb"), C("blend", "blend", "replace", {"replace", "keep luminance", "overlay"}),
+                            Tip(C("axis", "positions are", "perceptual", {"perceptual", "linear"}),
+                                "perceptual: 0.5 is a mid grey (about 0.22 linear); linear: positions are linear light"),
+                            F("range_low", "brightness range", 0, -1, 4, "This brightness and below gets the first tone"),
+                            Same(F("range_high", "to", 1, 0, 100)),
+                            Div("shadows"), B("shadows_on", "on", true), Same(Col4("shadows_color", "colour", json::array({0.05, 0.08, 0.25, 1}))),
+                            F("shadows_pos", "position", 0, 0, 1),
+                            Div("midtones"), B("midtones_on", "on", true), Same(Col4("midtones_color", "colour", json::array({0.62, 0.36, 0.3, 1}))),
+                            F("midtones_pos", "position", 0.5, 0, 1),
+                            Div("highlights"), B("highlights_on", "on", true), Same(Col4("highlights_color", "colour", json::array({1, 0.95, 0.8, 1}))),
+                            F("highlights_pos", "position", 1, 0, 1),
+                            Div("extra"), B("extra_on", "on", false), Same(Col4("extra_color", "colour", json::array({0.3, 0.8, 0.7, 1}))),
+                            F("extra_pos", "position", 0.75, 0, 1)}),
+                 "Colours for shadows, midtones, highlights and an extra tone, each switchable, placed on the brightness axis."});
     d.push_back({"Toe", "Color", colorMask({Ch("channels", "channels", "rgb"), F("lift", "lift", 0, -0.5, 0.5)}),
                  "Lifts (or crushes) the blacks with a soft toe, leaving white where it is."});
     d.push_back({"RollOffContrast", "Color",

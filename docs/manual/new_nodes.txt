@@ -131,3 +131,9 @@ HeatWave
 Rain
 LensDroplets
 PowerRoto
+FilmBurn
+FilmBurnTransition
+LightLeak
+LightLeakDissolve
+Dust
+MultiTone

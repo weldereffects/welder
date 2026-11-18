@@ -1646,9 +1646,11 @@ int main(int argc, char** argv) {
             {{"name", "Two"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.8, 0.3, 1}}}}},
         });
         const std::vector<std::string> fx = {"GlitchBlocks", "Tear", "RGBSplit", "PixelSort", "CRT", "VHS", "Hologram", "BitCrush",
-                                             "SignalLoss", "WaveWarp", "Bulge", "SliceShift", "LCDScreen"};
-        const std::vector<std::string> tr = {"WipeTransition", "WarpTransition", "GlitchTransition", "PixelTransition", "ZoomTransition", "PushTransition"};
-        const std::vector<std::string> gen = {"Shape", "Bars", "BoxGrid", "Scatter", "Radar", "Waveform", "FlowLines", "PatternGrid", "NoisePattern", "CodeRain"};
+                                             "SignalLoss", "WaveWarp", "Bulge", "SliceShift", "LCDScreen", "FilmBurn", "Dust"};
+        const std::vector<std::string> tr = {"WipeTransition", "WarpTransition", "GlitchTransition", "PixelTransition", "ZoomTransition", "PushTransition",
+                                             "FilmBurnTransition", "LightLeakDissolve"};
+        const std::vector<std::string> gen = {"Shape", "Bars", "BoxGrid", "Scatter", "Radar", "Waveform", "FlowLines", "PatternGrid", "NoisePattern", "CodeRain",
+                                              "LightLeak"};
         for (auto& t : fx) nodes.push_back({{"name", t}, {"type", t}, {"inputs", {"Src"}}});
         for (auto& t : tr) {
             nodes.push_back({{"name", t}, {"type", t}, {"inputs", {"Src", "Two"}}, {"params", {{"timing", "progress"}, {"progress", 0.4}, {"ease", "linear"}}}});
@@ -1677,6 +1679,51 @@ int main(int argc, char** argv) {
             CHECK_NEAR(px(a0, 40, 30, "R"), px(src, 40, 30, "R"), 1e-5);
             CHECK_NEAR(px(a1, 40, 30, "G"), px(two, 40, 30, "G"), 1e-5);
         }
+    });
+
+    test("Film looks: FilmBurn burns with progress, Dust with nothing to add changes nothing, MultiTone maps tones", [] {
+        auto c = comp(json::array({
+            {{"name", "Src"}, {"type", "Ramp"}, {"params", {{"p0", {0, 0}}, {"p1", {96, 64}}, {"color0", {0.1, 0.2, 0.4, 1}}, {"color", {0.9, 0.5, 0.2, 1}}}}},
+            {{"name", "B0"}, {"type", "FilmBurn"}, {"inputs", {"Src"}}, {"params", {{"progress", 0}}}},
+            {{"name", "B1"}, {"type", "FilmBurn"}, {"inputs", {"Src"}}, {"params", {{"progress", 1}, {"hole", "black"}, {"glow", 0}}}},
+            {{"name", "Bh"}, {"type", "FilmBurn"}, {"inputs", {"Src"}}, {"params", {{"progress", 0.4}, {"hole", "transparent"}, {"glow", 0}, {"scale", 20}, {"edge_width", 3}, {"char_width", 6}}}},
+            {{"name", "D0"}, {"type", "Dust"}, {"inputs", {"Src"}}, {"params", {{"specks", 0}, {"hairs", 0}, {"scratches", 0}}}},
+            {{"name", "Dk"}, {"type", "Dust"}, {"inputs", {"Src"}}, {"params", {{"specks", 400}, {"size", 6}, {"hairs", 0}, {"scratches", 0}, {"opacity", 1}}}},
+            {{"name", "Gray"}, {"type", "Constant"}, {"params", {{"color", {0.2176, 0.2176, 0.2176, 1}}}}},
+            {{"name", "Blk"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 0, 1}}}}},
+            {{"name", "MT"}, {"type", "MultiTone"}, {"inputs", {"Gray"}}},
+            {{"name", "MTb"}, {"type", "MultiTone"}, {"inputs", {"Blk"}}},
+            {{"name", "MTk"}, {"type", "MultiTone"}, {"inputs", {"Gray"}}, {"params", {{"blend", "keep luminance"}}}},
+            {{"name", "MToff"}, {"type", "MultiTone"}, {"inputs", {"Gray"}},
+             {"params", {{"shadows_on", false}, {"midtones_on", false}, {"highlights_on", false}}}},
+        }), 96, 64);
+        auto src = render(*c, "Src");
+        auto b0 = render(*c, "B0"), b1 = render(*c, "B1"), bh = render(*c, "Bh"), d0 = render(*c, "D0"), dk = render(*c, "Dk");
+        double d = 0, dd = 0, darker = 0;
+        int holes = 0, kept = 0;
+        for (size_t i = 0; i < src->data.size(); ++i) {
+            d = std::max(d, (double)std::fabs(src->data[i] - b0->data[i]));
+            dd = std::max(dd, (double)std::fabs(src->data[i] - d0->data[i]));
+            darker += src->data[i] - dk->data[i];
+        }
+        CHECK_NEAR(d, 0.0, 1e-6);    // progress 0: untouched
+        CHECK_NEAR(dd, 0.0, 1e-6);   // no dust: untouched
+        CHECK(darker > 1);           // dark dust darkens
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 96; ++x) {
+                CHECK_NEAR(px(b1, x, y, "R"), 0, 1e-5);  // progress 1: all burned to black
+                if (px(bh, x, y, "A") < 1e-4) ++holes;
+                if (std::fabs(px(bh, x, y, "R") - px(src, x, y, "R")) < 1e-5) ++kept;
+            }
+        CHECK(holes > 0 && kept > 0);  // half way: some burned, some still the picture
+        auto mt = render(*c, "MT"), mtb = render(*c, "MTb"), mtk = render(*c, "MTk"), off = render(*c, "MToff");
+        CHECK_NEAR(px(mt, 5, 5, "R"), 0.62, 0.02);  // a mid grey (0.5 perceptual) sits on the midtone
+        CHECK_NEAR(px(mt, 5, 5, "B"), 0.3, 0.02);
+        CHECK_NEAR(px(mtb, 5, 5, "B"), 0.25, 1e-4);  // black gets the shadow
+        const float l = 0.2126f * px(mtk, 5, 5, "R") + 0.7152f * px(mtk, 5, 5, "G") + 0.0722f * px(mtk, 5, 5, "B");
+        CHECK_NEAR(l, 0.2176, 1e-3);  // keep luminance
+        CHECK(px(mtk, 5, 5, "R") > px(mtk, 5, 5, "B"));
+        CHECK_NEAR(px(off, 5, 5, "R"), 0.2176, 1e-6);  // every tone off: untouched
     });
 
     test("MoGraph: Shape covers what it should; GlitchBlocks at amount 0 and RGBSplit at 0 change nothing; Stutter holds", [] {

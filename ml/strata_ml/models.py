@@ -66,10 +66,35 @@ def _explain(err, m):
     if "gated" in low or "401" in low or "403" in low or "restricted" in low or "access to model" in low:
         return (f"Hugging Face refused the download: {m['repo']} is gated. Open {url} while logged in, accept the "
                 f"licence, then paste a Read token (huggingface.co/settings/tokens) into Welder's ML panel.")
-    if "no space" in low:
+    if "no space" in low or "os error 112" in low or "disk full" in low:
         return "Not enough disk space for the model."
+    if _xet_failed(err):
+        return ("The download broke off while writing to disk. Check there is room for the whole model on the "
+                "drive Welder keeps models on, then click Download again: finished files are kept.")
     tail = err.strip().splitlines()[-1] if err.strip() else "download failed"
     return tail
+
+
+def _xet_failed(err):
+    low = err.lower()
+    return "xet" in low or "reconstruction error" in low or "writer channel closed" in low
+
+
+def _run_download(ctx, args, env, dest, total, err_path):
+    with open(err_path, "w", encoding="utf-8") as err:
+        p = subprocess.Popen([sys.executable, "-c", _DOWNLOAD, json.dumps(args)], stdout=err, stderr=err, env=env,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        try:
+            while p.poll() is None:
+                have = _tree_size(dest)
+                ctx.progress(min(0.99, have / total), f"{have / 1e9:.1f} / {total / 1e9:.1f} GB")
+                time.sleep(1.0)
+        except BaseException:
+            p.kill()
+            p.wait()
+            raise
+    with open(err_path, encoding="utf-8", errors="replace") as f:
+        return p.returncode, f.read()
 
 
 def download(ctx, params):
@@ -95,21 +120,14 @@ def download(ctx, params):
     env = dict(os.environ)
     env.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
     err_path = os.path.join(ctx.jobdir, "download.err")
-    with open(err_path, "w", encoding="utf-8") as err:
-        p = subprocess.Popen([sys.executable, "-c", _DOWNLOAD, json.dumps(args)], stdout=err, stderr=err, env=env,
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        try:
-            while p.poll() is None:
-                have = _tree_size(dest)
-                ctx.progress(min(0.99, have / total), f"{have / 1e9:.1f} / {total / 1e9:.1f} GB")
-                time.sleep(1.0)
-        except BaseException:
-            p.kill()
-            p.wait()
-            raise
-    with open(err_path, encoding="utf-8", errors="replace") as f:
-        err_text = f.read()
-    if p.returncode != 0:
+    returncode, err_text = _run_download(ctx, args, env, dest, total, err_path)
+    if returncode != 0 and _xet_failed(err_text) and env.get("HF_HUB_DISABLE_XET") != "1":
+        # hf_xet's writer sometimes dies on very large files ("Background writer channel closed").
+        # Files already finished are kept; fetch the rest over plain HTTP, which resumes.
+        ctx.log("the Xet downloader failed; retrying over plain HTTP:\n" + err_text)
+        env["HF_HUB_DISABLE_XET"] = "1"
+        returncode, err_text = _run_download(ctx, args, env, dest, total, err_path)
+    if returncode != 0:
         ctx.log(err_text)
         raise RuntimeError(_explain(err_text, m))
     with open(os.path.join(dest, ".complete"), "w", encoding="utf-8") as f:

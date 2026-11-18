@@ -291,6 +291,66 @@ class PosterizeNode : public RGBOp {
     }
 };
 
+// ------------------------------------------------------------------ MultiTone
+// Up to four tones (shadows, midtones, highlights and an extra one), each with its own colour,
+// on/off switch and place on the brightness axis; the picture's brightness picks a colour
+// between the tones that are on (spread perceptually by default). "replace" puts those colours in, "keep luminance" keeps each
+// pixel's brightness with the tone's colour, "overlay" lays the tone colours over the picture.
+class MultiToneNode : public RGBOp {
+    Fn prepare(RenderArgs& a, const Image&) override {
+        const double f = a.frame;
+        struct Tone { float pos, c[3]; };
+        std::vector<Tone> tones;
+        static const char* names[4] = {"shadows", "midtones", "highlights", "extra"};
+        static const double defPos[4] = {0, 0.5, 1, 0.75};
+        static const std::array<double, 4> defCol[4] = {{0.05, 0.08, 0.25, 1}, {0.62, 0.36, 0.3, 1}, {1, 0.95, 0.8, 1}, {0.3, 0.8, 0.7, 1}};
+        static const bool defOn[4] = {true, true, true, false};
+        for (int i = 0; i < 4; ++i) {
+            const std::string n = names[i];
+            if (!params.flag(n + "_on", defOn[i])) continue;
+            const auto c = params.vec<4>(n + "_color", f, defCol[i]);
+            tones.push_back({(float)std::clamp(params.num(n + "_pos", f, defPos[i]), 0.0, 1.0), {(float)c[0], (float)c[1], (float)c[2]}});
+        }
+        if (tones.empty()) return nullptr;
+        std::stable_sort(tones.begin(), tones.end(), [](const Tone& x, const Tone& y) { return x.pos < y.pos; });
+        const float lo = (float)params.num("range_low", f, 0), hi = (float)params.num("range_high", f, 1);
+        const float span = std::max(1e-4f, hi - lo);
+        const std::string blend = params.str("blend", "replace");
+        const int mode = blend == "keep luminance" ? 1 : blend == "overlay" ? 2 : 0;
+        // perceptual: tone positions are spread like a display's brightness (0.5 is a mid grey
+        // of about 0.22 linear); linear: positions are linear light
+        const bool perceptual = params.str("axis", "perceptual") != "linear";
+        return [tones, lo, span, mode, perceptual](float* c, int, int) {
+            const float L = luma(c);
+            float t = std::clamp((L - lo) / span, 0.0f, 1.0f);
+            if (perceptual) t = std::pow(t, 1 / 2.2f);
+            float m[3];
+            if (t <= tones.front().pos) std::copy(tones.front().c, tones.front().c + 3, m);
+            else if (t >= tones.back().pos) std::copy(tones.back().c, tones.back().c + 3, m);
+            else {
+                size_t i = 1;
+                while (i < tones.size() && tones[i].pos < t) ++i;
+                const Tone &A = tones[i - 1], &B = tones[i];
+                float u = (t - A.pos) / std::max(1e-6f, B.pos - A.pos);
+                u = u * u * (3 - 2 * u);
+                for (int k = 0; k < 3; ++k) m[k] = A.c[k] + (B.c[k] - A.c[k]) * u;
+            }
+            if (mode == 1) {
+                const float ml = luma(m);
+                const float s = ml > 1e-5f ? L / ml : 0.0f;
+                for (int k = 0; k < 3; ++k) c[k] = ml > 1e-5f ? m[k] * s : L;
+            } else if (mode == 2) {
+                for (int k = 0; k < 3; ++k) {
+                    const float b = c[k];
+                    c[k] = b < 0.5f ? 2 * b * m[k] : 1 - 2 * (1 - b) * (1 - m[k]);
+                }
+            } else {
+                for (int k = 0; k < 3; ++k) c[k] = m[k];
+            }
+        };
+    }
+};
+
 // ------------------------------------------------------------------ Toe
 // Lifts the blacks with a soft toe: black goes to `lift`, white and above stay put.
 class ToeNode : public RGBOp {
@@ -687,6 +747,7 @@ void registerColorExtraNodes() {
     r.add("SoftClip", [] { return std::make_unique<SoftClipNode>(); });
     r.add("ColorMatrix", [] { return std::make_unique<ColorMatrixNode>(); });
     r.add("Posterize", [] { return std::make_unique<PosterizeNode>(); });
+    r.add("MultiTone", [] { return std::make_unique<MultiToneNode>(); });
     r.add("Toe", [] { return std::make_unique<ToeNode>(); });
     r.add("RollOffContrast", [] { return std::make_unique<RollOffContrastNode>(); });
     r.add("CrossTalk", [] { return std::make_unique<CrossTalkNode>(); });
