@@ -28,6 +28,7 @@
 #include "nodes/Sample.h"
 #include "nodes/Roto.h"
 #include "nodes/PowerRoto.h"
+#include "nodes/Markup.h"
 #include "nodes/Track.h"
 #include "nodes/Planar.h"
 #include "nodes/Retime.h"
@@ -2198,6 +2199,58 @@ int main(int argc, char** argv) {
         auto ct = curveToolFrame(e, c->find("CT"), 1);
         CHECK(ct.contains("crop") && ct["crop"][0].get<int>() == 30 && ct["crop"][3].get<int>() == 24);
         CHECK(ct["max"][0].get<double>() == 30.5);
+    });
+
+    test("Markup: strokes, boxes, circles and text over the input; moving; half resolution", [] {
+        json items = json::array({
+            {{"name", "Stroke1"}, {"kind", "stroke"}, {"points", {{5, 10}, {30, 10}}}, {"width", 4}, {"color", {1, 0, 0, 1}}},
+            {{"name", "Box1"}, {"kind", "box"}, {"rect", {35, 5, 55, 25}}, {"width", 2}, {"color", {0, 1, 0, 1}}},
+            {{"name", "Circle1"}, {"kind", "circle"}, {"rect", {5, 25, 25, 45}}, {"width", 2}, {"fill", true}, {"color", {0, 0, 1, 1}}},
+            {{"name", "Text1"}, {"kind", "text"}, {"pos", {35, 46}}, {"text", "W"}, {"size", 16}, {"color", {1, 1, 1, 1}}},
+            {{"name", "Hidden"}, {"kind", "box"}, {"rect", {0, 0, 64, 48}}, {"fill", true}, {"visible", false}},
+        });
+        auto c = comp(json::array({
+            {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.2, 0.2, 1}}}}},
+            {{"name", "M"}, {"type", "Markup"}, {"inputs", {"Bg"}}, {"params", {{"items", items}}}},
+            {{"name", "Half"}, {"type", "Markup"}, {"inputs", {"Bg"}}, {"params", {{"items", items}, {"opacity", 0.5}}}},
+        }));
+        auto m = render(*c, "M");
+        CHECK_NEAR(px(m, 15, 10, "R"), 1, 1e-4);   // on the stroke
+        CHECK_NEAR(px(m, 15, 10, "G"), 0, 1e-4);
+        CHECK_NEAR(px(m, 15, 15, "R"), 0.2, 1e-4); // off it: the background
+        CHECK_NEAR(px(m, 35, 15, "G"), 1, 1e-4);   // the box's left edge
+        CHECK_NEAR(px(m, 45, 15, "G"), 0.2, 1e-4); // not filled
+        CHECK_NEAR(px(m, 15, 35, "B"), 1, 1e-4);   // the filled circle
+        CHECK_NEAR(px(m, 2, 46, "B"), 0.2, 1e-4);  // outside it
+        double ink = 0;
+        for (int y = 26; y < 48; ++y)
+            for (int x = 34; x < 60; ++x) ink += px(m, x, y, "R") - 0.2;
+        CHECK(ink > 5);  // the text drew
+        CHECK_NEAR(px(m, 60, 2, "R"), 0.2, 1e-6);  // the hidden box didn't
+        auto h = render(*c, "Half");
+        CHECK_NEAR(px(h, 15, 10, "R"), 0.6, 1e-4);  // opacity 0.5 over 0.2
+        // bounds and moving
+        auto b = markup::itemBounds(items[1]);
+        CHECK_NEAR(b[0], 33, 1e-9);
+        CHECK_NEAR(b[3], 27, 1e-9);
+        json moved = items[0];
+        markup::moveItem(moved, 3, -2);
+        CHECK_NEAR(moved["points"][1][0].get<double>(), 33, 1e-9);
+        CHECK_NEAR(moved["points"][1][1].get<double>(), 8, 1e-9);
+        json t = items[3];
+        markup::moveItem(t, 1, 1);
+        CHECK_NEAR(t["pos"][0].get<double>(), 36, 1e-9);
+        // at half resolution everything halves
+        auto s = renderScaled(*c, "M", 0.5);
+        CHECK(px(s, 7, 5, "R") > 0.9f);
+        CHECK(px(s, 22, 7, "B") < 0.3f);
+        CHECK(px(s, 7, 17, "B") > 0.9f);
+        // tiles give the same picture as one render
+        auto m8 = render(*c, "M", 1, 16);
+        double d = 0;
+        for (size_t i = 0; i < m->data.size(); ++i) d = std::max(d, (double)std::fabs(m->data[i] - m8->data[i]));
+        CHECK_NEAR(d, 0.0, 1e-6);
+        CHECK(markup::newItemName(items, "box") == "Box2");
     });
 
     test("SplineWarp: the A curve's picture moves onto the B curve", [] {
@@ -4811,6 +4864,70 @@ int main(int argc, char** argv) {
         CHECK(s0.models.size() == 1 && s0.models[0] == "video-depth-anything-small");
         ml::setHome("");
     });
+    test("ML CorridorKey node: the keyed result (premultiplied, straight, plate + matte, matte views); the job it asks for", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_ck";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 64, H = 48;
+        // the worker's rgba at half size: fg (0.8, 0.4, 0.2), matte 0 in the top half, 0.5 in the bottom
+        std::vector<float> k((W / 2) * (H / 2) * 4);
+        for (int y = 0; y < H / 2; ++y)
+            for (int x = 0; x < W / 2; ++x) {
+                float* p = &k[((size_t)y * (W / 2) + x) * 4];
+                p[0] = 0.8f, p[1] = 0.4f, p[2] = 0.2f, p[3] = y < H / 4 ? 0.0f : 0.5f;  // rows top first
+            }
+        auto d = home / "jobs" / "ck-a";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}, {"progress", 1}, {"message", "ok"}}.dump();
+        std::ofstream(d / "result.json") << json{{"outputs", {{"rgba", {{"frames", {1}}, {"width", W / 2}, {"height", H / 2}}}}}, {"straight", true}}.dump();
+        CHECK(ml::writeNpy((d / "out" / "rgba.1.npy").string(), k.data(), W / 2, H / 2, 4, true));
+        auto ckNode = [](const char* name, json params) {
+            params["ml"] = {{"main", {{"result", "ck-a"}}}};
+            return json{{"name", name}, {"type", "CorridorKey"}, {"inputs", {"K"}}, {"params", params}};
+        };
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.1, 0.6, 0.1, 1}}}}},
+                                   ckNode("CK", json::object()), ckNode("CS", {{"premultiply", false}}),
+                                   ckNode("CP", {{"view", "plate + matte"}}), ckNode("CM", {{"view", "matte"}}),
+                                   {{"name", "C0"}, {"type", "CorridorKey"}, {"inputs", {"K"}}}}),
+                     W, H);
+        // Welder's row 0 is the bottom: the npy's last rows (matte 0.5)
+        auto r = render(*c, "CK");
+        CHECK_NEAR(px(r, 10, 2, "A"), 0.5, 1e-3);
+        CHECK_NEAR(px(r, 10, 2, "R"), 0.4, 1e-3);  // premultiplied
+        CHECK_NEAR(px(r, 10, H - 2, "A"), 0, 1e-3);
+        CHECK_NEAR(px(r, 10, H - 2, "R"), 0, 1e-3);
+        auto st = render(*c, "CS");
+        CHECK_NEAR(px(st, 10, 2, "R"), 0.8, 1e-3);  // straight
+        CHECK_NEAR(px(st, 10, 2, "B"), 0.2, 1e-3);
+        auto pm = render(*c, "CP");
+        CHECK_NEAR(px(pm, 10, 2, "G"), 0.6, 1e-3);  // the plate, only the alpha replaced
+        CHECK_NEAR(px(pm, 10, 2, "A"), 0.5, 1e-3);
+        auto mt = render(*c, "CM");
+        CHECK_NEAR(px(mt, 10, 2, "G"), 0.5, 1e-3);
+        CHECK_NEAR(px(mt, 10, H - 2, "G"), 0, 1e-3);
+        auto n = render(*c, "C0");  // nothing keyed yet: the plate passes through
+        CHECK_NEAR(px(n, 10, 10, "G"), 0.6, 1e-5);
+        CHECK_NEAR(px(n, 10, 10, "A"), 1, 1e-5);
+        Engine e;
+        auto* ck = dynamic_cast<mlnodes::MLNode*>(c->find("C0"));
+        CHECK(ck != nullptr);
+        if (ck) {
+            auto s = ck->spec("main", e);
+            CHECK(s.task == "corridorkey");
+            CHECK(s.models.size() == 1 && s.models[0] == "corridorkey-2");
+            CHECK(s.inputs.size() == 2 && s.inputs[0].name == "src" && s.inputs[0].required && s.inputs[1].name == "hint" &&
+                  !s.inputs[1].required);
+            CHECK(s.params.value("hint_frames", std::string()) == "every frame");
+            CHECK(s.params.value("window", -1) == 0);
+            CHECK_NEAR(s.params.value("despill", 0.0), 0.5, 1e-9);
+            CHECK(s.params.contains("fps"));
+            CHECK(s.error.empty());
+            const json& reg = ml::registry();
+            if (reg.contains("models")) CHECK(reg["models"].contains("corridorkey-2"));
+        }
+        ml::setHome("");
+    });
     test("TrackMask: clicks to the worker's coordinates, the matte in alpha (grow / soften / invert), current vs old results", [] {
         auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm";
         std::filesystem::remove_all(home);
@@ -6157,6 +6274,27 @@ int main(int argc, char** argv) {
             }
         std::printf("  fast vs sample(): worst %.2g\n", worst);
         CHECK(worst < 1e-5);
+    });
+    test("Write: a new Write's file defaults to the comp's name, and stays editable", [] {
+        auto c = comp(json::array(), 64, 64);
+        CHECK(c->defaultWriteFile().empty());  // unsaved: no name to take
+        c->scriptPath = "/shows/tgu/TGU_001_0069/comp/TGU_001_0069_comp_CAD_v006.weld";
+        c->baseDir = "/shows/tgu/TGU_001_0069/comp";
+        const std::string f = c->defaultWriteFile();
+        CHECK(f == "TGU_001_0069_comp_CAD_v006.####.exr");
+        CHECK(std::filesystem::path(c->resolvePath(f)) ==
+              std::filesystem::path("/shows/tgu/TGU_001_0069/comp") / "TGU_001_0069_comp_CAD_v006.####.exr");
+        Node* w = c->addNode("Write", "Write1", {{"file", f}});
+        w->init();
+        // picking another file type keeps the comp's name, swaps the extension
+        w->params.data["file_type"] = "dpx";
+        w->paramsChanged();
+        CHECK(w->params.str("file") == "TGU_001_0069_comp_CAD_v006.####.dpx");
+        // any part of it can be typed over
+        w->params.data["file"] = "renders/TGU_001_0069_comp_CAD_v006_denoise.####.exr";
+        w->paramsChanged();
+        CHECK(w->params.str("file") == "renders/TGU_001_0069_comp_CAD_v006_denoise.####.exr");
+        CHECK(w->params.str("file_type") == "exr");
     });
     test("Slate: the gizmo's lines from the script, the thumbnail in its hole, fitted to the input", [] {
         const int W = 1152, H = 791;  // a 4608 x 3164 plate's shape, smaller

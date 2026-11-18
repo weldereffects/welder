@@ -510,6 +510,10 @@ void createNode(App& app, UiState& ui, const std::string& type, const json& para
         params0["size"] = std::round(w * 0.22);
         params0["feather"] = std::round(w * 0.06);
     }
+    if (type == "Write" && !params0.contains("file") && app.comp) {  // a new Write is named after the comp
+        const std::string f = app.comp->defaultWriteFile();
+        if (!f.empty()) params0["file"] = f;
+    }
     if (type == "Copy" && !params0.contains("from") && !params0.contains("layer_copy")) {  // a new Copy copies the alpha
         params0["from"] = json::array({"A"});
         params0["to"] = json::array({"A"});

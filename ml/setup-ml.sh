@@ -2,6 +2,7 @@
 # Welder ML setup (Linux): the Python environments the ML worker runs in.
 #   venv        Python 3.12, PyTorch 2.8 (CUDA 12.8): LTX-2.5, Alpha Gen, MapAnything, NeRF
 #   venv-splat  Python 3.10, PyTorch 2.4 (CUDA 12.4) with gsplat's prebuilt kernels: Gaussian splats
+#   venv-corridorkey  Python 3.12, PyTorch 2.9.1 (CUDA 12.8): CorridorKey (it pins numpy < 2, transformers < 5)
 # Usage: setup-ml.sh [ml home]   (default ~/.local/share/welder/ml)
 set -e
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -20,23 +21,31 @@ if ! command -v uv >/dev/null 2>&1; then
         PATH="$HOME/.local/bin:$PATH"
     fi
 fi
-echo "[1/5] Python 3.12 environment"
+echo "[1/6] Python 3.12 environment"
 uv venv --python 3.12 --allow-existing "$MLHOME/venv"
 PY="$MLHOME/venv/bin/python"
-echo "[2/5] PyTorch 2.8 (CUDA 12.8)"
+echo "[2/6] PyTorch 2.8 (CUDA 12.8)"
 uv pip install --python "$PY" torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
-echo "[3/5] LTX-2.5 pipelines, MapAnything and the rest"
+echo "[3/6] LTX-2.5 pipelines, MapAnything and the rest"
 uv pip install --python "$PY" --no-sources -r "$HERE/requirements.txt"
 cp "$HERE/requirements.txt" "$MLHOME/requirements-installed.txt"   # Welder offers "Update ML" when a newer one differs
-echo "[4/5] Gaussian splat environment (Python 3.10, PyTorch 2.4, CUDA 12.4)"
+echo "[4/6] Gaussian splat environment (Python 3.10, PyTorch 2.4, CUDA 12.4)"
 if uv venv --python 3.10 --allow-existing "$MLHOME/venv-splat" &&
    uv pip install --python "$MLHOME/venv-splat/bin/python" torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124 &&
    uv pip install --python "$MLHOME/venv-splat/bin/python" "numpy<2" opencv-python-headless pillow ninja jaxtyping rich packaging setuptools &&
-   echo "[5/5] gsplat" &&
+   echo "[5/6] gsplat" &&
    uv pip install --python "$MLHOME/venv-splat/bin/python" --no-deps "gsplat==1.5.3+pt24cu124" --index-url https://docs.gsplat.studio/whl
 then :
 else
     echo "The Gaussian splat environment could not be set up: GaussianSplat will use the slower PyTorch rasteriser."
+fi
+echo "[6/6] CorridorKey environment (Python 3.12, PyTorch 2.9.1, CUDA 12.8)"
+if uv venv --python 3.12 --allow-existing "$MLHOME/venv-corridorkey" &&
+   uv pip install --python "$MLHOME/venv-corridorkey/bin/python" torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128 &&
+   uv pip install --python "$MLHOME/venv-corridorkey/bin/python" -r "$HERE/requirements-corridorkey.txt"
+then :
+else
+    echo "The CorridorKey environment could not be set up: the CorridorKey node won't run. Everything else is ready."
 fi
 echo ok > "$MLHOME/setup-ok.txt"
 echo "Done. Welder starts the ML worker when a node needs it."

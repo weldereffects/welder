@@ -2,6 +2,7 @@
 rem Welder ML setup: the Python environments the ML worker runs in.
 rem   venv        Python 3.12, PyTorch 2.8 (CUDA 12.8): LTX-2.5, Alpha Gen, MapAnything, NeRF
 rem   venv-splat  Python 3.10, PyTorch 2.4 (CUDA 12.4) with gsplat's prebuilt kernels: Gaussian splats
+rem   venv-corridorkey  Python 3.12, PyTorch 2.9.1 (CUDA 12.8): CorridorKey (it pins numpy < 2, transformers < 5)
 rem Usage: setup-ml.bat [ml home]    (Welder's "Set up ML" button runs this for you)
 setlocal EnableExtensions
 set "MLHOME=%~1"
@@ -13,7 +14,7 @@ echo.
 echo  Welder ML setup
 echo  ---------------
 echo  Installs into: %MLHOME%
-echo  Needs an NVIDIA GPU with a current driver and about 15 GB of disk.
+echo  Needs an NVIDIA GPU with a current driver and about 20 GB of disk.
 echo  The models themselves are downloaded later, from each node's panel.
 echo.
 if not exist "%MLHOME%" mkdir "%MLHOME%"
@@ -43,7 +44,7 @@ set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 :haveuv
 
 echo.
-echo [1/5] Python 3.12 environment
+echo [1/6] Python 3.12 environment
 rem an environment that's there is kept: re-creating it replaces python.exe, which a running worker holds
 if exist "%MLHOME%\venv\Scripts\python.exe" (
   echo already there: kept
@@ -54,19 +55,19 @@ if exist "%MLHOME%\venv\Scripts\python.exe" (
 set "PY=%MLHOME%\venv\Scripts\python.exe"
 
 echo.
-echo [2/5] PyTorch 2.8 with CUDA 12.8 (about 3 GB)
+echo [2/6] PyTorch 2.8 with CUDA 12.8 (about 3 GB)
 call uv pip install --python "%PY%" torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 if errorlevel 1 goto :fail
 
 echo.
-echo [3/5] LTX-2.5 pipelines, MapAnything and the rest
+echo [3/6] LTX-2.5 pipelines, MapAnything and the rest
 call uv pip install --python "%PY%" --no-sources -r "%HERE%requirements.txt"
 if errorlevel 1 goto :fail
 rem what was installed: Welder compares it with a newer requirements.txt and offers "Update ML"
 copy /y "%HERE%requirements.txt" "%MLHOME%\requirements-installed.txt" >nul
 
 echo.
-echo [4/5] Gaussian splat environment: Python 3.10 + PyTorch 2.4 (CUDA 12.4)
+echo [4/6] Gaussian splat environment: Python 3.10 + PyTorch 2.4 (CUDA 12.4)
 if exist "%MLHOME%\venv-splat\Scripts\python.exe" (
   echo already there: kept
 ) else (
@@ -81,7 +82,7 @@ call uv pip install --python "%SPY%" "numpy<2" opencv-python-headless pillow nin
 if errorlevel 1 goto :splatfail
 
 echo.
-echo [5/5] gsplat (prebuilt CUDA kernels)
+echo [5/6] gsplat (prebuilt CUDA kernels)
 call uv pip install --python "%SPY%" --no-deps "gsplat==1.5.3+pt24cu124" --index-url https://docs.gsplat.studio/whl
 if errorlevel 1 goto :splatfail
 
@@ -89,12 +90,33 @@ echo.
 echo Checking the splat environment loads ...
 "%SPY%" -c "import sys; sys.path.insert(0, r'%HERE%.'); from strata_ml.winfix import fix_torch_openmp; print(fix_torch_openmp() or 'ok'); import torch, gsplat; print('torch', torch.__version__, 'CUDA', torch.cuda.is_available(), 'gsplat', gsplat.__version__)"
 if errorlevel 1 goto :splatfail
-goto :done
+goto :corridorkey
 
 :splatfail
 echo.
 echo  The Gaussian splat environment could not be set up. GaussianSplat will still train,
 echo  with a much slower PyTorch rasteriser. Everything else is ready.
+
+:corridorkey
+echo.
+echo [6/6] CorridorKey environment: Python 3.12 + PyTorch 2.9.1 (CUDA 12.8)
+if exist "%MLHOME%\venv-corridorkey\Scripts\python.exe" (
+  echo already there: kept
+) else (
+  call uv venv --python 3.12 "%MLHOME%\venv-corridorkey"
+  if errorlevel 1 goto :ckfail
+)
+set "CPY=%MLHOME%\venv-corridorkey\Scripts\python.exe"
+call uv pip install --python "%CPY%" torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
+if errorlevel 1 goto :ckfail
+call uv pip install --python "%CPY%" -r "%HERE%requirements-corridorkey.txt"
+if errorlevel 1 goto :ckfail
+goto :done
+
+:ckfail
+echo.
+echo  The CorridorKey environment could not be set up: the CorridorKey node won't run.
+echo  Everything else is ready. Run "Set up ML" again to retry.
 
 :done
 echo ok> "%MLHOME%\setup-ok.txt"

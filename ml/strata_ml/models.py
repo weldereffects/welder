@@ -84,6 +84,12 @@ def download(ctx, params):
         return {"message": f"already installed in {find_model(ctx.home, model_id)}"}
     total = float(m.get("size_gb", 1.0)) * 1e9
     token = hf_token(ctx.home)
+    if m.get("installer") == "corridorkey":  # its code from GitHub, then its own download script
+        from .tasks.corridorkey import install
+        install(ctx, m, dest, token)
+        with open(os.path.join(dest, ".complete"), "w", encoding="utf-8") as f:
+            json.dump({"repo": m["repo"], "commit": m.get("code", {}).get("commit"), "time": time.time()}, f)
+        return {"message": f"downloaded {m['label']}"}
     args = {"repo": m["repo"], "files": m.get("files", []), "snapshot": bool(m.get("snapshot")), "dir": dest, "token": token}
     ctx.log(f"downloading {m['repo']} -> {dest}")
     env = dict(os.environ)

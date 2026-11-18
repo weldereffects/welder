@@ -3174,6 +3174,12 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
         for (auto& k : def->knobs) shown.insert(k.name);
         drawRotoPanel(app, ui, n);
         shown.insert("shapes");
+    } else if (n->type == "Markup" && def) {
+        drawMarkupPanel(app, ui, n);
+        ImGui::SeparatorText("Node");
+        drawKnobs(c, *def, mainTabKey);
+        for (auto& k : def->knobs) shown.insert(k.name);
+        shown.insert("items");
     } else if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "PowerRoto") {
         drawRotoPanel(app, ui, n);
         for (const char* k : {"shapes", "output", "premultiply", "motionblur", "shutter", "shutter_offset", "clip_to", "replace"}) shown.insert(k);

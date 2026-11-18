@@ -12,6 +12,7 @@ working, and the node shows the result when it's ready.
 | **GaussianSplat** | Trains Gaussian splats from a plate and its camera, refining the camera as it trains. Outputs splats for **SplatRender** and the 3D view, plus the refined camera. | none (trained per shot) |
 | **Reconstruct** | One pass of MapAnything gives every frame's camera (pose and focal), a depth.Z pass and a coloured point cloud. No training: it's a generalizable model. | MapAnything (Apache 2.0 weights) |
 | **Depth** | Video Depth Anything: depth for the whole shot that stays steady from frame to frame (no flicker), as depth.Z. Relative (the scene's shape) or metric (metres). Splits a cut sequence at its cuts. | Video Depth Anything Small (Apache 2.0); Base / Large (non-commercial) |
+| **CorridorKey** | CorridorKey 2.0 by Corridor Digital: AI green / blue screen keying that looks at the whole clip, so the matte holds steady and hair, motion blur and glass keep their real colour. An optional hint input (a rough matte) steers it. Outputs the despilled foreground with its matte. | CorridorKey 2.0 (its own licence: free to use on commercial work, not for resale) |
 | **TrackMask** | Track and mask: click an object on a frame (Shift+click what isn't it, or drag a box) and SAM 2.1 masks it, then follows it through the shot. The matte goes in alpha. | SAM 2.1 (Apache 2.0) |
 | **NeRF** | A NeRF of the shot, trained with joint camera optimisation. **Train**, then **Render** through any camera. | none (trained per shot) |
 
@@ -23,13 +24,15 @@ Two 3D nodes work without the worker:
 ## Setting up (once)
 
 1. Open any AI node's properties. The **ML** section shows the worker.
-2. Click **Set up ML**. A console window builds two Python environments in
-   `%LOCALAPPDATA%\Welder\ml`. This needs about 15 GB of disk, a current
+2. Click **Set up ML**. A console window builds three Python environments in
+   `%LOCALAPPDATA%\Welder\ml`. This needs about 20 GB of disk, a current
    NVIDIA driver and an internet connection. It installs:
    * `venv`: Python 3.12 and PyTorch 2.8 (CUDA 12.8), with Lightricks' LTX-2
      pipelines and MapAnything.
    * `venv-splat`: Python 3.10 and PyTorch 2.4 (CUDA 12.4), with gsplat's
      prebuilt CUDA kernels for fast splat training.
+   * `venv-corridorkey`: Python 3.12 and PyTorch 2.9.1 (CUDA 12.8) for
+     CorridorKey, which needs older numpy and transformers than the others.
 
    It installs [uv](https://astral.sh/uv) to do this if you don't have it. Run
    it again any time: finished steps are kept.
@@ -314,6 +317,37 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
 * Unlike running the single-image Depth Anything frame by frame, the video model ties
   frames together, so an effect driven by this depth doesn't flicker.
 
+### CorridorKey
+* **Inputs:** src (the green or blue screen plate) and, optionally, **hint**: a rough
+  matte, white = keep (a quick Keylight, a garbage roto, an AlphaGen). Without a hint,
+  CorridorKey picks the subject itself. **Key** runs the frame range.
+* **view: keyed** is CorridorKey's despilled foreground with its matte (premultiplied
+  unless you turn **premultiply** off). **plate + matte** keeps your plate and only
+  replaces the alpha, for when you want to despill your own way. **matte** shows the
+  alpha in RGB.
+* **despill** (0.5) is how much screen colour it takes out of the foreground.
+* **use hint**: every frame (a hint per frame), first frame (only frame one steers it,
+  then it carries its own matte forward), or none. **hint from**: the hint input's
+  alpha or its luminance. **hint trust**: 0.95 for a good matte, 0.75 for a rough
+  automatic one, 0.5 or less for a scribble.
+* **frames at once** (0 = automatic): CorridorKey looks at this many frames together.
+  More is steadier and takes more GPU memory. Automatic picks the most that fit the
+  GPU's free memory: on a 24 GB card about 48 frames at 1080p and 8 at 4K. With a
+  number set, **low VRAM** gives the same result with far less memory, slower.
+* **max size** (0 = the plate's size) keys smaller frames for a quick look; the
+  result is scaled back up.
+* Welder sends the plate as scene-linear (linear Rec.709) EXR frames and reads back
+  scene-linear EXRs, so values above 1 survive. It doesn't convert log or wide-gamut
+  plates for CorridorKey beyond that: linearise them first, as the working space does.
+* **Needs:** an NVIDIA RTX 30-series or newer (CUDA), and `venv-corridorkey` (the
+  panel says **Update ML** when it's missing).
+* **It isn't part of Welder.** Its licence can't be bundled with Welder's AGPL, so
+  **Download** (about 5 GB) fetches CorridorKey's own code from Corridor Digital's
+  GitHub (at the commit Welder was tested with) and runs its `download_weights.py`,
+  which gets its weights and the C-RADIOv4, MoGe-2 and RVM models from their
+  publishers, into `ml\models\corridorkey-2`. To install it by hand, see that
+  folder's `PUT_FILES_HERE.txt`.
+
 ### TrackMask
 * **Input:** src. Open its properties and view it: the viewer's tools are on.
   * **click** a point on the object; **Shift+click** a point that isn't it (a background
@@ -362,6 +396,7 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
 | Video Depth Anything code (bundled in `ml/strata_ml/vendor`) | Apache 2.0 |
 | SAM 2.1 checkpoints (`facebook/sam2.1-hiera-*`) and code (bundled in `ml/strata_ml/vendor/sam2pkg`) | Apache 2.0 |
 | gsplat | Apache 2.0 |
+| CorridorKey 2.0 (code and weights, `nikopueringer/CorridorKey2.0`) | Corridor Key Licence 2.0 (CC BY-NC-SA 4.0 plus additional terms): free to use for any lawful purpose including commercial projects, and what you make with it is yours. You may not resell or repackage it, or sell inference with it as a paid API; companies with more than US $20M annual revenue need a seat per user. Credit it as "CorridorKey". Its foundation models: C-RADIOv4-SO400M (NVIDIA Open Model License), MoGe-2 (MIT), RVM (CC-BY 4.0) |
 
-Welder ships none of these weights. They download from Hugging Face on your
-machine, under your acceptance of their terms.
+Welder ships none of these weights (nor CorridorKey's code). They download from
+Hugging Face (and GitHub, for CorridorKey) on your machine, under your acceptance of their terms.

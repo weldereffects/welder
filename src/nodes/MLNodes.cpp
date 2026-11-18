@@ -527,6 +527,62 @@ public:
     }
 };
 
+// ================================================================= CorridorKey
+// CorridorKey 2.0 (Corridor Digital): an AI green / blue screen keyer that sees the whole clip, so
+// the matte holds steady and soft edges keep their real colour. The worker writes "rgba": the
+// despilled foreground (straight, linear) and its matte. An optional hint input (a rough matte,
+// white = keep) steers it. CorridorKey isn't part of Welder: the model download fetches it from
+// Corridor Digital's repository, under its own licence (ml/strata_ml/tasks/corridorkey.py).
+class CorridorKeyNode : public MLNode {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 1 ? "hint" : "src"; }
+    bool timeDependent() const override { return true; }
+    std::string slotLabel(const std::string&) const override { return "Key"; }
+    int identityInput(double) override { return result("main").empty() ? 0 : -1; }
+    ChannelSet channels(Engine& e, double f) override { return inputChannels(e, input(0), f, {}); }
+    void render(RenderArgs& a, Image& out) override {
+        copyInput(a, out, input(0));
+        Image k(a.region, {"R", "G", "B", "A"});
+        if (!fillFromOutput(a, k, "main", "rgba", {{0, 0}, {1, 1}, {2, 2}, {3, 3}})) return;
+        const std::string view = params.str("view", "keyed");
+        const bool premult = params.flag("premultiply", true);
+        const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B"), A = out.ch("A");
+        for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int x = a.region.x1; x < a.region.x2; ++x) {
+                const float* kp = k.px(x, y);
+                const float m = std::clamp(kp[3], 0.0f, 1.0f);
+                float* p = out.px(x, y);
+                float rgb[3] = {kp[0], kp[1], kp[2]};
+                if (view == "matte") rgb[0] = rgb[1] = rgb[2] = m;
+                else if (view == "plate + matte") {  // the original plate, only the alpha replaced
+                    rgb[0] = R >= 0 ? p[R] : 0;
+                    rgb[1] = G >= 0 ? p[G] : 0;
+                    rgb[2] = B >= 0 ? p[B] : 0;
+                } else if (premult)
+                    for (float& c : rgb) c *= m;
+                if (R >= 0) p[R] = rgb[0];
+                if (G >= 0) p[G] = rgb[1];
+                if (B >= 0) p[B] = rgb[2];
+                if (A >= 0) p[A] = m;
+            }
+    }
+    JobSpec spec(const std::string&, Engine& e) override {
+        JobSpec s;
+        s.task = "corridorkey";
+        s.inputs = {{"src", 0, true}, {"hint", 1, false}};
+        auto [a, b] = range(e);
+        s.first = a;
+        s.last = b;
+        s.params = pick(params, {{"max_size", 0}, {"despill", 0.5}, {"hint_frames", "every frame"}, {"hint_channel", "alpha"},
+                                 {"hint_quality", 0.95}, {"carry_hint", true}, {"window", 0}, {"low_vram", false}});
+        s.params["fps"] = comp ? comp->fps : 24.0;
+        s.models = {"corridorkey-2"};
+        if (!input(0)) s.error = "connect the src input";
+        return s;
+    }
+};
+
 // ================================================================= TrackMask
 // Click an object (or drag a box round it) on a frame; SAM 2.1 masks it and follows it through
 // the shot. The clicks ("prompts": [{frame, points: [[x, y, 1 object / 0 not it]], box}], full-res
@@ -777,6 +833,7 @@ void registerMLNodes() {
     r.add("GaussianSplat", [] { return std::make_unique<mlnodes::GaussianSplatNode>(); });
     r.add("Reconstruct", [] { return std::make_unique<mlnodes::ReconstructNode>(); });
     r.add("Depth", [] { return std::make_unique<mlnodes::DepthNode>(); });
+    r.add("CorridorKey", [] { return std::make_unique<mlnodes::CorridorKeyNode>(); });
     r.add("TrackMask", [] { return std::make_unique<mlnodes::TrackMaskNode>(); });
     r.add("NeRF", [] { return std::make_unique<mlnodes::NeRFNode>(); });
 }

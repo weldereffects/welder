@@ -604,6 +604,10 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ImGui::SetCursorPosX(8);
         drawRotoToolbar(app, ui);
     }
+    if (active && activeMarkup(app)) {
+        ImGui::SetCursorPosX(8);
+        drawMarkupToolbar(app, ui);
+    }
 
     // ---- image area
     const float infoH = ImGui::GetFrameHeight() + 4;
@@ -868,6 +872,10 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     if (v.overlays && activeFlowField(app)) {
         ViewXf xf{center, v.pan, v.zoom};
         drawFlowPaintViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+    }
+    if (active && v.overlays && activeMarkup(app)) {
+        ViewXf xf{center, v.pan, v.zoom};
+        drawMarkupViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
     if (v.overlays && activeTrackMask(app)) {
         ViewXf xf{center, v.pan, v.zoom};

@@ -413,4 +413,11 @@ std::string Comp::resolvePath(const std::string& p) const {
     return (base / fp).string();
 }
 
+std::string Comp::defaultWriteFile() const {
+    if (scriptPath.empty()) return "";
+    std::string stem = std::filesystem::path(scriptPath).stem().string();
+    if (stem.empty()) return "";
+    return stem + ".####.exr";
+}
+
 }  // namespace strata

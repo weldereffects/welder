@@ -97,7 +97,10 @@ void workerSection(App& app, const std::string& needPkg) {
         if (ImGui::SmallButton("stop")) ml::stopWorker();
         if (!needPkg.empty() && needPkg != "gsplat" && w.packages.is_object() && !w.packages.value(needPkg, false)) {
             label("");
-            ImGui::TextColored(kBad, "the worker's Python has no '%s': click Update ML", needPkg.c_str());
+            if (needPkg == "corridorkey_env")
+                ImGui::TextColored(kBad, "CorridorKey's Python environment isn't set up: click Update ML");
+            else
+                ImGui::TextColored(kBad, "the worker's Python has no '%s': click Update ML", needPkg.c_str());
         }
     } else if (ml::pythonPath().empty()) {
         ImGui::TextColored(kWarn, "not set up");
@@ -275,6 +278,7 @@ void drawMLPanel(App& app, UiState& ui, Node* n) {
                       : n->type == "Depth"                      ? "einops"
                       : n->type == "TrackMask"                  ? "hydra"
                       : n->type == "GaussianSplat"              ? "gsplat"
+                      : n->type == "CorridorKey"                ? "corridorkey_env"
                                                                 : "";
     workerSection(app, pkg);
 

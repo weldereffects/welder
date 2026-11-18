@@ -33,9 +33,10 @@ def registry():
         "nerf_train": _lazy("nerf", "train"),
         "nerf_render": _lazy("nerf", "render"),
         "imagegen": _lazy("imagegen", "run"),
+        "corridorkey": _lazy("corridorkey", "run"),
     }
 
 
 def core_tasks():
     """Tasks a child process (strata_ml.subtask) may run."""
-    return {"splat_train": _lazy("splat", "train_core")}
+    return {"splat_train": _lazy("splat", "train_core"), "corridorkey": _lazy("corridorkey", "run_core")}

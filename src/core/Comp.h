@@ -75,6 +75,10 @@ public:
     bool dependsOn(const Node* n, const Node* upstream) const;
     std::vector<Node*> nodesOfType(const std::string& type) const;
     std::string resolvePath(const std::string& p) const;
+    // The file a new Write starts with: the comp's own name as an EXR sequence
+    // (TGU_001_0069_comp_CAD_v006.weld -> "TGU_001_0069_comp_CAD_v006.####.exr",
+    // relative, so it lands beside the comp / in the project dir). "" while unsaved.
+    std::string defaultWriteFile() const;
 };
 
 }  // namespace strata

@@ -76,7 +76,7 @@ def job_dir(home, key):
     return os.path.join(jobs_dir(home), key)
 
 
-def probe_packages():
+def probe_packages(home=None):
     """What's installed (for the heartbeat and Welder's ML panel)."""
     info = {"python": platform.python_version()}
     from .winfix import fix_torch_openmp
@@ -98,6 +98,9 @@ def probe_packages():
     for mod, key in (("ltx_pipelines", "ltx"), ("gsplat", "gsplat"), ("mapanything", "mapanything"),
                      ("huggingface_hub", "huggingface_hub"), ("diffusers", "diffusers"), ("peft", "peft"), ("cv2", "opencv"), ("av", "av"), ("einops", "einops"), ("hydra", "hydra")):
         info[key] = importlib.util.find_spec(mod) is not None
+    # CorridorKey runs in its own environment (venv-corridorkey): is it there?
+    from .tasks.corridorkey import corridorkey_python
+    info["corridorkey_env"] = bool(home) and corridorkey_python(home) is not None
     return info
 
 
@@ -109,7 +112,7 @@ class Worker:
             os.makedirs(os.path.join(self.home, d), exist_ok=True)
         self.current = None
         self.started = time.time()
-        self.packages = probe_packages()
+        self.packages = probe_packages(self.home)
         # the splat environment, tested in the background (starting its python takes a few seconds)
         threading.Thread(target=self._probe_splat, daemon=True).start()
         self.lock = threading.Lock()

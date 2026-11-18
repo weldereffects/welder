@@ -58,7 +58,7 @@ done
 mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/fonts/"Roboto-*.ttf "$ROOT/third_party/fonts/LICENSE-Roboto.txt" "$STAGE/bin/fonts/"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
 mkdir -p "$STAGE/bin/ml"
-cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/setup-ml.sh" "$STAGE/bin/ml/"
+cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/requirements-corridorkey.txt" "$ROOT/ml/setup-ml.sh" "$STAGE/bin/ml/"
 find "$STAGE/bin/ml" -name __pycache__ -prune -exec rm -rf {} +
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"
 cp "$ROOT"/docs/*.md "$STAGE/docs/"

@@ -232,6 +232,7 @@ void registerColorExtraNodes();
 void registerFilterExtraNodes();
 void registerTimeExtraNodes();
 void registerDrawExtraNodes();
+void registerMarkupNode();
 void registerBlenderNodes();
 void registerCreativeNodes();
 void registerCGNodes();
@@ -285,6 +286,7 @@ void registerBuiltinNodes() {
     registerFilterExtraNodes();
     registerTimeExtraNodes();
     registerDrawExtraNodes();
+    registerMarkupNode();
     registerBlenderNodes();
     registerCreativeNodes();
     registerCGNodes();

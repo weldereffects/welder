@@ -568,6 +568,17 @@ void rotoExportPoints(App& app, UiState& ui, Node* n);
 bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name);
 void addReferenceLink(App& app, Node* link, bool stabilize);
 void drawFlowPaintViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+// Markup (MarkupTool.cpp): its tool row over the viewer, drawing / editing in the viewer, its panel,
+// and Save image (the node at the current frame, at scale 1 / 0.5 / 0.25, written to `path`).
+Node* activeMarkup(App& app);
+void drawMarkupToolbar(App& app, UiState& ui);
+void drawMarkupViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+bool markupHotkeys(App& app, UiState& ui);
+void drawMarkupPanel(App& app, UiState& ui, Node* n);
+bool markupSaveImage(App& app, const std::string& node, double scale, const std::string& path, std::string* err);
+ImVec2 markupTestScreen(double x, double y);  // (UI tests) an image position on screen in the viewer
+void markupTestTool(const std::string& name);  // (UI tests) "Select", "Paint", "Box", "Circle", "Text"
+int markupTestSelected();
 void drawCamTrackerViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
 bool camTrackerHotkeys(App& app, UiState& ui);
 // Set component k (-1: all) of an n-component param value; animated components get a key at `frame`.

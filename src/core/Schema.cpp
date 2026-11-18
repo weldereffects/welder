@@ -246,7 +246,7 @@ std::vector<NodeDef> build() {
                   Same(EnableIf(Field(I("first", "", 1, -100000, 100000), 64), "use_limit=true"), true),
                   Same(EnableIf(Field(I("last", "", 100, -100000, 100000), 64), "use_limit=true"), true),
                   Btn("write_render", "Render", "Render this Write over the project range (or its limit)")},
-                 "Writes its input: EXR, DPX, TIFF, PNG, JPEG, TGA, BMP, HDR image sequences (#### or %04d in the name), or a movie (.mov .mp4 .mkv .avi .mxf). Render with Render > Render All Writes."});
+                 "Writes its input: EXR, DPX, TIFF, PNG, JPEG, TGA, BMP, HDR image sequences (#### or %04d in the name), or a movie (.mov .mp4 .mkv .avi .mxf). A new Write's file starts as the saved comp's name. Render with Render > Render All Writes."});
     // ---------------------------------------------------------------- Value (numbers that drive exposed knobs)
     d.push_back({"Value", "Value", {InfoRow("signal", "signal"), F("value", "value", 0.5, 0, 1, "Any number (type past the slider's range); animate it like any knob")},
                  "A number for exposed knobs (right-click a knob > Expose as input)."});
@@ -344,6 +344,11 @@ std::vector<NodeDef> build() {
                            XY("scale", "scale", json::array({1, 1}), 0.1, 10), PickXY(XY("center", "center", "$center", 0, 4096)),
                            C("operation", "operation", "over", {"over", "plus", "replace"})}),
                  "Text over the background input (any TrueType font, Arial by default)."});
+    d.push_back({"Markup", "Draw",
+                 {F("opacity", "opacity", 1, 0, 1)},
+                 "Review notes over the picture: paint strokes, boxes, circles and text, drawn in the viewer while its panel is "
+                 "open. Every item's colour, size and position can be changed afterwards. Save image writes what the node shows "
+                 "at full, half or quarter resolution."});
     d.push_back({"Rectangle", "Draw",
                  withMask({{"area", "area", Knob::Box, "$inner", 0, 4096, {}, ""}, F("softness", "softness", 0, 0, 200),
                            Col4("color", "color", json::array({1, 1, 1, 1})), B("invert", "invert", false),
@@ -2110,6 +2115,33 @@ std::vector<NodeDef> build() {
                          C("view", "view", "plate + depth.Z", {"plate + depth.Z", "depth (grey)"})}),
                  "Video Depth Anything: depth for the whole shot that holds steady from frame to frame (no flicker), as depth.Z. "
                  "Feed it to DepthMix's depth input, ZDefocus, or anything that reads depth. Runs on the ML worker."});
+    d.push_back({"CorridorKey", "AI",
+                 frames({Tip(C("view", "view", "keyed", {"keyed", "plate + matte", "matte"}),
+                             "keyed: CorridorKey's despilled foreground with its matte. plate + matte: your plate untouched, "
+                             "only the alpha replaced (to despill your own way). matte: the alpha in RGB"),
+                         Tip(B("premultiply", "premultiply", true), "keyed view: multiply the foreground by the matte"),
+                         Tip(F("despill", "despill", 0.5, 0, 1), "How much green / blue spill CorridorKey takes out of the foreground"),
+                         Div("hint"),
+                         Tip(C("hint_frames", "use hint", "every frame", {"every frame", "first frame", "none"}),
+                             "The hint input: a rough matte (white = keep), e.g. a quick Keylight or a garbage roto. "
+                             "Without one, CorridorKey picks the subject itself"),
+                         Tip(C("hint_channel", "hint from", "alpha", {"alpha", "luminance"}), "Which part of the hint input is the matte"),
+                         Tip(F("hint_quality", "hint trust", 0.95, 0.05, 1),
+                             "How much to trust the hint: 0.95 a good matte, 0.75 a rough automatic one, 0.5 or less a scribble"),
+                         Tip(B("carry_hint", "carry the matte forward", true), "Feed each stretch of the clip the matte found so far"),
+                         Div("memory"),
+                         Tip(I("max_size", "max size", 0, 0, 8192),
+                             "0: key at the plate's full size. Otherwise the frames are made this small (long side) first, "
+                             "for a quicker look; the result is scaled back up"),
+                         Tip(I("window", "frames at once", 0, 0, 80),
+                             "How many frames CorridorKey looks at together (more: steadier, more GPU memory). "
+                             "0: the most that fit your GPU (24 GB: 48 at 1080p, 8 at 4K)"),
+                         Tip(B("low_vram", "low VRAM", false), "With a set number of frames at once: slower, much less GPU memory, "
+                                                                "same result (0 frames at once picks this by itself)")}),
+                 "CorridorKey 2.0 by Corridor Digital: AI green / blue screen keying that looks at the whole clip, for a steady matte "
+                 "and real colour in hair, motion blur and glass. Optional hint input: a rough matte. Downloaded from Corridor Digital "
+                 "under its own licence (CorridorKey is free to use on commercial work; not for resale). Needs an NVIDIA RTX 30-series "
+                 "or newer. Runs on the ML worker."});
     d.push_back({"TrackMask", "AI",
                  frames({InfoRow("trackmask", ""),
                          Btn("trackmask_clear_frame", "Clear this frame", "Remove this frame's clicks and box"),

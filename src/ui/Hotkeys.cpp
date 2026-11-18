@@ -382,7 +382,8 @@ void handleHotkeys(App& app, UiState& ui) {
         if (trackerHotkeys(app, ui)) return;
         if (planarHotkeys(app, ui)) return;
         if (camTrackerHotkeys(app, ui)) return;  // same keys for the PlanarTracker  // Z X C V track, Esc stops, while a Tracker is open
-        if (rotoHotkeys(app, ui)) return;  // roto tools take V, Z, Delete, Enter... while a Roto is open (never Q: overlays)
+        if (rotoHotkeys(app, ui)) return;
+        if (markupHotkeys(app, ui)) return;  // Delete / Backspace remove the selected item, Esc drops it  // roto tools take V, Z, Delete, Enter... while a Roto is open (never Q: overlays)
         ViewerState& v = ui.viewer;
         auto toggle = [&](int ch) { v.channel = v.channel == ch ? 0 : ch; };
         if (key(ImGuiKey_R)) { toggle(1); return; }

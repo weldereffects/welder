@@ -279,14 +279,16 @@ def _make_pipe_class():
             return self
 
         def enable_model_cpu_offload(self, device="cuda"):
-            """One component on the GPU at a time (accelerate's CpuOffload hooks, as Diffusers' own)."""
+            """One big component on the GPU at a time (accelerate's CpuOffload hooks, as Diffusers' own). The
+            small VAE stays on the GPU: in the chain, each decode would push the transformer off it."""
             from accelerate import cpu_offload_with_hook
             self._remove_hooks()
             hook = None
-            for m in (self.text_encoder, self.transformer, self.vae):
+            for m in (self.text_encoder, self.transformer):
                 m.to("cpu")
                 _, hook = cpu_offload_with_hook(m, torch.device(device), prev_module_hook=hook)
                 self._hooks.append(hook)
+            self.vae.to(device)
             self._device = torch.device(device)
             self._placement = "model"
 

@@ -87,7 +87,7 @@ else
 fi
 # The ML worker (Python; the AI nodes) next to the executable
 mkdir -p "$STAGE/bin/ml"
-cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/setup-ml.bat" "$STAGE/bin/ml/"
+cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/requirements-corridorkey.txt" "$ROOT/ml/setup-ml.bat" "$STAGE/bin/ml/"
 find "$STAGE/bin/ml" -name __pycache__ -prune -exec rm -rf {} +
 # models\: AI models installed by hand (a folder per model, each saying what goes in it)
 python3 "$ROOT/tools/make_model_folders.py" "$STAGE"

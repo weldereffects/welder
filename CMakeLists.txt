@@ -112,6 +112,7 @@ add_library(strata_core STATIC
   src/nodes/FilterExtraNodes.cpp
   src/nodes/TimeExtraNodes.cpp
   src/nodes/DrawExtraNodes.cpp
+  src/nodes/Markup.cpp
   src/nodes/TextRender.cpp
   src/nodes/KeyerNodes.cpp
   src/nodes/GrainNodes.cpp
@@ -356,6 +357,9 @@ if(Python3_FOUND)
   add_test(NAME ml_imagegen
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_imagegen.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  add_test(NAME ml_corridorkey
+           COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_corridorkey.py
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   add_test(NAME nk_importer
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_nk2strata.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -430,6 +434,7 @@ if(STRATA_BUILD_UI)
   src/ui/KnobHandles.cpp
   src/ui/Theme.cpp
   src/ui/FlowPaintTool.cpp
+  src/ui/MarkupTool.cpp
   src/ui/TrackMaskTool.cpp
   src/ui/AppML.cpp
   src/ui/MLPanel.cpp

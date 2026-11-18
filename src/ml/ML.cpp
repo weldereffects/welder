@@ -393,6 +393,10 @@ std::string prepareInstallFolder(const std::string& id) {
     fs::create_directories(d, ec);
     if (ec) return "";
     std::string t = "Put the files of " + info.value("label", id) + " in this folder.\n\n";
+    if (info.contains("install_note")) {  // not a plain Hugging Face download (CorridorKey)
+        writeFileAtomic(S(d / "PUT_FILES_HERE.txt"), t + info.value("install_note", std::string()) + "\n\nWelder shows the model as ready as soon as every file is here.\n");
+        return S(d);
+    }
     t += "From: https://huggingface.co/" + info.value("repo", std::string()) + "\n";
     if (info.value("gated", false)) t += "(gated: accept the licence on that page while logged in first)\n";
     if (info.value("snapshot", false))

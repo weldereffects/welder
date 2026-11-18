@@ -96,7 +96,7 @@ done
 mkdir -p "$RES/fonts" && cp "$ROOT/third_party/fonts/"Roboto-*.ttf "$ROOT/third_party/fonts/LICENSE-Roboto.txt" "$RES/fonts/"
 [ "$HAVE_NCNN" = 1 ] && mkdir -p "$RES/models" && cp -r "$ROOT/models/rife" "$RES/models/rife"
 mkdir -p "$RES/ml"
-cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/setup-ml.sh" "$RES/ml/"
+cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements.txt" "$ROOT/ml/requirements-corridorkey.txt" "$ROOT/ml/setup-ml.sh" "$RES/ml/"
 find "$RES/ml" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$RES/tools" && cp "$ROOT/tools/nk2strata.py" "$RES/tools/"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"

@@ -347,6 +347,12 @@ def place_pipeline(pipe, offload):
     if offload == "sequential":
         pipe.enable_sequential_cpu_offload()
     elif offload == "model":
+        # the VAE is small: it stays on the GPU, out of the offload chain. In the chain, every decode
+        # would push the transformer back to the CPU and the next image would wait for it to come back
+        # (17 GB for [klein] 9B, many seconds per image)
+        if hasattr(pipe, "model_cpu_offload_seq"):  # (FLUX 3's adapter does the same itself)
+            pipe.model_cpu_offload_seq = "->".join(m for m in pipe.model_cpu_offload_seq.split("->") if m != "vae")
+            pipe._exclude_from_cpu_offload = list(getattr(pipe, "_exclude_from_cpu_offload", [])) + ["vae"]
         pipe.enable_model_cpu_offload()
     elif offload == "group":
         # the transformer and text encoder go through the GPU a block at a time (prefetched on a side
@@ -898,10 +904,9 @@ def run(ctx, p):
             if neg_emb is not None:
                 call["negative_prompt_embeds"] = neg_emb.to(dev)
             t0 = time.time()
-            try:
-                pipe(**call)  # ("latent" output differs between the pipelines: the callback kept the tokens)
-            finally:
-                pipe.maybe_free_model_hooks()
+            # (no maybe_free_model_hooks between images: the transformer stays on the GPU for the whole
+            # batch; the job's end offloads it)
+            pipe(**call)  # ("latent" output differs between the pipelines: the callback kept the tokens)
             watch.check()
             lat = last["lat"]
             if lat is None:
@@ -952,6 +957,5 @@ def decode(pipe, packed, h, w):
         lat = pipe._unpatchify_latents(lat * bn_std + bn_mean)
         lat = lat.to(_vae_device(pipe), pipe.vae.dtype)
         img = pipe.vae.decode(lat, return_dict=False)[0]
-    pipe.maybe_free_model_hooks()
     img = (img[0].float().clamp(-1, 1) * 0.5 + 0.5).permute(1, 2, 0).cpu().numpy()
     return img.astype(np.float32)

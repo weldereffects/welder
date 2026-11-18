@@ -4,6 +4,8 @@
 //                  day-to-night, union control, motion, inpaint, relight, ...)
 //                  inputs: src, mask
 //   AlphaGen       LTX Alpha Gen: a matte for the src clip, no green screen (src)
+//   CorridorKey    CorridorKey 2.0 (Corridor Digital): AI green / blue screen keying
+//                  (src, hint); downloaded from Corridor's repository, its own licence
 //   GaussianSplat  trains Gaussian splats from a plate and its camera, refining
 //                  the camera at the same time (src, cam, mask); a splat source
 //                  for SplatRender and a camera (the refined one)

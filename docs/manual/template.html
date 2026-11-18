@@ -290,7 +290,7 @@ footer { margin-top: 20px; color: var(--muted); font-size: 13px; border-top: 1px
         <div class="gstep" aria-hidden="true"><div class="pipe"></div><div></div></div>
         <div class="gstep" role="listitem"><div class="gnode" style="background:#8aa86f">Grade1<small>G</small></div><p><span class="num">2</span>With the Read selected press <kbd>1</kbd> to view it, then <kbd>G</kbd> for a Grade, <kbd>B</kbd> for a Blur, or <kbd>Tab</kbd> to search every node by name.</p></div>
         <div class="gstep" aria-hidden="true"><div class="pipe"></div><div></div></div>
-        <div class="gstep" role="listitem"><div class="gnode" style="background:#8c8c8c">Write1<small>W</small></div><p><span class="num">3</span>Press <kbd>W</kbd> and set its file, for example <code>shot_v001.####.exr</code>. Press <kbd>F5</kbd> to render all Writes, <kbd>F7</kbd> for the selected ones.</p></div>
+        <div class="gstep" role="listitem"><div class="gnode" style="background:#8c8c8c">Write1<small>W</small></div><p><span class="num">3</span>Press <kbd>W</kbd>. Once the comp is saved, a new Write's file starts as the comp's name, for example <code>shot_v001.weld</code> gives <code>shot_v001.####.exr</code> beside it; type over any part of it. Press <kbd>F5</kbd> to render all Writes, <kbd>F7</kbd> for the selected ones.</p></div>
       </div>
       <p class="muted">Save with <kbd>Ctrl</kbd><kbd>S</kbd>. Comps are <code>.weld</code> files; <strong>File › Save Incremental</strong> (<kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd>) saves the next version: <code>shot_v001.weld</code> becomes <code>shot_v002.weld</code>, keeping the digits (an unversioned name gets <code>_v002</code>). If that version is already in the folder, it asks: overwrite it, save as the next free number, or type the version yourself (<code>v002_tp</code> saves <code>shot_v002_tp.weld</code>; you are told if that name is taken too).</p>
 
@@ -482,6 +482,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <div class="card"><h4>Autokey</h4><p>On by default: editing a shape keys it on the current frame. Per item: opacity, feather, blend mode, transform, lifetime.</p></div>
         <div class="card"><h4>SplineWarp</h4><p>Draw source curves (A) and destination curves (B); the image bends from one to the other. Switch with <strong>edit A / edit B</strong> over the viewer.</p></div>
         <div class="card"><h4>GridWarp</h4><p>Drag grid points in the viewer; <kbd>Shift</kbd>-drag moves the other grid. <strong>reset grids</strong> starts over.</p></div>
+        <div class="card"><h4>Markup</h4><p>Review notes over the picture. With its panel open, pick <strong>Paint</strong>, <strong>Box</strong>, <strong>Circle</strong> or <strong>Text</strong> over the viewer and draw (<kbd>Shift</kbd>: square / round; Text: click and type, <kbd>Enter</kbd> finishes). <strong>Select</strong>: click an item, drag to move it, drag a box's or circle's corners, double-click a text to retype; <kbd>Delete</kbd> removes it. Colour, width, fill and size apply to new items and to the selection; the panel lists every item with its colour, position and size. <strong>Save image</strong> writes what the node shows on this frame at full, half or quarter resolution, as PNG, JPEG, TIFF or EXR, wherever you choose.</p></div>
       </div>
     </section>
 

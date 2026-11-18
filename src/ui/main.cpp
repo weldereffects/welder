@@ -1403,6 +1403,69 @@ int main(int argc, char** argv) {
                                     n->params.has("strokes") ? n->params.data["strokes"].size() : (size_t)0,
                                     n->params.has("strokes") && !n->params.data["strokes"].empty() ? n->params.data["strokes"][0]["pts"].size() : (size_t)0);
         }
+        // STRATA_TEST_MARKUP=<file>: with a Markup's panel open, paint a stroke, drag a box, move it
+        // with Select, place and type a text, drag a circle and delete it with the Delete key, then
+        // Save image at half resolution to <file> and print the items (tools/markup_test.sh)
+        bool markupTest = false;
+        if (const char* tm = std::getenv("STRATA_TEST_MARKUP"); tm && *tm && !opt.screenshot.empty()) {
+            ImGuiIO& tio = ImGui::GetIO();
+            markupTest = frameCount < 200;
+            auto at = [&](double x, double y) {
+                ImVec2 p = markupTestScreen(x, y);
+                tio.AddMousePosEvent(p.x, p.y);
+            };
+            // a drag from image a to b over frames f0..f1 (pressed at a on f0 + 1, released on f1 + 2)
+            auto drag = [&](int f0, int f1, double ax, double ay, double bx, double by) {
+                if (frameCount == f0) at(ax, ay);
+                else if (frameCount == f0 + 1) tio.AddMouseButtonEvent(0, true);  // pressed where it starts
+                else if (frameCount > f0 + 1 && frameCount <= f1) {
+                    const double t = (double)(frameCount - f0 - 1) / (f1 - f0 - 1);
+                    at(ax + (bx - ax) * t, ay + (by - ay) * t);
+                } else if (frameCount == f1 + 2)
+                    tio.AddMouseButtonEvent(0, false);
+            };
+            if (frameCount == 20) markupTestTool("Paint");
+            drag(22, 40, 300, 300, 700, 350);
+            if (frameCount == 50) markupTestTool("Box");
+            drag(52, 62, 900, 200, 1300, 500);
+            if (frameCount == 70) markupTestTool("Select");
+            drag(72, 82, 900, 350, 1000, 360);  // grab the box by its left edge, move it right 100, up 10
+            if (frameCount == 90) markupTestTool("Text");
+            if (frameCount == 91) at(400, 800);
+            if (frameCount == 92) tio.AddMouseButtonEvent(0, true);
+            if (frameCount == 93) tio.AddMouseButtonEvent(0, false);
+            if (frameCount == 98) {
+                tio.AddInputCharacter('H');
+                tio.AddInputCharacter('i');
+            }
+            if (frameCount == 102) tio.AddKeyEvent(ImGuiKey_Enter, true);
+            if (frameCount == 103) tio.AddKeyEvent(ImGuiKey_Enter, false);
+            if (frameCount == 110) markupTestTool("Circle");
+            drag(112, 122, 1400, 600, 1700, 900);
+            if (frameCount == 130) markupTestTool("Select");
+            if (frameCount == 131) at(1550, 900);  // the circle's top
+            if (frameCount == 132) tio.AddMouseButtonEvent(0, true);
+            if (frameCount == 133) tio.AddMouseButtonEvent(0, false);
+            if (frameCount == 136) std::printf("MARKUP selected after clicking the circle: %d\n", markupTestSelected());
+            if (frameCount == 138) tio.AddKeyEvent(ImGuiKey_Delete, true);
+            if (frameCount == 139) tio.AddKeyEvent(ImGuiKey_Delete, false);
+            if (frameCount == 150)
+                for (auto& n : app.comp->nodes)
+                    if (n->type == "Markup") {
+                        std::string err;
+                        const bool ok = markupSaveImage(app, n->name, 0.5, tm, &err);
+                        std::printf("MARKUP save %s %s\n", ok ? "ok" : "failed", err.c_str());
+                    }
+            if (frameCount == 160)
+                for (auto& n : app.comp->nodes)
+                    if (n->type == "Markup" && n->params.has("items"))
+                        for (const auto& it : n->params.data["items"]) {
+                            std::string geo = it.contains("rect") ? it["rect"].dump() : it.contains("pos") ? it["pos"].dump()
+                                              : it.contains("points") ? std::to_string(it["points"].size()) + " points" : "";
+                            std::printf("MARKUP item %s %s %s %s\n", it.value("name", "").c_str(), it.value("kind", "").c_str(),
+                                        geo.c_str(), it.value("text", "").c_str());
+                        }
+        }
         // STRATA_TEST_PLAY=<seconds>: play from the first frame, then report the frames shown per second
         bool playTest = false;
         if (const char* tp = std::getenv("STRATA_TEST_PLAY"); tp && *tp && !opt.screenshot.empty()) {
@@ -1605,7 +1668,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !stabTest && !flowTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

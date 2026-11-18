@@ -672,6 +672,10 @@ THE EDITOR
                    from frame to frame (relative, or metric in metres); splits
                    a cut sequence at its cuts. Small is Apache 2.0; Base and
                    Large are non-commercial only
+    CorridorKey    CorridorKey 2.0 (Corridor Digital): AI green / blue screen
+                   keying over the whole clip; optional hint input (a rough
+                   matte). Downloaded from Corridor Digital on first use, under
+                   its own licence (commercial work fine; no resale)
     TrackMask      track and mask: click the object in the viewer (Shift+click
                    what isn't it, drag a box), it's masked (SAM 2.1) and followed
                    through the shot with Track; click again where it slips

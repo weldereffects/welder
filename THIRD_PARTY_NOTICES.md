@@ -45,7 +45,9 @@ own source and build scripts are public, so you can rebuild Welder against a mod
 The AI models these tools use are not included. They are downloaded from Hugging Face when you
 first use them, each under the licence on its Hugging Face page. Check a model's licence before
 using it on paid work: some (the larger Video Depth Anything models, for example) are for
-non-commercial use only, and LTX has its own licence terms.
+non-commercial use only, and LTX has its own licence terms. CorridorKey (Corridor Digital) is not
+included either, code or weights: the CorridorKey node downloads both from Corridor Digital's GitHub
+and Hugging Face pages, under the Corridor Key Licence 2.0.
 
 The Windows build is compiled with MinGW-w64; its runtime libraries are linked statically under
 the GCC Runtime Library Exception and the MinGW-w64 licences.
