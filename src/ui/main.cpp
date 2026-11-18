@@ -23,6 +23,7 @@
 
 #include "GL.h"
 #include "Panels.h"
+#include "nodes/Scene3D.h"
 #include "Tablet.h"
 #include "core/Crash.h"
 #include "SmokeTest.h"
@@ -775,6 +776,43 @@ int main(int argc, char** argv) {
                         std::printf("VIEWERCLICK %s %s = %s translate = %s (typing: %d, picker: %s)\n", n->name.c_str(), tk,
                                     n->params.data[tk].dump().c_str(), n->params.data.value("translate", json()).dump().c_str(),
                                     (int)typingInText(), ui.picker.active ? ui.picker.node.c_str() : "off");
+        }
+        // STRATA_TEST_SCENE3D=<Scene3D node>: in the 3D viewer through its camera, box-select every point
+        // with the Points tool, drag a card in the middle with the Card tool, print the cards
+        // (STRATA_TEST_SCENE3D_QUAD: then show the quad view)
+        bool sc3Test = false;
+        if (const char* ts = std::getenv("STRATA_TEST_SCENE3D"); ts && *ts && !opt.screenshot.empty()) {
+            ImGuiIO& tio = ImGui::GetIO();
+            sc3Test = frameCount < 75;
+            const ImVec2 o = gTest3DOrigin, sz = gTest3DSize;
+            auto at = [&](float fx, float fy) { tio.AddMousePosEvent(o.x + sz.x * fx, o.y + sz.y * fy); };
+            if (frameCount == 8) {
+                app.selection = {ts};
+                app.openPanel(ts);
+                ui.v3d.on = true;
+                ui.v3d.force2D = false;
+                ui.v3d.view = ts;
+                ui.v3d.tool = View3DState::Tool::Points;
+            } else if (frameCount == 16) at(0.03f, 0.08f);
+            else if (frameCount == 18) tio.AddMouseButtonEvent(0, true);
+            else if (frameCount > 18 && frameCount <= 26) at(0.03f + 0.94f * (frameCount - 18) / 8, 0.08f + 0.9f * (frameCount - 18) / 8);
+            else if (frameCount == 28) tio.AddMouseButtonEvent(0, false);
+            else if (frameCount == 32) ui.v3d.tool = View3DState::Tool::Card;
+            else if (frameCount == 34) at(0.38f, 0.38f);
+            else if (frameCount == 36) tio.AddMouseButtonEvent(0, true);
+            else if (frameCount > 36 && frameCount <= 44) at(0.38f + 0.24f * (frameCount - 36) / 8, 0.38f + 0.24f * (frameCount - 36) / 8);
+            else if (frameCount == 46) tio.AddMouseButtonEvent(0, false);
+            else if (frameCount == 56) {
+                if (Node* n = app.node(ts)) {
+                    std::printf("SCENE3D points selected %zu, card %s, cards:", n->ui.value("pts", json::array()).size(),
+                                n->ui.value("card", std::string()).c_str());
+                    for (auto& c : scene3d::cardNames(n->params))
+                        std::printf(" %s t=%s r=%s size=%s", c.c_str(), n->params.data[c + "/translate"].dump().c_str(),
+                                    n->params.data[c + "/rotate"].dump().c_str(), n->params.data[c + "/size"].dump().c_str());
+                    std::printf("\n");
+                }
+                if (std::getenv("STRATA_TEST_SCENE3D_QUAD")) ui.v3d.quad = true;
+            }
         }
         // STRATA_TEST_EXPOSE=<knob>: right-click the knob's value box, pick the menu's first item
         // (Expose as input), then print the knob and the node's exposed inputs
@@ -1653,7 +1691,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !sc3Test && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

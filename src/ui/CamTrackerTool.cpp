@@ -17,6 +17,7 @@
 #include "nodes/CamExport.h"
 #include "nodes/CameraTrackerNode.h"
 #include "nodes/SceneMove.h"
+#include "nodes/Scene3D.h"
 
 namespace strata::ui {
 
@@ -34,19 +35,10 @@ const ImU32 kGrid = IM_COL32(90, 170, 255, 110);
 
 // Plane through points: centroid and unit normal.
 bool fitPlane(const std::vector<V3>& P, V3& c, V3& n) {
-    if (P.size() < 3) return false;
-    c = V3();
-    for (auto& p : P) c = c + p * (1.0 / P.size());
-    double A[9] = {0};
-    for (auto& p : P) {
-        V3 d = p - c;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j) A[i * 3 + j] += d[i] * d[j];
-    }
-    double w[3], V[9];
-    camsolve::eigenSym(3, A, w, V);
-    n = cam3d::normalize(V3(V[0], V[3], V[6]));
-    return w[1] > 1e-12 * std::max(1.0, w[2]);  // not all on a line
+    scene3d::Plane pl = scene3d::fitPlane(P);  // PCA (nodes/Scene3D.h)
+    c = pl.c;
+    n = pl.n;
+    return pl.ok;
 }
 
 // Rotation taking unit vector a onto unit vector b.
@@ -710,6 +702,27 @@ void drawCamTrackerPanel(App& app, UiState& ui, Node* n) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         ImGui::SetTooltip("A Card3D on the plane of the selected points (3+), or facing the camera (1-2), rendered through this solve");
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Scene3D")) {  // the solve as a Scene3D (cards placed on its points), the selection carried over
+        json pts = json::array();
+        for (size_t i = 0; i < sol->points.size(); ++i)
+            if (st.sel.count(sol->points[i].track)) pts.push_back((int)i);
+        Node* plate = n->input(0);
+        const std::string plateName = plate ? plate->name : "";
+        app.checkpoint();
+        app.edit([&app, uij, name, pts, plateName](Comp& cc) {
+            Node* t = cc.addNode("Scene3D", "Scene3D", json::object(), uij);
+            if (!plateName.empty()) cc.setInput(t, 0, cc.find(plateName));
+            cc.setInput(t, 1, cc.find(name));
+            t->ui["pts"] = pts;
+            app.selection = {t->name};
+            app.openPanel(t->name);
+            app.message("added " + t->name + " on " + name + "'s solve: Tab for 3D, C to drag a card on the selected points");
+        });
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A Scene3D with this solve (camera and points), the selected points still selected: place cards on them\n"
+                          "in the 3D viewer and drive CardTransforms with them");
     row("geometry");
     {  // rough geometry from the points: the selection (3+), or all of them
         const bool some = st.sel.size() >= 3;

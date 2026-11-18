@@ -25,6 +25,7 @@
 #include "Panels.h"
 #include "nodes/CameraTrackerNode.h"
 #include "nodes/Geo.h"
+#include "nodes/Scene3D.h"
 #include "nodes/SceneMove.h"
 #include "nodes/MeshEdit.h"
 
@@ -545,8 +546,42 @@ V3 vecParam(Node* n, const std::string& key, double f, const V3& def) {
     return V3(a[0], a[1], a[2]);
 }
 
+// A Scene3D's card being edited (its panel's or the viewer's pick): it moves like an object, its
+// knobs are "<card>/translate" etc. "" when none.
+std::string editedCard(Node* n) {
+    if (!n || n->type != "Scene3D") return "";
+    const std::string c = n->ui.value("card", std::string());
+    if (c.empty()) return "";
+    for (auto& nm : scene3d::cardNames(n->params))
+        if (nm == c) return c;
+    return "";
+}
+// The prefix of the transform knobs of `n` ("Card_01/" for a Scene3D's card).
+std::string pfx(Node* n) {
+    std::string c = editedCard(n);
+    return c.empty() ? "" : c + "/";
+}
+// The selected Scene3D (the Points and Card tools work on it).
+Node* scene3dTarget(App& app) {
+    for (auto& s : app.selection)
+        if (Node* n = app.node(s))
+            if (n->type == "Scene3D") return n;
+    return nullptr;
+}
+geo::M4 cardMatrix(const scene3d::Card& c) {
+    return geo::M4::translate(c.O) * geo::M4::rotation(c.R) * geo::M4::scale(V3(c.w, c.h, c.depth));
+}
+// Object -> world of what the manipulator moves, and the parent space its knobs live in.
+geo::M4 xformOf(Node* n, double f) {
+    scene3d::Card c;
+    if (!editedCard(n).empty() && scene3d::cardFromParams(n->params, editedCard(n), f, c)) return cardMatrix(c);
+    return geo::worldMatrix(n, f);
+}
+geo::M4 parentOf(Node* n, double f) { return editedCard(n).empty() ? geo::parentMatrix(n, f) : geo::M4(); }
+
 // The world position the manipulator sits at: the node's pivot in world space.
 V3 manipCentre(Node* n, double f) {
+    if (!editedCard(n).empty()) return xformOf(n, f).translation();
     V3 pv = vecParam(n, "pivot", f, V3());
     return geo::worldMatrix(n, f).point(pv);
 }
@@ -568,10 +603,11 @@ bool objectBounds(const geo::Object& o, V3& lo, V3& hi) {
     return true;
 }
 
+
 Node* primaryTransformable(App& app) {
     for (auto& s : app.selection)
         if (Node* n = app.node(s))
-            if (geo::isTransformable(n)) return n;
+            if (geo::isTransformable(n) || !editedCard(n).empty()) return n;
     return nullptr;
 }
 
@@ -636,7 +672,7 @@ struct Manip {
 
 Manip buildManip(App& app, View3DState& s, const View& v, ImVec2 origin, bool allowScene = true) {
     Manip m;
-    if (s.tool == View3DState::Tool::Select) return m;
+    if (s.tool == View3DState::Tool::Select || s.tool == View3DState::Tool::Points || s.tool == View3DState::Tool::Card) return m;
     if (Node* e = allowScene ? editTarget(app) : nullptr) {  // the selected points of an EditMesh
         const auto& em = editMesh(e);
         auto sel = editSelection(e, em.points());
@@ -665,8 +701,8 @@ Manip buildManip(App& app, View3DState& s, const View& v, ImVec2 origin, bool al
     if (!v.screen(m.c, origin, m.sc)) return m;
     m.len = 90.0 * s.manipSize / std::max(1e-9, v.scaleAt(m.c));
     for (int k = 0; k < 3; ++k) m.axis[k] = V3(k == 0, k == 1, k == 2);
-    if (s.tool == View3DState::Tool::Scale) {  // scale works along the object's own axes
-        M3 L = geo::worldMatrix(n, app.frame).linear();
+    if (s.tool == View3DState::Tool::Scale || s.localSpace) {  // scale (and local space) works along the object's own axes
+        M3 L = xformOf(n, app.frame).linear();
         for (int k = 0; k < 3; ++k) m.axis[k] = cam3d::normalize(L.col(k));
     }
     m.valid = true;
@@ -988,6 +1024,32 @@ void renderJob(const ImDrawList*, const ImDrawCmd* cmd) {
         for (GLenum e = glGetError(); e != 0; e = glGetError()) std::fprintf(stderr, "3D viewer GL error 0x%x\n", e);
 }
 
+// ---- a Scene3D's points and cards
+scene3d::Snapshot snapshotOf(Node* n, double f) {
+    if (auto* src = dynamic_cast<scene3d::SceneSource*>(n)) return src->scene(f);
+    return {};
+}
+std::vector<int> selectedPoints(Node* n, size_t count) {
+    std::vector<int> r;
+    for (auto& v : n->ui.value("pts", json::array()))
+        if (v.is_number_integer() && v.get<int>() >= 0 && (size_t)v.get<int>() < count) r.push_back(v.get<int>());
+    return r;
+}
+// The plane of the selected points (ok = false with fewer than 3, or on a line); the normal faces `eye`.
+scene3d::Plane selectionPlane(Node* n, const scene3d::Snapshot& sn, const V3& eye) {
+    std::vector<V3> P;
+    for (int i : selectedPoints(n, sn.points.size())) P.push_back(sn.points[i]);
+    return scene3d::fitPlane(P, &eye);
+}
+bool inPolygon(const std::vector<ImVec2>& poly, ImVec2 q) {
+    bool in = false;
+    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+        if ((poly[i].y > q.y) != (poly[j].y > q.y) &&
+            q.x < (poly[j].x - poly[i].x) * (q.y - poly[i].y) / (poly[j].y - poly[i].y + 1e-12f) + poly[i].x)
+            in = !in;
+    return in;
+}
+
 // Manipulator interaction for the primary selection, in any view (the 3D
 // viewer, or the 2D viewer through a render camera). Returns the handle under
 // the mouse; `clickedEmpty` is set when a click landed on no handle.
@@ -1107,7 +1169,7 @@ int manipulate(App& app, View3DState& s, const View& v, ImVec2 p0, bool canHover
             s.dragMouse = mouse;
             for (int k = 0; k < 3; ++k) s.dragCentre[k] = m.c[k];
             const char* key = s.tool == View3DState::Tool::Move ? "translate" : s.tool == View3DState::Tool::Rotate ? "rotate" : "scaling";
-            V3 cur = vecParam(n, key, app.frame, s.tool == View3DState::Tool::Scale ? V3(1, 1, 1) : V3());
+            V3 cur = vecParam(n, pfx(n) + key, app.frame, s.tool == View3DState::Tool::Scale ? V3(1, 1, 1) : V3());
             for (int k = 0; k < 3; ++k) s.dragStart[k] = cur[k];
             V3 o, r;
             v.ray(mouse, p0, o, r);
@@ -1201,7 +1263,7 @@ int manipulate(App& app, View3DState& s, const View& v, ImVec2 p0, bool canHover
             V3 o, r;
             v.ray(mouse, p0, o, r);
             const double f = app.frame;
-            M3 P = geo::parentMatrix(n, f).linear();
+            M3 P = parentOf(n, f).linear();
             M3 Pi = P.inverse();
             V3 start(s.dragStart[0], s.dragStart[1], s.dragStart[2]);
             std::string key;
@@ -1235,7 +1297,7 @@ int manipulate(App& app, View3DState& s, const View& v, ImVec2 p0, bool canHover
                     ang = -std::atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
                 }
                 V3 ax = s.handle < 3 ? m.axis[s.handle] : -v.forward();
-                std::string ord = n->params.str("rot_order", "ZXY");
+                std::string ord = n->params.str(pfx(n) + "rot_order", "ZXY");
                 M3 R0 = cam3d::eulerToMatrix(start, ord);
                 M3 Pn = cam3d::orthonormalize(P), Pni = Pn.transposed();
                 M3 Rn = Pni * cam3d::expRotation(cam3d::normalize(ax) * ang) * Pn * R0;
@@ -1257,6 +1319,7 @@ int manipulate(App& app, View3DState& s, const View& v, ImVec2 p0, bool canHover
                 }
             }
             std::string name = n->name;
+            key = pfx(n) + key;
             app.edit([name, key, val, f, def](Comp& c) {
                 if (Node* x = c.find(name)) {
                     writeVec(x, key, val, f, def);
@@ -1296,14 +1359,30 @@ void drawViewer3DToolbar(App& app, UiState& ui) {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("view: persp / top / front / side, or look through a camera");
     ImGui::SameLine();
-    const char* tools[] = {"Q select", "W move", "E rotate", "R scale"};
-    for (int i = 0; i < 4; ++i) {
+    const char* tools[] = {"Q select", "W move", "E rotate", "R scale", "P points", "C card"};
+    const bool scene3d = scene3dTarget(app) != nullptr;
+    for (int i = 0; i < (scene3d ? 6 : 4); ++i) {
         bool on = (int)s.tool == i;
         if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.70f, 1));
         if (ImGui::Button(tools[i])) s.tool = (View3DState::Tool)i;
         if (on) ImGui::PopStyleColor();
+        if (i == 4 && ImGui::IsItemHovered()) ImGui::SetTooltip("select the Scene3D's points (Shift adds, Ctrl removes): their plane shows");
+        if (i == 5 && ImGui::IsItemHovered()) ImGui::SetTooltip("drag a card on the plane of the selected points");
         ImGui::SameLine();
     }
+    if (scene3d && s.tool == View3DState::Tool::Points) {
+        if (ImGui::Button(s.lasso ? "lasso" : "box")) s.lasso = !s.lasso;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("points: drag a box or a lasso");
+        ImGui::SameLine();
+    }
+    if (ImGui::Button(s.localSpace ? "L local" : "L world")) s.localSpace = !s.localSpace;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("move / rotate along the world axes or the object's (card's) own (L)");
+    ImGui::SameLine();
+    if (s.quad) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.26f, 0.45f, 0.70f, 1));
+    if (ImGui::Button("quad")) s.quad = !s.quad;
+    if (s.quad) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("four views: top, persp, side and the camera (V)");
+    ImGui::SameLine();
     ImGui::SameLine(0, 10);
     if (Node* et = editTarget(app)) {  // editing a mesh: what clicks pick
         const std::string mode = et->ui.value("sel_mode", std::string("vertex"));
@@ -1338,7 +1417,11 @@ void drawViewer3DToolbar(App& app, UiState& ui) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("back to the 2D view (Tab)");
 }
 
-void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
+ImVec2 gTest3DOrigin(-1, -1), gTest3DSize(0, 0);
+
+namespace {
+// One 3D view. `interactive`: this view takes the mouse (in the quad view, only the one under it).
+void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool interactive, bool quad) {
     View3DState& s = ui.v3d;
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1346,9 +1429,9 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
     ImGui::SetCursorScreenPos(p0);
     ImGui::InvisibleButton("##viewport3d", size,
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle | ImGuiButtonFlags_MouseButtonRight);
-    const bool hovered = ImGui::IsItemHovered();
+    const bool hovered = ImGui::IsItemHovered() && interactive;
     const bool active = ImGui::IsItemActive();
-    ui.viewer.hovered = hovered;
+    ui.viewer.hovered = ui.viewer.hovered || hovered;
 
     Node* viewedNode = app.node(app.viewed);
     geo::SceneData sd;
@@ -1358,7 +1441,10 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
     }
     View v = makeView(app, s, sd, size.x, size.y);
     const ImVec2 mouse = io.MousePos;
-    const bool inside = mouse.x >= p0.x && mouse.y >= p0.y && mouse.x < p1.x && mouse.y < p1.y;
+    const bool inside = interactive && mouse.x >= p0.x && mouse.y >= p0.y && mouse.x < p1.x && mouse.y < p1.y;
+    Node* st = scene3dTarget(app);  // a Scene3D: its points, plane and card tool
+    scene3d::Snapshot stSnap;
+    if (st) stSnap = snapshotOf(st, app.frame);
 
     // ---------------------------------------------------------- navigation (Maya)
     const bool alt = io.KeyAlt;
@@ -1370,7 +1456,7 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
     // Preferences > Middle-drag zooms: a middle drag dollies without Alt (tablets, issue #23)
     if (hovered && !alt && app.middleDragZooms && s.nav == View3DState::Nav::None && ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
         s.nav = View3DState::Nav::Dolly;
-    if (s.nav != View3DState::Nav::None) {
+    if (s.nav != View3DState::Nav::None && interactive) {
         bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
                     ImGui::IsMouseDown(ImGuiMouseButton_Right);
         if (!down) {
@@ -1404,7 +1490,7 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
             v = makeView(app, s, sd, size.x, size.y);
         }
     }
-    if (hovered && io.MouseWheel != 0) {
+    if (hovered && interactive && io.MouseWheel != 0) {
         if (!v.camNode.empty()) toPersp(s, v);
         int oi = orthoIndex(s.view);
         if (oi >= 0) s.ortho[oi].width *= std::pow(0.87, io.MouseWheel);
@@ -1415,23 +1501,140 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
     // ---------------------------------------------------------- manipulators and selection
     Manip m;
     bool clickedEmpty = false;
-    int hot = manipulate(app, s, v, p0, s.nav == View3DState::Nav::None && inside,
-                         hovered && !alt && s.nav == View3DState::Nav::None, m, clickedEmpty);
-    if (clickedEmpty) {
+    int hot = -1;
+    if (interactive)
+        hot = manipulate(app, s, v, p0, s.nav == View3DState::Nav::None && inside, hovered && !alt && s.nav == View3DState::Nav::None, m,
+                         clickedEmpty);
+    else
+        m = buildManip(app, s, v, p0);
+    const bool pointsTool = st && s.tool == View3DState::Tool::Points;
+    if (clickedEmpty && st && s.tool == View3DState::Tool::Card) {  // the Card tool: drag out a card
+        s.cardDrag = true;
+        s.cardStart = mouse;
+    } else if (clickedEmpty) {
         s.marquee = true;
         s.marqueeStart = mouse;
+        s.lassoPts = {mouse};
+    }
+    // the Card tool: the drag's corners cast onto the plane of the selected points (else the
+    // edited card's plane, else the ground); the card is that patch of the plane
+    std::string cardPreview;
+    if (s.cardDrag && interactive) {
+        ImVec2 a(std::min(s.cardStart.x, mouse.x), std::min(s.cardStart.y, mouse.y));
+        ImVec2 b(std::max(s.cardStart.x, mouse.x), std::max(s.cardStart.y, mouse.y));
+        dl->AddRect(a, b, IM_COL32(255, 200, 60, 200), 0, 0, 1.5f);
+        scene3d::Plane pl = st ? selectionPlane(st, stSnap, v.C) : scene3d::Plane();
+        const char* onWhat = "the selected points' plane";
+        if (!pl.ok && st && !editedCard(st).empty()) {
+            if (const scene3d::Card* cd = stSnap.card(editedCard(st))) {
+                pl.ok = true, pl.c = cd->O, pl.n = cd->normal(), pl.major = cd->ex(), pl.minor = cd->ey();
+                onWhat = "the card's plane";
+            }
+        }
+        if (!pl.ok) {
+            pl.ok = true, pl.c = V3(), pl.n = V3(0, 1, 0), pl.major = V3(1, 0, 0), pl.minor = V3(0, 0, -1);
+            onWhat = "the ground (select 3+ points for a surface)";
+        }
+        if (cam3d::dot(pl.n, v.C - pl.c) < 0) pl.n = -pl.n;
+        const M3 R = scene3d::planeAxes(pl, v.R.col(0));
+        const ImVec2 sc[4] = {ImVec2(a.x, b.y), ImVec2(b.x, b.y), ImVec2(b.x, a.y), ImVec2(a.x, a.y)};
+        double u0 = 1e300, u1 = -1e300, w0 = 1e300, w1 = -1e300;
+        bool ok = st != nullptr;
+        for (auto& q : sc) {
+            V3 o, r, hit;
+            v.ray(q, p0, o, r);
+            if (!scene3d::rayPlane(o, r, pl.c, pl.n, hit)) {
+                ok = false;
+                break;
+            }
+            const double u = cam3d::dot(hit - pl.c, R.col(0)), w = cam3d::dot(hit - pl.c, R.col(1));
+            u0 = std::min(u0, u), u1 = std::max(u1, u), w0 = std::min(w0, w), w1 = std::max(w1, w);
+        }
+        const V3 ctr = pl.c + R.col(0) * ((u0 + u1) / 2) + R.col(1) * ((w0 + w1) / 2);
+        const double cw = u1 - u0, ch = w1 - w0;
+        if (ok) {  // the card it will make
+            scene3d::Card cd;
+            cd.O = ctr, cd.R = R, cd.w = cw, cd.h = ch;
+            auto cs = cd.corners();
+            ImVec2 q[4];
+            bool vis = true;
+            for (int k = 0; k < 4; ++k) vis = vis && v.screen(cs[k], p0, q[k]);
+            if (vis) dl->AddPolyline(q, 4, IM_COL32(255, 200, 60, 255), ImDrawFlags_Closed, 2.0f);
+            cardPreview = std::string("card on ") + onWhat;
+        } else {
+            cardPreview = "the drag misses the plane";
+        }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            s.cardDrag = false;
+            if (ok && b.x - a.x > 4 && b.y - a.y > 4 && cw > 1e-9 && ch > 1e-9) {
+                const std::string nm = st->name, card = scene3d::nextCardName(st->params);
+                const V3 eul = cam3d::matrixToEuler(R, "ZXY");
+                app.checkpoint();
+                app.edit([nm, card, ctr, eul, cw, ch](Comp& c) {
+                    if (Node* x = c.find(nm)) {
+                        scene3d::writeCard(x->params.data, card, ctr, eul, cw, ch);
+                        x->ui["card"] = card;
+                        x->paramsChanged();
+                    }
+                });
+                s.tool = View3DState::Tool::Move;
+                app.message(nm + ": added " + card + " on " + onWhat + " (W / E / R to adjust, L for local axes)");
+            } else if (!ok) {
+                app.message("card: the drag doesn't meet the plane; drag over the surface");
+            }
+        }
     }
     // marquee / click selection
-    if (s.marquee) {
+    if (s.marquee && interactive) {
         ImVec2 a(std::min(s.marqueeStart.x, mouse.x), std::min(s.marqueeStart.y, mouse.y));
         ImVec2 b(std::max(s.marqueeStart.x, mouse.x), std::max(s.marqueeStart.y, mouse.y));
         bool isBox = b.x - a.x > 4 || b.y - a.y > 4;
-        if (isBox) {
+        const bool lasso = pointsTool && s.lasso;
+        if (lasso) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+                (s.lassoPts.empty() || std::hypot(mouse.x - s.lassoPts.back().x, mouse.y - s.lassoPts.back().y) > 3))
+                s.lassoPts.push_back(mouse);
+            if (s.lassoPts.size() > 1) {
+                dl->AddPolyline(s.lassoPts.data(), (int)s.lassoPts.size(), IM_COL32(200, 220, 255, 220), ImDrawFlags_Closed, 1.5f);
+                isBox = s.lassoPts.size() > 2;
+            }
+        } else if (isBox) {
             dl->AddRectFilled(a, b, IM_COL32(120, 160, 255, 30));
             dl->AddRect(a, b, IM_COL32(200, 220, 255, 200));
         }
         Node* et = editTarget(app);
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && et) {  // picking an EditMesh's points / edges / faces
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && pointsTool) {  // picking a Scene3D's points
+            s.marquee = false;
+            std::vector<int> hit;
+            const auto& P = stSnap.points;
+            double bd = 8;
+            int best = -1;
+            for (size_t i = 0; i < P.size(); ++i) {
+                ImVec2 q;
+                if (!v.screen(P[i], p0, q)) continue;
+                if (lasso && isBox) {
+                    if (inPolygon(s.lassoPts, q)) hit.push_back((int)i);
+                } else if (isBox) {
+                    if (q.x >= a.x && q.x <= b.x && q.y >= a.y && q.y <= b.y) hit.push_back((int)i);
+                } else {
+                    const double d = std::hypot(q.x - mouse.x, q.y - mouse.y);
+                    if (d < bd) bd = d, best = (int)i;
+                }
+            }
+            if (best >= 0) hit.push_back(best);
+            std::set<int> cur;
+            if (io.KeyShift || io.KeyCtrl)
+                for (int i : selectedPoints(st, P.size())) cur.insert(i);
+            for (int i : hit) {
+                if (io.KeyCtrl) cur.erase(i);
+                else if (io.KeyShift && !isBox && cur.count(i)) cur.erase(i);
+                else cur.insert(i);
+            }
+            json j = json::array();
+            for (int i : cur) j.push_back(i);
+            st->ui["pts"] = j;
+            s.lassoPts.clear();
+        } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && et) {  // picking an EditMesh's points / edges / faces
             s.marquee = false;
             const auto& em = editMesh(et);
             const geo::M4 X = geo::worldMatrix(et, app.frame);
@@ -1508,6 +1711,8 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
         } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             s.marquee = false;
             std::vector<std::string> hit;
+            std::string hitPart;  // a Scene3D's card picked
+            Node* partNode = nullptr;
             if (isBox) {
                 auto inBox = [&](const V3& p) {
                     ImVec2 q;
@@ -1515,7 +1720,10 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
                 };
                 for (auto& o : sd.objects) {
                     V3 lo, hi;
-                    if (objectBounds(o, lo, hi) && inBox((lo + hi) * 0.5)) hit.push_back(o.node->name);
+                    if (objectBounds(o, lo, hi) && inBox((lo + hi) * 0.5)) {
+                        hit.push_back(o.node->name);
+                        if (!o.part.empty() && hitPart.empty()) hitPart = o.part, partNode = o.node;
+                    }
                 }
                 for (auto& c : sd.cameras)
                     if (inBox(c.cam.C)) hit.push_back(c.node->name);
@@ -1531,6 +1739,8 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
                     if (geo::intersect(ob, o, r, t) && t < best) {
                         best = t;
                         name = ob.node->name;
+                        hitPart = ob.part;
+                        partNode = ob.node;
                     }
                 }
                 // cameras and axes: click near their centre
@@ -1544,8 +1754,10 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
                         name = n->name;
                     }
                 };
+                const std::string before = name;
                 for (auto& c : sd.cameras) pickNear(c.cam.C, c.node);
                 for (auto& x : sd.axes) pickNear(x.xform.translation(), x.node);
+                if (name != before) hitPart.clear(), partNode = nullptr;
                 if (!name.empty()) hit.push_back(name);
             }
             if (io.KeyCtrl) {
@@ -1556,6 +1768,12 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
             } else {
                 app.selection.clear();
                 for (auto& h : hit) app.selection.insert(h);
+            }
+            if (partNode && !io.KeyCtrl) {  // a card: the one its Scene3D edits
+                partNode->ui["card"] = hitPart;
+                app.selection.insert(partNode->name);
+            } else if (hit.size() == 1 && !io.KeyShift && !io.KeyCtrl) {
+                if (Node* hn = app.node(hit[0]); hn && hn->type == "Scene3D") hn->ui["card"] = "";
             }
             if (hit.size() == 1 && app.selection.count(hit[0])) app.openPanel(hit[0]);
         }
@@ -1575,7 +1793,7 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
         JobObj jo;
         jo.mesh = o.mesh;
         jo.xform = o.xform;
-        jo.selected = isSelected(app, o.node);
+        jo.selected = isSelected(app, o.node) && (o.part.empty() || o.part == editedCard(o.node));
         if (s.display == 6 && o.mat.kind != geo::Material::None && o.mat.image) {
             jo.texNode = o.mat.image->name;
             jo.tex = app.texture3D(o.mat.image->name, app.frame);
@@ -1648,8 +1866,17 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
             }
         }
         if (s.showPoints)
-            for (auto& p : sd.points)
+            for (auto& p : sd.points) {
+                std::vector<char> sel;
+                if (p.node == st) {  // the Scene3D being worked on: its selected points orange
+                    sel.assign(p.points.size(), 0);
+                    for (int i : selectedPoints(st, p.points.size())) sel[i] = 1;
+                }
                 for (size_t i = 0; i < p.points.size(); ++i) {
+                    if (!sel.empty() && sel[i]) {
+                        job->pts.point(p.points[i], IM_COL32(255, 150, 30, 255));
+                        continue;
+                    }
                     if (!p.colors.empty()) {
                         (p.dense ? job->cloud : job->pts).point(p.points[i], i < p.colors.size() ? p.colors[i] : IM_COL32_WHITE);
                         continue;
@@ -1658,6 +1885,37 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
                     ImU32 col = e <= 1.5 * sc ? IM_COL32(110, 240, 130, 255) : e <= 3 * sc ? IM_COL32(240, 220, 70, 255) : IM_COL32(255, 80, 70, 255);
                     job->pts.point(p.points[i], col);
                 }
+            }
+        // the plane of the selected points: a grid over them and the normal
+        if (st) {
+            scene3d::Plane pl = selectionPlane(st, stSnap, stSnap.camera ? stSnap.camera->C : v.C);
+            if (pl.ok) {
+                double u0 = 1e300, u1 = -1e300, w0 = 1e300, w1 = -1e300;
+                for (int i : selectedPoints(st, stSnap.points.size())) {
+                    const V3 d = stSnap.points[i] - pl.c;
+                    u0 = std::min(u0, cam3d::dot(d, pl.major)), u1 = std::max(u1, cam3d::dot(d, pl.major));
+                    w0 = std::min(w0, cam3d::dot(d, pl.minor)), w1 = std::max(w1, cam3d::dot(d, pl.minor));
+                }
+                const double pu = (u1 - u0) * 0.2 + 1e-6, pw = (w1 - w0) * 0.2 + 1e-6;
+                u0 -= pu, u1 += pu, w0 -= pw, w1 += pw;
+                const ImU32 gc = IM_COL32(255, 200, 60, 150);
+                for (int k = 0; k <= 8; ++k) {
+                    const double u = u0 + (u1 - u0) * k / 8, w = w0 + (w1 - w0) * k / 8;
+                    job->lines.add(pl.c + pl.major * u + pl.minor * w0, pl.c + pl.major * u + pl.minor * w1, gc);
+                    job->lines.add(pl.c + pl.major * u0 + pl.minor * w, pl.c + pl.major * u1 + pl.minor * w, gc);
+                }
+                const double L = 0.5 * std::max(u1 - u0, w1 - w0);
+                job->lines.add(pl.c, pl.c + pl.n * L, IM_COL32(60, 230, 255, 255));
+            }
+        }
+        // cards: the edited one's local axes
+        for (auto& o : sd.objects) {
+            if (o.part.empty() || o.part != editedCard(o.node) || !isSelected(app, o.node)) continue;
+            const V3 c = o.xform.translation();
+            const M3 L = o.xform.linear();
+            const double len = 0.6 * std::max(cam3d::norm(L.col(0)), cam3d::norm(L.col(1)));
+            for (int k = 0; k < 3; ++k) job->lines.add(c, c + cam3d::normalize(L.col(k)) * len, kAxisCol[k]);
+        }
     }
     g_jobs.push_back(job);  // kept alive until ImGui has rendered this frame
     while (g_jobs.size() > 4) g_jobs.erase(g_jobs.begin());
@@ -1695,6 +1953,13 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
         if (c.node->name != v.camNode && v.screen(c.cam.C, p0, q))
             dl->AddText(ImVec2(q.x + 6, q.y + 4), IM_COL32(230, 230, 230, 200), c.node->name.c_str());
     }
+    for (auto& o : sd.objects) {  // card names
+        if (o.part.empty()) continue;
+        ImVec2 q;
+        if (!v.screen(o.xform.translation(), p0, q)) continue;
+        const bool on = isSelected(app, o.node) && o.part == editedCard(o.node);
+        dl->AddText(ImVec2(q.x + 4, q.y - 16), on ? IM_COL32(255, 230, 40, 255) : IM_COL32(220, 220, 220, 190), o.part.c_str());
+    }
     drawManip(dl, m, s, v, p0, hot);
 
     // view axis triad (bottom left) and the HUD
@@ -1709,15 +1974,69 @@ void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
             dl->AddText(ImVec2(e.x + 2, e.y - 7), kAxisCol[k], nm[k]);
         }
         char hud[256];
-        const char* toolName[] = {"select", "move", "rotate", "scale"};
-        std::snprintf(hud, sizeof(hud), "%s   %s tool   %d objects", v.camNode.empty() ? s.view.c_str() : ("looking through " + v.camNode).c_str(),
-                      toolName[(int)s.tool], (int)sd.objects.size());
+        const char* toolName[] = {"select", "move", "rotate", "scale", "points", "card"};
+        std::string extra;
+        if (s.localSpace && (s.tool == View3DState::Tool::Move || s.tool == View3DState::Tool::Rotate)) extra += "   local axes";
+        if (st) {
+            const std::string ec = editedCard(st);
+            if (!ec.empty()) extra += "   card " + ec;
+            const size_t ns = selectedPoints(st, stSnap.points.size()).size();
+            if (ns) {
+                char b[96];
+                scene3d::Plane pl = selectionPlane(st, stSnap, v.C);
+                if (pl.ok) std::snprintf(b, sizeof b, "   %zu points, plane RMS %.3g", ns, pl.rms);
+                else std::snprintf(b, sizeof b, "   %zu points (3+ off a line make a plane)", ns);
+                extra += b;
+            }
+        }
+        if (!cardPreview.empty()) extra += "   " + cardPreview;
+        std::snprintf(hud, sizeof(hud), "%s   %s tool%s", v.camNode.empty() ? s.view.c_str() : ("looking through " + v.camNode).c_str(),
+                      toolName[(int)s.tool], extra.c_str());
         dl->AddText(ImVec2(p0.x + 10, p0.y + 8), IM_COL32(230, 230, 230, 220), hud);
-        dl->AddText(ImVec2(p0.x + 10, p0.y + 26), IM_COL32(170, 170, 170, 170),
-                    "Alt+LMB tumble  Alt+MMB track  Alt+RMB dolly  F frame  QWER tools  S key  4 5 6 display  Tab 2D");
+        if (!quad)
+            dl->AddText(ImVec2(p0.x + 10, p0.y + 26), IM_COL32(170, 170, 170, 170),
+                        st ? "Alt+LMB tumble  F frame  QWER tools  P points  C card  L local/world  S key  Tab 2D"
+                           : "Alt+LMB tumble  Alt+MMB track  Alt+RMB dolly  F frame  QWER tools  S key  4 5 6 display  Tab 2D");
     }
     dl->PopClipRect();
     (void)active;
+}
+}  // namespace
+
+void drawViewer3D(App& app, UiState& ui, ImVec2 p0, ImVec2 size) {
+    View3DState& s = ui.v3d;
+    ui.viewer.hovered = false;
+    gTest3DOrigin = p0;
+    gTest3DSize = size;
+    if (!s.quad) {
+        drawViewer3DPane(app, ui, p0, size, true, false);
+        return;
+    }
+    // Quad: top, persp / side, a camera (the scene's first; front when there is none)
+    std::string camView = "front";
+    try {
+        auto sd = geo::viewerScene(*app.comp, app.node(app.viewed), app.frame, &app.uiEngine());
+        if (!sd.cameras.empty() && sd.cameras[0].node) camView = sd.cameras[0].node->name;
+    } catch (const std::exception&) {
+    }
+    const std::string views[4] = {"top", "persp", "side", camView};
+    const ImVec2 half(std::floor(size.x / 2) - 1, std::floor(size.y / 2) - 1);
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const bool busy = s.nav != View3DState::Nav::None || s.handle >= 0 || s.marquee || s.cardDrag;
+    if (!busy && mouse.x >= p0.x && mouse.y >= p0.y && mouse.x < p0.x + size.x && mouse.y < p0.y + size.y)
+        s.quadActive = (mouse.x >= p0.x + half.x + 1 ? 1 : 0) + (mouse.y >= p0.y + half.y + 1 ? 2 : 0);
+    const std::string keep = s.view;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < 4; ++i) {
+        const ImVec2 o(p0.x + (i % 2) * (half.x + 2), p0.y + (i / 2) * (half.y + 2));
+        ImGui::PushID(i);
+        s.view = views[i];
+        drawViewer3DPane(app, ui, o, half, i == s.quadActive, true);
+        ImGui::PopID();
+        if (i == s.quadActive)
+            dl->AddRect(o, ImVec2(o.x + half.x, o.y + half.y), IM_COL32(120, 160, 255, 160));
+    }
+    s.view = keep;
 }
 
 void drawViewer3DIn2D(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered) {
@@ -1813,6 +2132,26 @@ bool viewer3DHotkeys(App& app, UiState& ui) {
     if (key(ImGuiKey_W)) { s.tool = View3DState::Tool::Move; return true; }
     if (key(ImGuiKey_E)) { s.tool = View3DState::Tool::Rotate; return true; }
     if (key(ImGuiKey_R)) { s.tool = View3DState::Tool::Scale; return true; }
+    if (key(ImGuiKey_L)) { s.localSpace = !s.localSpace; return true; }
+    if (key(ImGuiKey_V)) { s.quad = !s.quad; return true; }
+    if (Node* st = scene3dTarget(app)) {  // a Scene3D: P points, C card, Delete the edited card
+        if (key(ImGuiKey_P)) { s.tool = View3DState::Tool::Points; return true; }
+        if (key(ImGuiKey_C)) { s.tool = View3DState::Tool::Card; return true; }
+        if (key(ImGuiKey_Escape) && !st->ui.value("pts", json::array()).empty()) { st->ui["pts"] = json::array(); return true; }
+        if ((key(ImGuiKey_Delete) || key(ImGuiKey_Backspace)) && !editedCard(st).empty()) {
+            const std::string nm = st->name, card = editedCard(st);
+            app.checkpoint();
+            app.edit([nm, card](Comp& c) {
+                if (Node* x = c.find(nm)) {
+                    scene3d::eraseCard(x->params.data, card);
+                    x->ui["card"] = "";
+                    x->paramsChanged();
+                }
+            });
+            app.message(nm + ": deleted " + card);
+            return true;
+        }
+    }
     if (Node* et = editTarget(app)) {  // editing a mesh: 1 / 2 / 3 points / edges / faces, X / Delete deletes
         if (key(ImGuiKey_1)) { runNodeButton(app, ui, et, "mesh_mode_vertex"); return true; }
         if (key(ImGuiKey_2)) { runNodeButton(app, ui, et, "mesh_mode_edge"); return true; }
@@ -1834,7 +2173,7 @@ bool viewer3DHotkeys(App& app, UiState& ui) {
     auto setKeys = [&](std::vector<std::string> which) {
         std::vector<std::string> nodes;
         for (auto& n : app.selection)
-            if (geo::isTransformable(app.node(n))) nodes.push_back(n);
+            if (geo::isTransformable(app.node(n)) || !editedCard(app.node(n)).empty()) nodes.push_back(n);
         if (nodes.empty()) {
             app.message("set key: select something to key");
             return;
@@ -1845,9 +2184,11 @@ bool viewer3DHotkeys(App& app, UiState& ui) {
             for (auto& name : nodes) {
                 Node* x = c.find(name);
                 if (!x) continue;
-                for (auto& k : which) {
-                    if (k == "scaling" && x->type == "Camera") continue;  // cameras don't scale
-                    V3 def = k == "scaling" ? V3(1, 1, 1) : V3();
+                for (auto& k0 : which) {
+                    if (k0 == "scaling" && x->type == "Camera") continue;  // cameras don't scale
+                    if (x->type == "Scene3D" && editedCard(x).empty()) continue;
+                    const std::string k = pfx(x) + k0;
+                    V3 def = k0 == "scaling" ? V3(1, 1, 1) : V3();
                     writeVec(x, k, vecParam(x, k, f, def), f, def, true);
                 }
                 x->paramsChanged();

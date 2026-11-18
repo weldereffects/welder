@@ -155,6 +155,11 @@ const std::vector<Shortcut>& shortcuts() {
         {"3D viewer", "+ / -", "manipulator size", true},
         {"3D viewer", "S", "key translate, rotate and scale of the selection", true},
         {"3D viewer", "Shift+W / Shift+E / Shift+R", "key translate / rotate / scale", true},
+        {"3D viewer", "L", "move / rotate along world or local (the object's own) axes", true},
+        {"3D viewer", "V", "quad view: top, persp, side and the camera", true},
+        {"3D viewer", "P", "Scene3D: select points (box or lasso; Shift adds, Ctrl removes, Esc clears)", true},
+        {"3D viewer", "C", "Scene3D: drag a card on the plane of the selected points", true},
+        {"3D viewer", "Delete", "Scene3D: delete the card being edited", true},
         {"3D viewer", "4 / 5 / 6", "wireframe / shaded / textured", true},
         // ---- Properties
         {"Properties", "Ctrl+Shift+A", "close all panels", true},

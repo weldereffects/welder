@@ -11,3 +11,4 @@
 | nlohmann | nlohmann/json | develop | MIT | |
 | fonts | googlefonts/roboto-2 | 2.001047 (Regular, Medium; hinted TTF) | Apache-2.0 | the editor's typeface; LICENSE-Roboto.txt alongside |
 | vulkan | KhronosGroup/Vulkan-Headers | 1.3.275 (headers only) | Apache-2.0 / MIT | vulkan_core.h, vk_platform.h, vk_video; Vulkan itself is loaded at run time (vulkan-1.dll / libvulkan.so.1) |
+| ufbx | ufbx/ufbx | v0.21.3 (ufbx.h, ufbx.c, LICENSE) | MIT or public domain | FBX camera / point-cloud import for Scene3D (src/nodes/SceneImport.cpp) |

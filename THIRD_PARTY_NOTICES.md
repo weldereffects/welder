@@ -24,6 +24,7 @@ licence texts are in the `licenses/` folder next to this file.
 | Dear ImGui (docking branch) | | MIT | `licenses/DearImGui.txt` |
 | GLFW | 3.4 | Zlib | `licenses/GLFW.txt` |
 | nlohmann/json | | MIT | `licenses/nlohmann-json.txt` |
+| ufbx (FBX import) | 0.21.3 | MIT or public domain (either) | `licenses/ufbx.txt` |
 | stb_image, stb_image_write | 2.30 | Public domain or MIT (either) | in the headers, `third_party/stb` |
 | Vulkan headers | 1.3.275 | Apache-2.0 or MIT | headers only; Vulkan is loaded at run time |
 

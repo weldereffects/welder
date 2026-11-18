@@ -10,6 +10,7 @@ Blend
 BumpBoss
 CMSTestPattern
 CameraShake
+CardTransform
 ChannelMerge
 ClipTest
 ColorBars
@@ -64,6 +65,7 @@ Remove32Pulldown
 Retime
 RollOffContrast
 ScannedGrain
+Scene3D
 SoftClip
 Soften
 Sparkles

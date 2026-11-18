@@ -99,7 +99,14 @@ struct View3DState {
         double cx = 0, cy = 0, width = 24;  // centre (view plane) and width in units
     } ortho[3];                     // top, front, side
     int display = 6;                // 4 wireframe, 5 shaded, 6 textured
-    enum class Tool { Select, Move, Rotate, Scale } tool = Tool::Move;
+    enum class Tool { Select, Move, Rotate, Scale, Points, Card } tool = Tool::Move;  // Points / Card: a Scene3D's
+    bool localSpace = false;        // move / rotate along the object's own axes (L)
+    bool quad = false;              // four views: top, persp, side, camera
+    int quadActive = 0;             // the view under the mouse / being dragged in
+    bool lasso = false;             // the Points tool draws a lasso, not a box
+    std::vector<ImVec2> lassoPts;
+    bool cardDrag = false;          // the Card tool: dragging out a card
+    ImVec2 cardStart;
     float manipSize = 1.0f;
     bool gizmo2D = false;           // the manipulator is showing in the 2D viewer this frame
     bool showGrid = true, showPoints = true, showCameras = true;
@@ -635,6 +642,7 @@ void testSelectInBrowser(const std::string& name);
 // Files dropped on the window (from Explorer / Finder): Reads, imported scripts, comps, geometry, LUTs.
 void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths, ImVec2 screenPos);
 extern ImVec2 gTestKnobPos;  // STRATA_TEST_ALTKEY (Properties.cpp)
+extern ImVec2 gTest3DOrigin, gTest3DSize;  // STRATA_TEST_SCENE3D: the (first) 3D view drawn (Viewer3D.cpp)
 extern ImVec2 gTestXformCentre;  // STRATA_TEST_VIEWERCLICK: the open Transform's centre handle (TransformTool.cpp)
 bool graphTestPipe(App& app, UiState& ui, int frame);
 
