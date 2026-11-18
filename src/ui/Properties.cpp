@@ -14,6 +14,8 @@
 #include "nodes/BlenderNode.h"
 #include "nodes/Cryptomatte.h"
 #include "nodes/Geo.h"
+#include "nodes/Scene3D.h"
+#include "nodes/SceneImport.h"
 #include "nodes/MLNodes.h"
 #include "nodes/NodeUtils.h"
 #include "core/Schema.h"
@@ -2442,6 +2444,123 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         return;
     }
     if (k.info == "tracker_panel") return;  // (drawn by drawTrackerPanel)
+    if (k.info == "scene3d") {  // Scene3D: what the scene holds, and its cards
+        Node* n = c.node;
+        auto* src = dynamic_cast<scene3d::SceneSource*>(n);
+        scene3d::Snapshot s = src ? src->scene(c.frame) : scene3d::Snapshot();
+        std::string camText = !s.camera ? "no camera: connect a CameraTracker / Camera to 'cam', or import one"
+                                        : (n->input(1) && n->params.str("camera_from", "auto") != "imported" ? "camera from " + n->input(1)->name
+                                                                                                             : "imported camera");
+        if (n->params.has("import_info")) camText += "  (" + n->params.str("import_info") + ")";
+        ImGui::TextColored(s.camera ? ImVec4(0.55f, 0.85f, 0.5f, 1) : ImVec4(1, .8f, .4f, 1), "%s", camText.c_str());
+        int nsel = 0;
+        for (auto& v : n->ui.value("pts", json::array())) nsel += v.is_number_integer() ? 1 : 0;
+        ImGui::TextDisabled("%zu points (%d selected), %zu cards", s.points.size(), nsel, s.cards.size());
+        if (nsel >= 3) {
+            std::vector<cam3d::V3> sel;
+            for (auto& v : n->ui.value("pts", json::array()))
+                if (v.is_number_integer() && v.get<int>() >= 0 && (size_t)v.get<int>() < s.points.size()) sel.push_back(s.points[v.get<int>()]);
+            scene3d::Plane pl = scene3d::fitPlane(sel, s.camera ? &s.camera->C : nullptr);
+            if (pl.ok)
+                ImGui::TextDisabled("fitted plane: normal %.3f %.3f %.3f, off-plane RMS %.4g", pl.n.x, pl.n.y, pl.n.z, pl.rms);
+            else
+                ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "the selected points are on a line: no plane");
+        }
+        const std::string cur = n->ui.value("card", std::string());
+        ImGui::SeparatorText("Cards");
+        if (s.cards.empty()) ImGui::TextDisabled("none yet: in the 3D viewer select points (P), then drag a card (C)");
+        static std::string renaming, renameBuf;
+        for (auto& cd : s.cards) {
+            ImGui::PushID(cd.name.c_str());
+            const bool on = cd.name == cur;
+            if (renaming == cd.name + "@" + n->name) {
+                char buf[128];
+                std::snprintf(buf, sizeof buf, "%s", renameBuf.c_str());
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::IsWindowAppearing() || !ImGui::IsAnyItemActive()) ImGui::SetKeyboardFocusHere();
+                bool done = ImGui::InputText("##rn", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue);
+                renameBuf = buf;
+                if (done) {
+                    std::string from = cd.name, to = renameBuf, nm = n->name;
+                    bool taken = false;
+                    for (auto& o : s.cards) taken = taken || o.name == to;
+                    if (to.empty() || taken || to == "values" || to.find('/') != std::string::npos) {
+                        c.app.message("card names must be unique, not empty, without '/'");
+                    } else {
+                        c.app.checkpoint();
+                        c.app.edit([nm, from, to](Comp& comp) {
+                            if (Node* x = comp.find(nm)) {
+                                scene3d::renameCard(x->params.data, from, to);
+                                if (x->ui.value("card", std::string()) == from) x->ui["card"] = to;
+                                x->paramsChanged();
+                            }
+                        });
+                    }
+                    renaming.clear();
+                } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                    renaming.clear();
+                }
+            } else if (ImGui::Selectable(cd.name.c_str(), on, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(160, 0))) {
+                n->ui["card"] = on && !ImGui::IsMouseDoubleClicked(0) ? json("") : json(cd.name);
+                c.app.selection = {n->name};
+                if (ImGui::IsMouseDoubleClicked(0)) {
+                    renaming = cd.name + "@" + n->name;
+                    renameBuf = cd.name;
+                }
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Click: edit this card in the 3D viewer. Double-click: rename.");
+            ImGui::SameLine(180);
+            ImGui::TextDisabled("%.3g x %.3g", cd.w, cd.h);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("dup")) {
+                std::string nm = n->name, from = cd.name;
+                c.app.checkpoint();
+                c.app.edit([nm, from](Comp& comp) {
+                    Node* x = comp.find(nm);
+                    if (!x) return;
+                    const std::string to = scene3d::nextCardName(x->params, from.substr(0, from.rfind('_') == std::string::npos ? from.size() : from.rfind('_')));
+                    json add = json::object();
+                    for (auto& [kk, vv] : x->params.data.items())
+                        if (kk.rfind(from + "/", 0) == 0) add[to + kk.substr(from.size())] = vv;
+                    for (auto& [kk, vv] : add.items()) x->params.data[kk] = vv;
+                    x->params.data["cards"].push_back(to);
+                    x->ui["card"] = to;
+                    x->paramsChanged();
+                });
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("delete")) {
+                std::string nm = n->name, which = cd.name;
+                c.app.checkpoint();
+                c.app.edit([nm, which](Comp& comp) {
+                    if (Node* x = comp.find(nm)) {
+                        scene3d::eraseCard(x->params.data, which);
+                        if (x->ui.value("card", std::string()) == which) x->ui["card"] = "";
+                        x->paramsChanged();
+                    }
+                });
+            }
+            ImGui::PopID();
+        }
+        // the edited card's knobs (animatable like any other)
+        bool have = false;
+        for (auto& cd : s.cards) have = have || cd.name == cur;
+        if (have) {
+            ImGui::SeparatorText(cur.c_str());
+            auto kd = [&](const char* knobName, const char* label, Knob t, json def, double lo, double hi) {
+                KnobDef d{scene3d::cardKey(cur, knobName), label, t, def, lo, hi, {}, ""};
+                knob(c, d);
+            };
+            kd("translate", "translate", Knob::XYZ, json::array({0, 0, 0}), -100, 100);
+            kd("rotate", "rotate", Knob::XYZ, json::array({0, 0, 0}), -180, 180);
+            kd("size", "size", Knob::XY, json::array({1, 1}), 0, 10);
+            kd("scaling", "scale", Knob::XYZ, json::array({1, 1, 1}), 0, 10);
+            KnobDef ro{scene3d::cardKey(cur, "rot_order"), "rotation order", Knob::Choice, "ZXY", 0, 1,
+                       {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"}, ""};
+            knob(c, ro);
+        }
+        return;
+    }
     if (k.info == "reflink") {  // ReferenceLink: what the motion comes from
         Node* l = c.node->input(1);
         std::string chain;
@@ -2723,6 +2842,29 @@ void buttonAction(Ctx& c, const std::string& action) {
     if (action == "tracker_ref_here") {  // Tracker: the frame being viewed is the reference frame
         const double fr = std::round(c.app.frame);
         change(c, "reference_frame", [fr](json& j) { j = fr; });
+        return;
+    }
+    if (action == "scene3d_import") {  // Scene3D: a camera and points from an FBX / Alembic file
+        App* a = &c.app;
+        std::string nm = c.node->name;
+        openFileDialog(c.ui, "Import camera and points", false, {".fbx", ".abc"}, [a, nm](const std::string& path) {
+            Node* x = a->node(nm);
+            if (!x) return;
+            json pj = x->params.data;
+            std::string err;
+            if (!scene3d::importFile(path, a->comp->fps, a->comp->firstFrame, pj, &err)) {
+                a->message(nm + ": " + err);
+                return;
+            }
+            a->checkpoint();
+            a->edit([nm, pj](Comp& comp) {
+                if (Node* y = comp.find(nm)) {
+                    y->params.data = pj;
+                    y->paramsChanged();
+                }
+            });
+            a->message(nm + ": imported " + pj.value("import_info", std::string()));
+        });
         return;
     }
     if (action == "reflink_this_frame") {  // ReferenceLink: the frame being viewed is the reference
@@ -3304,6 +3446,8 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
     // Any params the schema doesn't know about.
     for (auto& [key, val] : n->params.data.items()) {
         if (shown.count(key)) continue;
+        if (n->type == "Scene3D" && (key == "cards" || key == "points" || key.rfind("import_", 0) == 0 || key.find('/') != std::string::npos))
+            continue;  // its cards and the imported data: the scene panel
         KnobDef k{key, key, Knob::Json, val, 0, 1, {}, ""};
         knob(c, k);
     }

@@ -131,6 +131,8 @@ add_library(strata_core STATIC
   src/nodes/Cam3D.cpp
   src/nodes/Geo.cpp
   src/nodes/Scene3D.cpp
+  src/nodes/SceneImport.cpp
+  third_party/ufbx/ufbx.c
   src/nodes/Scanline.cpp
   src/nodes/CamTrack.cpp
   src/nodes/CamSolve.cpp

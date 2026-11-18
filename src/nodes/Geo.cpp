@@ -1,4 +1,5 @@
 #include "Geo.h"
+#include "Scene3D.h"
 
 #include <algorithm>
 #include <cmath>
@@ -694,7 +695,7 @@ SceneData viewerScene(Comp& comp, Node* n, double f, Engine* e) {
         for (Node* in : x->inputs) stack.push_back(in);
     }
     bool any = false;
-    for (Node* x : reach) any = any || is3D(x) || x->type == "CameraTracker" || x->type == "Card3D";
+    for (Node* x : reach) any = any || is3D(x) || x->type == "CameraTracker" || x->type == "Card3D" || x->type == "Scene3D";
     if (!any) {
         reach.clear();
         for (auto& x : comp.nodes) reach.push_back(x.get());
@@ -708,6 +709,11 @@ SceneData viewerScene(Comp& comp, Node* n, double f, Engine* e) {
             for (Node* in : x->inputs) consumed.insert(in);
         if (x->type == "ScanlineRender") consumed.insert(x->input(1));
     }
+    std::set<Node*> scene3dFed;  // CameraTrackers a Scene3D shows (not twice)
+    for (Node* x : reach)
+        if (x->type == "Scene3D" && x->input(1) && x->input(1)->type == "CameraTracker" &&
+            x->params.str("camera_from", "auto") != "imported")
+            scene3dFed.insert(x->input(1));
     for (Node* x : reach) {
         if (isGeoFlow(x) && !consumed.count(x)) {
             auto g = geometryOf(x, f, e);
@@ -721,6 +727,29 @@ SceneData viewerScene(Comp& comp, Node* n, double f, Engine* e) {
             if (auto c = cam3d::cameraAt(x, f)) s.cameras.push_back({x, *c});
         }
         if (x->type == "Axis" && !x->disabled()) s.axes.push_back({x, worldMatrix(x, f)});
+        if (x->type == "Scene3D" && !x->disabled()) {
+            if (auto* src = dynamic_cast<scene3d::SceneSource*>(x)) {
+                scene3d::Snapshot sn = src->scene(f);
+                if (sn.camera) s.cameras.push_back({x, *sn.camera});
+                if (!sn.points.empty()) {
+                    PointsItem p;
+                    p.node = x;
+                    p.points = sn.points;
+                    p.colors.assign(sn.points.size(), 0xFFE0D070u);  // pale cyan: a scene's points
+                    s.points.push_back(std::move(p));
+                }
+                static const auto unitCard = std::make_shared<const Mesh>(makeCard(1, 1, 1.0));
+                for (auto& cd : sn.cards) {
+                    Object o;
+                    o.node = x;
+                    o.part = cd.name;
+                    o.mesh = unitCard;
+                    o.xform = M4::translate(cd.O) * M4::rotation(cd.R) * M4::scale(V3(cd.w, cd.h, cd.depth));
+                    s.objects.push_back(std::move(o));
+                }
+            }
+        }
+        if (x->type == "CameraTracker" && scene3dFed.count(x)) continue;  // shown by its Scene3D
         if (x->type == "CameraTracker") {
             if (auto sol = camtracker::solutionOf(x)) {
                 PointsItem p;

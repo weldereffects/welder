@@ -1824,6 +1824,18 @@ std::vector<NodeDef> build() {
                   F("lens_in_haperture", "lens-in h.aperture", 24.576, 1, 50),
                   C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic"})},
                  "Puts the image on a card in 3D and renders it through the camera input (a Camera or a solved CameraTracker)."});
+    d.push_back({"Scene3D", "3D",
+                 {Width(C("camera_from", "camera", "auto", {"auto", "input", "imported"}), 100),
+                  Same(Btn("scene3d_import", "import FBX / Alembic...", "Read a tracked camera and its points from an .fbx or .abc file into this node")),
+                  InfoRow("scene3d", "scene"), Div("Imported camera"),
+                  XYZ("translate", "translate", json::array({0, 0, 0}), -100, 100), XYZ("rotate", "rotate", json::array({0, 0, 0}), -180, 180),
+                  C("rot_order", "rotation order", "ZXY", rotOrders), F("focal", "focal length", 50, 5, 300, "mm"),
+                  F("haperture", "horiz aperture", 24.576, 1, 50, "film back width, mm"),
+                  F("vaperture", "vert aperture", 18.672, 1, 50, "film back height, mm"), F("near", "near", 0.1, 0.001, 10),
+                  F("far", "far", 10000, 1, 1e6)},
+                 "A tracked camera, its point cloud and named cards on the shot's surfaces. Connect a solved CameraTracker or a "
+                 "Camera to 'cam', or import an FBX / Alembic camera. In the 3D viewer (Tab) select points (P), drag a card on "
+                 "their plane (C), and move it with W / E / R (L toggles world / local). Feed it to CardTransform's 'scene' input."});
     auto xform = [&](std::vector<KnobDef> extra) {
         std::vector<KnobDef> k = {XYZ("translate", "translate", json::array({0, 0, 0}), -100, 100),
                                   XYZ("rotate", "rotate", json::array({0, 0, 0}), -180, 180),
@@ -2011,6 +2023,23 @@ std::vector<NodeDef> build() {
                      "CornerPin2D, Transform...) relative to this node's own reference frame. Copy it anywhere in the tree, each "
                      "with its own reference frame. Linked to another ReferenceLink with nothing on its image input (a hub), it "
                      "follows whatever that one links to - reconnect the hub to swap the tracking everywhere."});
+    }
+    {
+        KnobDef ref = F("reference_frame", "reference frame", 1, -100000, 100000,
+                        "Match Move / Stabilize: the frame where the image is left as it is");
+        ref.def = "$first";
+        d.push_back({"CardTransform", "Transform",
+                     {Width(C("card", "card", "", {}), 160), Width(C("mode", "mode", "insert", {"insert", "match-move", "stabilize"}), 110),
+                      ref, Same(Btn("reflink_this_frame", "this frame", "Make the frame you're on the reference frame"), true),
+                      B("clip_to_card", "clip to card", false), Width(C("bbox", "bbox", "expand", {"expand", "format"}), 90),
+                      Div(""),
+                      Width(C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic", "keys", "simon", "rifman", "mitchell",
+                                                            "lanczos4", "lanczos6", "sinc4"}), 110),
+                      B("black_outside", "black outside", true), F("motionblur", "motion blur", 0, 0, 4),
+                      F("shutter", "shutter", 0.5, 0, 2), C("shutteroffset", "shutter offset", "centred", {"centred", "start", "end"})},
+                     "Moves the image with a card of the Scene3D on its 'scene' input, seen through the scene's camera. Insert pins "
+                     "the whole image onto the card; Match Move makes something lined up with the plate at the reference frame "
+                     "follow the card; Stabilize holds the card's surface still. Concatenates with other transforms."});
     }
     d.push_back({"CornerPin2D", "Transform",
                  {XY("to1", "to1", "$corner1", -4000, 8000), XY("to2", "to2", "$corner2", -4000, 8000),

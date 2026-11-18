@@ -35,6 +35,7 @@
 #include "nodes/CamExport.h"
 #include "nodes/Geo.h"
 #include "nodes/Scene3D.h"
+#include "nodes/SceneImport.h"
 #include "nodes/PointMesh.h"
 #include "nodes/MeshEdit.h"
 #include "nodes/SceneMove.h"
@@ -3538,6 +3539,140 @@ int main(int argc, char** argv) {
         cam3d::Camera back = camAt(1);
         back.R = cam3d::eulerToMatrix(V3(0, 180, 0)) * back.R;
         CHECK(!scene3d::cardInFront(back, card));
+    });
+
+    test("Scene3D: FBX camera + locator import, baked to keys", [] {
+        // a hand-written ASCII FBX: a 35 mm camera at (1, 2, 10) turned to look down -Z, moving to x = 3
+        // over one second (frames 0-24 at 24 fps), and a locator at (3, 0, -2)
+        const char* fbx = R"FBX(; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UpAxis", "int", "Integer", "",1
+		P: "UpAxisSign", "int", "Integer", "",1
+		P: "FrontAxis", "int", "Integer", "",2
+		P: "FrontAxisSign", "int", "Integer", "",1
+		P: "CoordAxis", "int", "Integer", "",0
+		P: "CoordAxisSign", "int", "Integer", "",1
+		P: "UnitScaleFactor", "double", "Number", "",1
+		P: "TimeMode", "enum", "", "",11
+	}
+}
+Objects:  {
+	NodeAttribute: 1001, "NodeAttribute::Cam", "Camera" {
+		Properties70:  {
+			P: "FocalLength", "Number", "", "A",35
+			P: "FilmWidth", "double", "Number", "",1.417
+			P: "FilmHeight", "double", "Number", "",0.945
+			P: "NearPlane", "double", "Number", "",1
+			P: "FarPlane", "double", "Number", "",5000
+		}
+		TypeFlags: "Camera"
+		GeometryVersion: 124
+	}
+	Model: 2001, "Model::TrackCam", "Camera" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",1,2,10
+			P: "Lcl Rotation", "Lcl Rotation", "", "A",0,90,0
+		}
+	}
+	NodeAttribute: 1002, "NodeAttribute::Pt1", "Null" {
+		TypeFlags: "Null"
+	}
+	Model: 2002, "Model::Pt1", "Null" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",3,0,-2
+		}
+	}
+	AnimationStack: 3001, "AnimStack::Take 001", "" {
+		Properties70:  {
+			P: "LocalStop", "KTime", "Time", "",46186158000
+			P: "ReferenceStop", "KTime", "Time", "",46186158000
+		}
+	}
+	AnimationLayer: 3002, "AnimLayer::BaseLayer", "" {
+	}
+	AnimationCurveNode: 3003, "AnimCurveNode::T", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A",1
+			P: "d|Y", "Number", "", "A",2
+			P: "d|Z", "Number", "", "A",10
+		}
+	}
+	AnimationCurve: 3004, "AnimCurve::", "" {
+		Default: 1
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 1,3
+		}
+		KeyAttrFlags: *1 {
+			a: 260
+		}
+		KeyAttrDataFloat: *4 {
+			a: 0,0,0,0
+		}
+		KeyAttrRefCount: *1 {
+			a: 2
+		}
+	}
+}
+Connections:  {
+	C: "OO",2001,0
+	C: "OO",1001,2001
+	C: "OO",2002,0
+	C: "OO",1002,2002
+	C: "OO",3002,3001
+	C: "OO",3003,3002
+	C: "OP",3003,2001, "Lcl Translation"
+	C: "OP",3004,3003, "d|X"
+}
+)FBX";
+        const auto path = std::filesystem::temp_directory_path() / "welder_tests" / "cam.fbx";
+        std::ofstream(path) << fbx;
+        scene3d::ImportedScene s;
+        std::string err;
+        CHECK(scene3d::readFbx(path.string(), 25, s, &err));
+        if (!err.empty()) std::printf("  fbx: %s\n", err.c_str());
+        CHECK(s.cameraName == "TrackCam");
+        CHECK_NEAR(s.fps, 24, 1e-9);
+        CHECK(s.samples.size() == 25);
+        if (s.samples.size() == 25) {
+            CHECK_NEAR(s.samples[0].frame, 0, 1e-9);
+            CHECK(cam3d::norm(s.samples[0].C - cam3d::V3(1, 2, 10)) < 1e-4);
+            CHECK_NEAR(s.samples[12].C.x, 2, 1e-3);
+            CHECK_NEAR(s.samples[24].C.x, 3, 1e-4);
+            // looks down -Z with +Y up: Welder's camera with no rotation
+            CHECK(cam3d::norm(s.samples[0].R.col(2) - cam3d::V3(0, 0, 1)) < 1e-4);
+            CHECK(cam3d::norm(s.samples[0].R.col(1) - cam3d::V3(0, 1, 0)) < 1e-4);
+            CHECK_NEAR(s.samples[0].focal, 35, 1e-4);
+            CHECK_NEAR(s.samples[0].haperture, 1.417 * 25.4, 1e-3);
+        }
+        CHECK_NEAR(s.nearClip, 1, 1e-6);
+        CHECK(s.points.size() == 1 && cam3d::norm(s.points[0] - cam3d::V3(3, 0, -2)) < 1e-4);
+        // baked into a Scene3D: the node's camera follows the keys
+        json params = json::object();
+        CHECK(scene3d::importFile(path.string(), 25, 1, params, &err));
+        auto c = comp(json::array({{{"name", "S"}, {"type", "Scene3D"}, {"params", params}}}));
+        auto cam12 = cam3d::cameraAt(c->find("S"), 12);
+        CHECK(cam12 && std::fabs(cam12->C.x - 2) < 1e-3 && std::fabs(cam12->focal - 35) < 1e-4);
+        auto* src = dynamic_cast<scene3d::SceneSource*>(c->find("S"));
+        CHECK(src && src->scene(0).points.size() == 1);
+        // the JSON Blender writes for Alembic files
+        scene3d::ImportedScene b;
+        CHECK(scene3d::readSceneJson(json::parse(R"({"camera": "c", "fps": 25, "near": 0.5, "far": 900,
+            "frames": [{"frame": 1, "t": [0, 1, 5], "R": [1, 0, 0, 0, 1, 0, 0, 0, 1], "focal": 40, "haperture": 36, "vaperture": 24}],
+            "points": [[1, 2, 3]]})"), b, &err));
+        CHECK(b.samples.size() == 1 && b.samples[0].focal == 40 && b.points.size() == 1);
+        CHECK(!scene3d::readSceneJson(json::parse(R"({"error": "no camera in x.abc"})"), b, &err) && err == "no camera in x.abc");
     });
 
     test("CardTransform: insert onto a Scene3D card, stabilize holds it still, clip to card", [] {

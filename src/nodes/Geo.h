@@ -68,6 +68,7 @@ struct Object {
     std::shared_ptr<const Mesh> mesh;
     M4 xform;  // object -> world
     Material mat;
+    std::string part;  // a part of the node (a Scene3D's card name), "" = the node itself
 };
 
 struct CameraItem {
