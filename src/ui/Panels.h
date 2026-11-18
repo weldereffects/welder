@@ -181,9 +181,18 @@ struct RotoState {
         Select, SelectSplines, SelectPoints, SelectFeather,
         AddPoints, RemovePoints, CuspPoints, SmoothPoints, OpenClose, RemoveFeather,
         Bezier, CuspedBezier, BSpline, Ellipse, Rectangle, CuspedRectangle, OpenSpline,
-        Brush, Eraser, Clone, Reveal, Blur, Sharpen, Smear, Dodge, Burn, Repair
+        Brush, Eraser, Clone, Reveal, Blur, Sharpen, Smear, Dodge, Burn, Repair,
+        // Power Roto's own (after RotoPaint's, so the ranges above stay as they are)
+        XSpline, Freehand, MagneticFreehand, MagneticReshape, BrushReshape
     } tool = Tool::Bezier;
-    Tool lastOf[7] = {Tool::Select, Tool::AddPoints, Tool::Bezier, Tool::Brush, Tool::Clone, Tool::Blur, Tool::Dodge};  // per toolbar group
+    Tool lastOf[8] = {Tool::Select, Tool::AddPoints, Tool::Bezier, Tool::Brush, Tool::Clone, Tool::Blur, Tool::Dodge,
+                      Tool::MagneticReshape};  // per toolbar group
+    // Power Roto: new X-spline points' type (-1 smooth, 0 corner, 1 B-spline); freehand detail (0-1);
+    // the magnetic snap's reach and the reshape tools' radius (image pixels); viewer display
+    float newXType = -1, freehandDetail = 0.5f, magneticRadius = 8, reshapeRadius = 60;
+    bool fillShapes = false, fadeOutline = false, shapeColors = true;
+    std::vector<roto::V2> freehandPts;  // the freehand stroke being drawn (image space)
+    std::string listFilter;             // the curves list's search
     bool autokey = true;                // edits key the shape at the current frame
     // the tool settings bar: new shapes (draw tools), and how the viewer shows them (select tools)
     float newColor[4] = {1, 1, 1, 1};
@@ -230,7 +239,8 @@ struct RotoState {
     bool cloneSourceSet = false, cloneOffsetSet = false;
     ImVec2 cloneSource, cloneOffset;    // image space; offset = destination - source
     // Mouse drags
-    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize, FeatherPts, LineWidth, LineFeather } drag = Drag::None;
+    enum class Drag { None, Points, TanL, TanR, Feather, PointFeather, Marquee, Box, NewTangent, Jack, JackRotate, Paint, BrushSize, FeatherPts, LineWidth, LineFeather,
+                      Freehand, Reshape, ReshapeSize } drag = Drag::None;
     int lineShape = -1, linePoint = -1;  // an open spline's width / feather handle being dragged
     ImVec2 dragStartImg, dragStartScreen;
     std::map<int, roto::Pts> orig;      // shape -> control points when the drag started

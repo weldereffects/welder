@@ -129,6 +129,9 @@ const std::vector<Shortcut>& shortcuts() {
         {"Roto", "Delete", "delete the selected points", true},
         {"Roto", "Ctrl+A", "select all points", true},
         {"Roto", "E / Shift+E", "push the selected points' feather out / in", true},
+        {"Roto", "Alt+S", "Power Roto: snap the selected points to edges in the picture", true},
+        {"Roto", "Z / Shift+Z / Shift+B", "Power Roto X-spline points: smooth / corner / B-spline", true},
+        {"Roto", "Shift+drag", "Power Roto reshape tools: the radius", true},
         // ---- Tracker (over the viewer while a Tracker's properties are open)
         {"Tracker", "Ctrl+Alt+click (or add track + click)", "add a track", true},
         {"Tracker", "drag a track", "move it: a keyframe here, and keyframe tracking to the keyframes either side", true},

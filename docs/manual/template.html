@@ -457,6 +457,20 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <tr><td>Blur / Sharpen / Smear</td><td><kbd>X</kbd> cycles</td><td>Blur or sharpen the background where you paint, or drag the picture along the stroke</td></tr>
         <tr><td>Dodge / Burn</td><td><kbd>D</kbd> cycles</td><td>Paint brighter or darker</td></tr>
       </table></div>
+      <h3>Power Roto</h3>
+      <p>Power Roto is a third roto node, next to Roto (they share shapes and the renderer). It adds to Roto's tools:</p>
+      <div class="table-wrap"><table>
+        <tr><th>Tool or setting</th><th>What it does</th></tr>
+        <tr><td><strong>X-Spline</strong> (Shapes)</td><td>Click points like a B-spline, but each point has a type: <em>smooth</em> (the curve passes through it, rounded), <em>corner</em>, or <em>B-spline</em> (the curve is pulled towards it), or anything between. Set new points' type in the tool bar; <kbd>Z</kbd> / <kbd>Shift</kbd><kbd>Z</kbd> / <kbd>Shift</kbd><kbd>B</kbd> set the selected points to smooth / corner / B-spline.</td></tr>
+        <tr><td><strong>Freehand</strong> (Shapes)</td><td>Drag round the shape; it becomes a smooth Bezier. <em>detail</em> sets how closely it follows (more detail, more points). Sharp turns stay corners.</td></tr>
+        <tr><td><strong>Magnetic Freehand</strong> (Shapes)</td><td>Drag roughly along an edge in the picture: the shape snaps onto it. <em>reach</em> is how far from your stroke it looks for the edge. It follows the picture in the viewer, so view the plate (or Power Roto over it with output alpha).</td></tr>
+        <tr><td><strong>Magnetic Reshape</strong>, <strong>Brush Reshape</strong> (Reshape group)</td><td>Drag near a curve: the nearest points move most, falling off over the radius (Magnetic), or are pushed along under the brush (Brush). They work on the selected shapes, or all of them. <kbd>Shift</kbd>-drag sets the radius.</td></tr>
+        <tr><td>Snap to edges (<kbd>Alt</kbd><kbd>S</kbd>)</td><td>Moves the selected points onto the nearest edge in the picture.</td></tr>
+        <tr><td>Edge tab</td><td>Per shape: <em>grow / shrink</em> the edge, <em>blur</em> it (centred, inner: the shape never grows, or outer: the inside stays solid), the <em>channel</em> to render into (R, G, B or A as a plain matte: several mattes in one image) and the outline's colour in the viewer.</td></tr>
+        <tr><td>Points tab</td><td>Point groups 1 to 8 (Ctrl+click saves the selected points, click selects them again), reverse, distribute (even spacing along the curve), tween (a key on the straight line between the keys either side), to Bezier, split a closed shape between two points, extract points to a new shape, join two open shapes.</td></tr>
+        <tr><td>Blends</td><td>over, add, subtract, multiply (intersect), difference, max, min.</td></tr>
+        <tr><td>Viewer</td><td><em>colours</em> (each shape's outline in its own colour), <em>fill</em> (shapes filled lightly), <em>fade</em> (outlines fade with the shape's opacity); the curves list has a search (<code>/l</code> layers, <code>/s</code> shapes, <code>/k</code> keyed, <code>/h</code> hidden, <code>/x</code> locked).</td></tr>
+      </table></div>
       <div class="grid">
         <div class="card"><h4>Handles on every node</h4><p>Open the properties of any node with a position or a transform and the viewer shows its handles: a crosshair for a point, a box (drag corners and edges to resize, the outline to move), a ring for a radius, an arm for an angle, two joined points for a line, and the jack for Text, Noise and Feedback. Animated knobs get a key; <kbd>Q</kbd> hides them.</p></div>
         <div class="card"><h4>Per-point feather</h4><p><kbd>Ctrl</kbd>-drag a point to pull out its own feather. With several selected, pulling one feathers them all outward. <kbd>E</kbd> / <kbd>Shift</kbd><kbd>E</kbd> push it out or in.</p></div>

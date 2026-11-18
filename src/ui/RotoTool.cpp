@@ -35,6 +35,7 @@
 #include "PanelKit.h"
 #include "imgui_internal.h"
 #include "nodes/Planar.h"
+#include "nodes/PowerRoto.h"
 
 namespace strata::ui {
 
@@ -57,10 +58,15 @@ const json& itemsOf(const Node* n) {
 }
 
 bool paintNode(const Node* n) { return n->type == "RotoPaint"; }
-bool paintTool(Tool t) { return t >= Tool::Brush; }
+bool powerNode(const Node* n) { return n->type == "PowerRoto"; }
+bool rotoLike(const Node* n) { return n->type == "Roto" || n->type == "RotoPaint" || n->type == "PowerRoto"; }
+bool paintTool(Tool t) { return t >= Tool::Brush && t <= Tool::Repair; }
+bool powerTool(Tool t) { return t >= Tool::XSpline; }  // Power Roto's own tools
+bool freehandTool(Tool t) { return t == Tool::Freehand || t == Tool::MagneticFreehand; }
+bool reshapeTool(Tool t) { return t == Tool::MagneticReshape || t == Tool::BrushReshape; }
 bool selectTool(Tool t) { return t == Tool::Select || t == Tool::SelectSplines || t == Tool::SelectPoints || t == Tool::SelectFeather; }
 bool pointTool(Tool t) { return t >= Tool::AddPoints && t <= Tool::RemoveFeather; }
-bool curveTool(Tool t) { return t == Tool::Bezier || t == Tool::CuspedBezier || t == Tool::BSpline || t == Tool::OpenSpline; }  // click points
+bool curveTool(Tool t) { return t == Tool::Bezier || t == Tool::CuspedBezier || t == Tool::BSpline || t == Tool::OpenSpline || t == Tool::XSpline; }  // click points
 bool boxTool(Tool t) { return t == Tool::Ellipse || t == Tool::Rectangle || t == Tool::CuspedRectangle; }                     // drag a box
 
 // The toolbar's groups (as the classic roto toolbar: select, points, shapes; RotoPaint's brushes).
@@ -77,10 +83,19 @@ int groupOf(Tool t) {
     if (t == Tool::Clone || t == Tool::Reveal || t == Tool::Repair) return 4;
     if (t == Tool::Blur || t == Tool::Sharpen || t == Tool::Smear) return 5;
     if (t == Tool::Dodge || t == Tool::Burn) return 6;
+    if (reshapeTool(t)) return 7;
     return 2;
 }
+// Whether node n has tool t (RotoPaint's brushes, Power Roto's own tools).
+bool toolAvailable(const Node* n, Tool t) { return paintTool(t) ? paintNode(n) : powerTool(t) ? powerNode(n) : true; }
+// The blending modes a shape can have.
+const std::vector<const char*>& blendModes(const Node* n) {
+    static const std::vector<const char*> classic = {"over", "plus", "minus", "max", "min", "multiply"};
+    static const std::vector<const char*> power = {"over", "add", "subtract", "multiply", "difference", "max", "min"};
+    return powerNode(n) ? power : classic;
+}
 const std::vector<ToolInfo>& groupTools(int g) {
-    static const std::vector<ToolInfo> groups[7] = {
+    static const std::vector<ToolInfo> groups[8] = {
         {{Tool::Select, "Select All", "", "Select points, tangents, feather points and whole shapes; the transform jack"},
          {Tool::SelectSplines, "Select Splines", "", "Select and move whole shapes"},
          {Tool::SelectPoints, "Select Points", "", "Select and move points and their tangents only"},
@@ -97,7 +112,10 @@ const std::vector<ToolInfo>& groupTools(int g) {
          {Tool::Ellipse, "Ellipse", "V", "Drag a box (Shift: a circle)"},
          {Tool::Rectangle, "Rectangle", "V", "Drag a box (Shift: a square); its corners can be smoothed"},
          {Tool::CuspedRectangle, "Cusped Rectangle", "V", "Drag a box: sharp corners"},
-         {Tool::OpenSpline, "Open Spline", "V", "Click points for a line with a width; Enter finishes"}},
+         {Tool::OpenSpline, "Open Spline", "V", "Click points for a line with a width; Enter finishes"},
+         {Tool::XSpline, "X-Spline", "V", "Click to add points: each one smooth, a corner or B-spline (the type in the tool bar; Z / Shift+Z / Shift+B: smooth / corner / B-spline)"},
+         {Tool::Freehand, "Freehand", "V", "Drag around the shape: it becomes a smooth Bezier (detail: how closely it follows)"},
+         {Tool::MagneticFreehand, "Magnetic Freehand", "V", "Drag roughly along an edge in the picture: the shape snaps onto it"}},
         {{Tool::Brush, "Brush", "N", "Drag to paint. Shift+drag: brush size"},
          {Tool::Eraser, "Eraser", "N", "Drag to erase paint"}},
         {{Tool::Clone, "Clone", "C", "Ctrl+click the source, then paint"},
@@ -108,8 +126,12 @@ const std::vector<ToolInfo>& groupTools(int g) {
          {Tool::Sharpen, "Sharpen", "X", "Paint sharper detail (effect: how much)"},
          {Tool::Smear, "Smear", "X", "Drag the picture along the stroke"}},
         {{Tool::Dodge, "Dodge", "D", "Paint brighter (effect: how much)"},
-         {Tool::Burn, "Burn", "D", "Paint darker (effect: how much)"}}};
-    return groups[std::clamp(g, 0, 6)];
+         {Tool::Burn, "Burn", "D", "Paint darker (effect: how much)"}},
+        {{Tool::MagneticReshape, "Magnetic Reshape", "", "Drag near a curve: the points nearest move most, falling off over the radius.\n"
+                                                         "Works on the selected shapes (or all of them). Shift+drag: the radius"},
+         {Tool::BrushReshape, "Brush Reshape", "", "Brush the curve into shape: points under the circle are pushed along as you drag.\n"
+                                                   "Shift+drag: the radius"}}};
+    return groups[std::clamp(g, 0, 7)];
 }
 
 // A line icon for each tool (drawn, so it is sharp at any size), centred on c, about 2s across.
@@ -174,6 +196,33 @@ void toolIcon(ImDrawList* dl, Tool t, ImVec2 c, float s, ImU32 col) {
                 dl->AddRectFilled(ImVec2(q.x - s * 0.13f, q.y - s * 0.13f), ImVec2(q.x + s * 0.13f, q.y + s * 0.13f), col);
             break;
         case Tool::OpenSpline: dl->AddBezierCubic(P(-0.9f, 0.6f), P(-0.4f, -0.9f), P(0.3f, 0.9f), P(0.9f, -0.5f), col, w * 2.2f); break;
+        case Tool::XSpline: {  // a curve through a round point, a square corner and past a B-spline point
+            dl->AddBezierCubic(P(-0.9f, 0.7f), P(-0.5f, -0.6f), P(0.0f, -0.6f), P(0.2f, 0.1f), col, w);
+            dl->AddLine(P(0.2f, 0.1f), P(0.9f, -0.7f), col, w);
+            dl->AddCircleFilled(P(-0.42f, -0.28f), s * 0.13f, col);
+            dl->AddRectFilled(P(0.1f, 0.0f), P(0.3f, 0.2f), col);
+            dl->AddTriangleFilled(P(0.9f, -0.95f), P(1.0f, -0.75f), P(0.8f, -0.75f), col);
+            break;
+        }
+        case Tool::Freehand:
+        case Tool::MagneticFreehand: {
+            ImVec2 pts[9];
+            for (int k = 0; k < 9; ++k) pts[k] = P(-0.9f + k * 0.2f, 0.35f * std::sin(k * 1.3f) + (t == Tool::MagneticFreehand ? 0.25f : 0.0f));
+            dl->AddPolyline(pts, 9, col, 0, w);
+            if (t == Tool::MagneticFreehand) {  // a magnet
+                dl->PathArcTo(P(0, -0.55f), s * 0.35f, 0.0f, 3.14159f, 10);
+                dl->PathStroke(col, 0, w * 1.6f);
+            }
+            break;
+        }
+        case Tool::MagneticReshape:
+        case Tool::BrushReshape: {
+            dl->AddCircle(c, s * 0.85f, col, 0, w * 0.8f);
+            if (t == Tool::BrushReshape) dl->AddCircleFilled(c, s * 0.3f, col);
+            dl->AddBezierCubic(P(-0.9f, 0.5f), P(-0.3f, 0.5f), P(-0.2f, -0.3f), P(0.6f, -0.3f), col, w);
+            dl->AddTriangleFilled(P(0.95f, -0.3f), P(0.55f, -0.5f), P(0.55f, -0.1f), col);
+            break;
+        }
         case Tool::Brush:
             dl->AddLine(P(0.8f, -0.8f), P(-0.1f, 0.2f), col, w * 1.6f);
             dl->AddCircleFilled(P(-0.4f, 0.5f), s * 0.38f, col);
@@ -386,7 +435,7 @@ roto::V2 pivotOf(const json& s, double frame) {
 }
 
 const char* toolName(Tool t) {
-    for (int g = 0; g < 7; ++g)
+    for (int g = 0; g < 8; ++g)
         for (auto& ti : groupTools(g))
             if (ti.t == t) return ti.name;
     return "";
@@ -564,11 +613,11 @@ void closeDrawing(App& app, UiState& ui, Node* n) {
         Pts pts = r.drawPts;
         double frame = app.frame;
         bool ak = r.autokey;
-        bool bs = r.tool == Tool::BSpline;
-        std::string name = uniqueName(itemsOf(n), bs ? "Bspline" : open ? "OpenSpline" : "Bezier");
+        bool bs = r.tool == Tool::BSpline, xs = r.tool == Tool::XSpline;
+        std::string name = uniqueName(itemsOf(n), bs ? "Bspline" : xs ? "Xspline" : open ? "OpenSpline" : "Bezier");
         int index = (int)itemsOf(n).size();
         roto::V2 c = centroid(pts);
-        json base = {{"name", name}, {"kind", bs ? "bspline" : "bezier"}, {"closed", !open},
+        json base = {{"name", name}, {"kind", bs ? "bspline" : xs ? "xspline" : "bezier"}, {"closed", !open},
                      {"transform", {{"center", {std::round(c.x), std::round(c.y)}}}}};
         if (open) base["width"] = r.newWidth;
         newShapeSettings(base, r, frame);
@@ -767,7 +816,7 @@ Disp makeDisp(const json& items, const json& s, double frame, const ViewXf& xf) 
     d.visible = roto::shown(items, s, frame) || (s.value("visible", true) && !roto::alive(s, frame));
     d.alive = roto::alive(s, frame);
     d.closed = s.value("closed", true);
-    d.bspline = s.value("kind", std::string()) == "bspline";
+    d.bspline = s.value("kind", std::string()) == "bspline" || s.value("kind", std::string()) == "xspline";  // (control points off the curve)
     const roto::Xf parent = roto::parentTransformAt(items, s, frame);
     if (d.stroke && !d.alive) return d;  // a stroke on another frame: nothing to draw or pick (cleanup paint has thousands)
     d.M = roto::worldTransformAt(items, s, frame);
@@ -940,6 +989,11 @@ void pointToolClick(App& app, UiState& ui, Node* n, const std::vector<Disp>& ds,
                 const bool cusp = r.tool == Tool::CuspPoints;
                 editSelectedPoints(app, ui, n, [cusp](Pts& pts, const json& s, const std::vector<int>& idx) {
                     if (s.value("kind", std::string()) == "bspline") return;
+                    if (s.value("kind", std::string()) == "xspline") {  // an X-spline point's type: a corner / smooth
+                        for (int i : idx)
+                            if (i < (int)pts.size()) pts[i].s = cusp ? 0 : -1;
+                        return;
+                    }
                     for (int i : idx) {
                         if (cusp) roto::cuspPoint(pts, i);
                         else roto::smoothPoint(pts, s.value("closed", true), i);
@@ -987,11 +1041,137 @@ void pointToolClick(App& app, UiState& ui, Node* n, const std::vector<Disp>& ds,
     }
 }
 
+// ---- Power Roto
+
+// Each shape's outline in its own colour (its "ui_color", or one of a set by its place in the list).
+ImU32 shapeUiColor(const json& s, int index) {
+    if (s.contains("ui_color") && s["ui_color"].is_array() && s["ui_color"].size() >= 3) {
+        auto c = [&](int k) { return (int)std::lround(std::clamp(s["ui_color"][k].get<double>(), 0.0, 1.0) * 255); };
+        return IM_COL32(c(0), c(1), c(2), 255);
+    }
+    static const ImU32 pal[8] = {IM_COL32(236, 96, 120, 255), IM_COL32(90, 200, 255, 255), IM_COL32(120, 230, 110, 255),
+                                 IM_COL32(250, 170, 60, 255), IM_COL32(190, 130, 255, 255), IM_COL32(60, 230, 210, 255),
+                                 IM_COL32(255, 120, 200, 255), IM_COL32(230, 230, 90, 255)};
+    return pal[(index % 8 + 8) % 8];
+}
+
+// The picture in the viewer as an edge map (what Magnetic Freehand and snapping follow), built once
+// per render.
+const roto::EdgeMap& viewerEdges(App& app) {
+    static roto::EdgeMap e;
+    static uint64_t serial = ~0ull;
+    const ViewResult& res = app.result();
+    if (!res.image) {
+        e = roto::EdgeMap();
+        serial = ~0ull;
+    } else if (res.serial != serial) {
+        e = roto::edgeMap(*res.image, res.scale);
+        serial = res.serial;
+    }
+    return e;
+}
+
+// An item's points moved softly (Magnetic / Brush Reshape) in image space, carried back into its own
+// space: the nearer a point is to `centre`, the more of `delta` it takes.
+Pts reshapeItem(const Pts& from, const roto::Xf& M, const roto::Xf& Minv, roto::V2 centre, double radius, roto::V2 delta) {
+    Pts out = from;
+    for (auto& p : out) {
+        const roto::V2 w = M.apply(p.x, p.y);
+        const double wt = roto::softWeight(std::hypot(w.x - centre.x, w.y - centre.y), radius);
+        if (wt <= 0) continue;
+        const roto::V2 o = Minv.apply(w.x + delta.x * wt, w.y + delta.y * wt);
+        p.x = o.x, p.y = o.y;
+    }
+    return out;
+}
+
+// The freehand stroke just drawn as a new closed Bezier (Magnetic Freehand: pulled onto the edges first).
+void commitFreehand(App& app, UiState& ui, Node* n, float zoom) {
+    RotoState& r = ui.roto;
+    std::vector<roto::V2> path = std::move(r.freehandPts);
+    r.freehandPts.clear();
+    if (path.size() < 3) return;
+    double x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30;
+    for (auto& p : path) x1 = std::min(x1, p.x), y1 = std::min(y1, p.y), x2 = std::max(x2, p.x), y2 = std::max(y2, p.y);
+    if ((x2 - x1) * zoom < 4 || (y2 - y1) * zoom < 4) return;  // (a click, not a shape)
+    const bool magnetic = r.tool == Tool::MagneticFreehand;
+    if (magnetic) {
+        const roto::EdgeMap& e = viewerEdges(app);
+        if (e.empty()) app.message("Magnetic Freehand: no picture in the viewer to follow - drawn as freehand");
+        else path = roto::magneticPath(e, path, r.magneticRadius, true);
+    }
+    // detail 1: within ~0.4 screen pixels of the stroke; 0: within ~6 (fewer points)
+    const double tol = (0.4 + (1.0 - std::clamp(r.freehandDetail, 0.0f, 1.0f)) * 6.0) / std::max(0.05f, zoom);
+    const Pts pts = roto::freehandCurve(path, true, tol);
+    if (pts.size() < 3) {
+        app.message("Freehand: too small for a shape");
+        return;
+    }
+    const json& items = itemsOf(n);
+    const double frame = app.frame;
+    const bool ak = r.autokey;
+    const int index = (int)items.size();
+    const roto::V2 c = centroid(pts);
+    json base = {{"name", uniqueName(items, magnetic ? "Magnetic" : "Freehand")}, {"kind", "bezier"}, {"closed", true},
+                 {"transform", {{"center", {std::round(c.x), std::round(c.y)}}}}};
+    newShapeSettings(base, r, frame);
+    app.checkpoint();
+    editShapes(app, n->name, [pts, frame, ak, base](json& shapes) {
+        json s = base;
+        roto::setPointsAt(s, frame, pts, ak);
+        shapes.push_back(s);
+    });
+    r.sel.clear();
+    for (int i = 0; i < (int)pts.size(); ++i) r.sel.insert({index, i});
+    r.curShape = index;
+    r.node = n->name;
+}
+
+// The selected points onto the nearest edges in the picture (Alt+S).
+void snapSelectedToEdges(App& app, UiState& ui, Node* n) {
+    RotoState& r = ui.roto;
+    const roto::EdgeMap& e = viewerEdges(app);
+    if (e.empty()) {
+        app.message("snap to edges: no picture in the viewer to snap to");
+        return;
+    }
+    const json& items = itemsOf(n);
+    const double frame = app.frame;
+    std::map<int, Pts> res;
+    int count = 0;
+    for (auto& [si, idx] : selByShape(r)) {
+        if (si < 0 || si >= (int)items.size() || roto::isStroke(items[si]) || roto::isLayer(items[si]) || lockedItem(items, items[si])) continue;
+        const json& s = items[si];
+        Pts pts = roto::pointsAt(s, frame);
+        const roto::Xf M = roto::worldTransformAt(items, s, frame), Mi = M.inverse();
+        for (int i : idx) {
+            if (i >= (int)pts.size()) continue;
+            const roto::V2 w = M.apply(pts[i].x, pts[i].y), q = roto::snapToEdge(e, w, r.magneticRadius);
+            if (q.x == w.x && q.y == w.y) continue;
+            const roto::V2 o = Mi.apply(q.x, q.y);
+            pts[i].x = o.x, pts[i].y = o.y;
+            ++count;
+        }
+        res[si] = pts;
+    }
+    if (!count) {
+        app.message("snap to edges: no edge within " + std::to_string((int)r.magneticRadius) + " px of the selected points");
+        return;
+    }
+    const bool ak = r.autokey;
+    app.checkpoint();
+    editShapes(app, n->name, [res, frame, ak](json& sh) {
+        for (auto& [si, pts] : res)
+            if (si < (int)sh.size()) roto::setPointsAt(sh[si], frame, pts, ak);
+    });
+    app.message("snapped " + std::to_string(count) + " point(s) to edges");
+}
+
 }  // namespace
 
 static bool hasViewerTools(const Node* n) {
     const std::string& t = n->type;
-    return t == "Roto" || t == "RotoPaint" || t == "SplineWarp" || t == "SplineFlow" || t == "Tracker" || t == "PlanarTracker" ||
+    return t == "Roto" || t == "RotoPaint" || t == "PowerRoto" || t == "SplineWarp" || t == "SplineFlow" || t == "Tracker" || t == "PlanarTracker" ||
            t == "CameraTracker" || t == "FlowField" || t == "TrackMask" || t == "Transform" || t == "Position" || t == "CornerPin2D" ||
            t == "TransformMasked" || t == "GridWarp" || hasKnobHandles(t);
 }
@@ -1012,7 +1192,7 @@ Node* activeToolNode(App& app) {
 
 Node* activeRoto(App& app) {
     Node* n = activeToolNode(app);
-    return n && (n->type == "Roto" || n->type == "RotoPaint" || n->type == "SplineWarp" || n->type == "SplineFlow") ? n : nullptr;
+    return n && (rotoLike(n) || n->type == "SplineWarp" || n->type == "SplineFlow") ? n : nullptr;
 }
 
 void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hoveredIn) {
@@ -1034,7 +1214,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         // one that already has shapes opens ready to adjust them; an empty one, ready to draw
         if (!paintTool(r.tool)) r.tool = itemsOf(n).empty() ? Tool::Bezier : Tool::Select;
     }
-    if (!paintNode(n) && paintTool(r.tool)) r.tool = Tool::Select;
+    if (!toolAvailable(n, r.tool)) r.tool = Tool::Select;
     ImGuiIO& io = ImGui::GetIO();
     const ImVec2 mouse = io.MousePos;
     const ImVec2 mouseImg = xf.toImage(mouse);
@@ -1091,6 +1271,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         static ImVec2 menuAt;
         std::vector<int> groups = {0, 1, 2};
         if (paintNode(n)) groups.insert(groups.end(), {3, 4, 5, 6});
+        if (powerNode(n)) groups.push_back(7);  // reshape
         const float bw = 34, bh = 30, x = p0.x + 6;
         float y = p0.y + 6;
         const int cur = groupOf(r.tool);
@@ -1103,7 +1284,8 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         for (size_t gi = 0; gi < groups.size(); ++gi) {
             const int g = groups[gi];
             if (gi == 3) y += 8;  // the brushes, apart
-            const Tool shown = g == cur ? r.tool : r.lastOf[g];
+            Tool shown = g == cur ? r.tool : r.lastOf[g];
+            if (!toolAvailable(n, shown)) shown = groupTools(g)[0].t;  // (last used on a Power Roto)
             const ImVec2 a(x, y), b(x + bw, y + bh);
             const bool hov = mouse.x >= a.x && mouse.x < b.x && mouse.y >= a.y && mouse.y < b.y;
             const bool on = g == cur, many = groupTools(g).size() > 1;
@@ -1147,6 +1329,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         if (ImGui::BeginPopup("##rotoToolMenu")) {
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) overToolbar = true;  // (outside it: the viewer)
             for (auto& ti : groupTools(menuGroup)) {
+                if (!toolAvailable(n, ti.t)) continue;
                 ImGui::PushID((int)ti.t);
                 const ImVec2 at = ImGui::GetCursorScreenPos();
                 const float rh = ImGui::GetFrameHeight();
@@ -1199,6 +1382,19 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         const Disp& d = ds[i];
         const bool sel = selItems.count((int)i) > 0;
         ImU32 col = !d.visible || !d.alive ? kHidden : sel ? kCurveSel : d.stroke ? kStroke : kCurve;
+        if (powerNode(n) && !d.stroke && d.visible && d.alive) {
+            // Power Roto: each shape in its own colour, optionally filled, faded with its opacity
+            if (!sel && r.shapeColors) col = shapeUiColor(items[i], (int)i);
+            float op = 1;
+            if (r.fadeOutline) op = (float)std::clamp(params::evalScalar(items[i].value("opacity", json(1.0)), frame, 1.0), 0.15, 1.0);
+            if (op < 1) col = (col & 0x00FFFFFF) | ((ImU32)(255 * op) << 24);
+            if (r.fillShapes && d.closed && d.poly.size() >= 3) {
+                std::vector<ImVec2> fill;
+                fill.reserve(d.poly.size());
+                for (auto& v : d.poly) fill.push_back(iv(v));
+                dl->AddConcavePolyFilled(fill.data(), (int)fill.size(), (col & 0x00FFFFFF) | ((ImU32)(60 * op) << 24));
+            }
+        }
         if (d.locked) col = (col & 0x00FFFFFF) | 0x70000000;  // locked: faint
         if (d.stroke) {
             if (d.alive || sel) polyline(dl, d.poly, col, false, sel ? 2.0f : 1.0f);
@@ -1294,8 +1490,9 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
     // ---- shape being drawn
     if (r.drawing && !r.drawPts.empty()) {
         Pts preview = r.drawPts;
-        bool bs = r.tool == Tool::BSpline;
-        if (bs && preview.size() >= 3) preview = roto::toBezier(json{{"kind", "bspline"}}, preview);
+        const bool xsp = r.tool == Tool::XSpline;
+        bool bs = r.tool == Tool::BSpline || xsp;
+        if (bs && preview.size() >= 3) preview = roto::toBezier(json{{"kind", xsp ? "xspline" : "bspline"}, {"closed", true}}, preview);
         Pts sp = toScreenPts(preview, xf);
         polyline(dl, roto::flatten(sp, bs && preview.size() >= 3, 1.0), kCurveSel, bs && preview.size() >= 3, 1.5f);
         Pts cps = toScreenPts(r.drawPts, xf);
@@ -1338,6 +1535,21 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
 
     // ---- paint preview: brush circle, stroke so far, clone source
     const bool inViewport = mouse.x >= p0.x && mouse.x < p1.x && mouse.y >= p0.y && mouse.y < p1.y;
+    // Power Roto: the freehand stroke so far, the reshape tools' circle
+    if (r.drag == Drag::Freehand && r.freehandPts.size() >= 2) {
+        std::vector<roto::V2> sp;
+        for (auto& p : r.freehandPts) {
+            const ImVec2 q = xf.toScreen(p.x, p.y);
+            sp.push_back({q.x, q.y});
+        }
+        polyline(dl, sp, r.tool == Tool::MagneticFreehand ? IM_COL32(120, 200, 255, 230) : kCurveSel, false, 1.5f);
+    }
+    if (reshapeTool(r.tool) && inViewport && !overToolbar) {
+        const ImVec2 at = r.drag == Drag::ReshapeSize ? r.dragStartScreen : r.drag == Drag::Reshape && r.tool == Tool::MagneticReshape ? r.dragStartScreen : mouse;
+        dl->AddCircle(at, std::max(2.0f, r.reshapeRadius * xf.zoom), IM_COL32(255, 255, 255, 170), 64, 1.0f);
+        if (r.tool == Tool::BrushReshape) dl->AddCircle(at, std::max(1.0f, r.reshapeRadius * xf.zoom * 0.35f), IM_COL32(255, 255, 255, 70), 48, 1.0f);
+        if (r.drag == Drag::Reshape && r.tool == Tool::MagneticReshape) dl->AddLine(r.dragStartScreen, mouse, IM_COL32(255, 196, 80, 160), 1.0f);
+    }
     if (paintTool(r.tool) && inViewport && !overToolbar) {
         float rad = std::max(1.0f, r.brushSize * 0.5f * xf.zoom);
         ImVec2 at = r.drag == Drag::BrushSize ? r.dragStartScreen : mouse;
@@ -1385,6 +1597,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Tool::Bezier:
             case Tool::CuspedBezier:
             case Tool::OpenSpline:
+            case Tool::XSpline:
             case Tool::BSpline: {
                 if (r.drawing && r.drawPts.size() >= 3) {
                     ImVec2 first = xf.toScreen(r.drawPts[0].x, r.drawPts[0].y);
@@ -1404,6 +1617,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 Pt p;
                 p.x = mouseImg.x;
                 p.y = mouseImg.y;
+                if (r.tool == Tool::XSpline) p.s = r.newXType;  // (the tool bar's point type)
                 r.drawPts.push_back(p);
                 r.drag = r.tool == Tool::Bezier || r.tool == Tool::OpenSpline ? Drag::NewTangent : Drag::None;  // (cusped: no tangents)
                 break;
@@ -1412,6 +1626,26 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Tool::Rectangle:
             case Tool::CuspedRectangle:
                 r.drag = Drag::Box;
+                break;
+            case Tool::Freehand:
+            case Tool::MagneticFreehand:
+                r.freehandPts = {{mouseImg.x, mouseImg.y}};
+                r.drag = Drag::Freehand;
+                break;
+            case Tool::MagneticReshape:
+            case Tool::BrushReshape:
+                if (io.KeyShift) {  // the radius
+                    r.drag = Drag::ReshapeSize;
+                    r.origBrushSize = r.reshapeRadius;
+                    break;
+                }
+                // the selected shapes, or every one that can be edited here
+                for (int si = 0; si < (int)ds.size(); ++si) {
+                    if (ds[si].stroke || !ds[si].alive || !ds[si].visible || ds[si].locked || roto::isLayer(items[si])) continue;
+                    if (!selItems.empty() && !selItems.count(si)) continue;
+                    r.orig[si] = roto::pointsAt(items[si], frame);
+                }
+                r.drag = r.orig.empty() ? Drag::None : Drag::Reshape;
                 break;
             case Tool::AddPoints:
             case Tool::RemovePoints:
@@ -1649,6 +1883,40 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Drag::BrushSize:
                 r.brushSize = std::clamp(r.origBrushSize + (mouse.x - r.dragStartScreen.x) / xf.zoom, 1.0f, 2000.0f);
                 break;
+            case Drag::ReshapeSize:
+                r.reshapeRadius = std::clamp(r.origBrushSize + (mouse.x - r.dragStartScreen.x) / xf.zoom, 1.0f, 5000.0f);
+                break;
+            case Drag::Freehand:
+                if (!r.freehandPts.empty()) {
+                    const ImVec2 last = xf.toScreen(r.freehandPts.back().x, r.freehandPts.back().y);
+                    if (dist(last, mouse) >= 2.0f) r.freehandPts.push_back({mouseImg.x, mouseImg.y});
+                }
+                break;
+            case Drag::Reshape: {
+                if ((!movedEnough && !r.dragChanged) || (r.dragChanged && !mouseMoved)) break;
+                if (!r.dragChanged) app.checkpoint();
+                r.dragChanged = true;
+                std::map<int, Pts> result;
+                const double rad = r.reshapeRadius;
+                if (r.tool == Tool::MagneticReshape) {  // from where the drag began, by the whole drag
+                    for (auto& [si, from] : r.orig)
+                        if (si < (int)ds.size()) result[si] = reshapeItem(from, ds[si].M, ds[si].Minv, {r.dragStartImg.x, r.dragStartImg.y}, rad, {dx, dy});
+                } else {  // brush: from where the mouse was, by this move (the points keep up with it)
+                    const ImVec2 prevImg = xf.toImage(ImVec2(mouse.x - io.MouseDelta.x, mouse.y - io.MouseDelta.y));
+                    for (auto& [si, from] : r.orig)
+                        if (si < (int)ds.size()) {
+                            result[si] = reshapeItem(from, ds[si].M, ds[si].Minv, {prevImg.x, prevImg.y}, rad,
+                                                     {mouseImg.x - prevImg.x, mouseImg.y - prevImg.y});
+                            from = result[si];
+                        }
+                }
+                const bool ak = r.autokey;
+                editShapes(app, n->name, [result, frame, ak](json& sh) {
+                    for (auto& [si, pts] : result)
+                        if (si < (int)sh.size()) roto::setPointsAt(sh[si], frame, pts, ak);
+                });
+                break;
+            }
             case Drag::Jack:
             case Drag::JackRotate: {
                 if ((!movedEnough && !r.dragChanged) || (r.dragChanged && !mouseMoved)) break;
@@ -1892,6 +2160,8 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 r.curShape = index;
                 r.tool = Tool::Select;  // back to selecting once the shape is made
             }
+        } else if (r.drag == Drag::Freehand) {
+            commitFreehand(app, ui, n, xf.zoom);
         } else if (r.drag == Drag::Marquee) {
             ImVec2 a(std::min(r.dragStartScreen.x, mouse.x), std::min(r.dragStartScreen.y, mouse.y));
             ImVec2 b(std::max(r.dragStartScreen.x, mouse.x), std::max(r.dragStartScreen.y, mouse.y));
@@ -1968,11 +2238,14 @@ bool rotoHotkeys(App& app, UiState& ui) {
         return io.KeyCtrl == ctrl && io.KeyShift == shift && !io.KeyAlt && ImGui::IsKeyPressed(k, false);
     };
     auto cycle = [&](int g) {  // Q / V: the group's tools in turn (from its last one when another group is active)
-        const auto& tl = groupTools(g);
-        if (groupOf(r.tool) != g) return setTool(app, ui, n, r.lastOf[g]);
+        std::vector<Tool> tl;
+        for (auto& ti : groupTools(g))
+            if (toolAvailable(n, ti.t)) tl.push_back(ti.t);
+        if (tl.empty()) return;
+        if (groupOf(r.tool) != g) return setTool(app, ui, n, toolAvailable(n, r.lastOf[g]) ? r.lastOf[g] : tl[0]);
         for (size_t i = 0; i < tl.size(); ++i)
-            if (tl[i].t == r.tool) return setTool(app, ui, n, tl[(i + 1) % tl.size()].t);
-        setTool(app, ui, n, tl[0].t);
+            if (tl[i] == r.tool) return setTool(app, ui, n, tl[(i + 1) % tl.size()]);
+        setTool(app, ui, n, tl[0]);
     };
     if (pressed(ImGuiKey_V)) {
         cycle(2);
@@ -2005,11 +2278,31 @@ bool rotoHotkeys(App& app, UiState& ui) {
     }
     if (r.sel.empty()) return false;
     if (pressed(ImGuiKey_Escape)) { r.sel.clear(); return true; }
+    if (powerNode(n)) {
+        // Alt+S: the selected points onto the nearest edges in the picture
+        if (!io.KeyCtrl && !io.KeyShift && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+            snapSelectedToEdges(app, ui, n);
+            return true;
+        }
+        if (pressed(ImGuiKey_B, false, true)) {  // Shift+B: selected X-spline points become B-spline points
+            editSelectedPoints(app, ui, n, [](Pts& pts, const json& s, const std::vector<int>& idx) {
+                if (s.value("kind", std::string()) != "xspline") return;
+                for (int i : idx)
+                    if (i < (int)pts.size()) pts[i].s = 1;
+            });
+            return true;
+        }
+    }
     if (pressed(ImGuiKey_Delete) || pressed(ImGuiKey_Backspace)) { deleteSelected(app, ui, n); return true; }
     if (pressed(ImGuiKey_Z) || pressed(ImGuiKey_Z, false, true)) {
         bool cusp = io.KeyShift;
         editSelectedPoints(app, ui, n, [cusp](Pts& pts, const json& s, const std::vector<int>& idx) {
             if (s.value("kind", std::string()) == "bspline") return;
+            if (s.value("kind", std::string()) == "xspline") {  // an X-spline point's type: a corner / smooth
+                for (int i : idx)
+                    if (i < (int)pts.size()) pts[i].s = cusp ? 0 : -1;
+                return;
+            }
             for (int i : idx) {
                 if (cusp) roto::cuspPoint(pts, i);
                 else roto::smoothPoint(pts, s.value("closed", true), i);
@@ -2087,7 +2380,8 @@ void drawRotoToolbar(App& app, UiState& ui) {
     if (toggle("autokey", r.autokey, "On: editing a shape sets a key at the current frame.\nOff: edits apply to the whole animation."))
         r.autokey = !r.autokey;
     gap();
-    const bool drawTool = curveTool(r.tool) || boxTool(r.tool);
+    const bool drawTool = curveTool(r.tool) || boxTool(r.tool) || freehandTool(r.tool);
+    const bool power = powerNode(n);
     if (drawTool) {  // what a new shape starts with
         label("new shape");
         ImGui::ColorEdit3("##newcol", r.newColor, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
@@ -2095,7 +2389,7 @@ void drawRotoToolbar(App& app, UiState& ui) {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(80);
         if (kit::beginComboFlat("##newblend", r.newBlend.c_str())) {
-            for (const char* o : {"over", "plus", "minus", "max", "min", "multiply"})
+            for (const char* o : blendModes(n))
                 if (ImGui::Selectable(o, r.newBlend == o)) r.newBlend = o;
             ImGui::EndCombo();
         }
@@ -2124,6 +2418,47 @@ void drawRotoToolbar(App& app, UiState& ui) {
             ImGui::DragFloat("##newwidth", &r.newWidth, 0.25f, 0.5f, 1000, "%.1f");
             ImGui::SameLine();
         }
+        if (r.tool == Tool::XSpline) {
+            label("points");
+            ImGui::SetNextItemWidth(92);
+            const char* tn = r.newXType <= -0.99f ? "smooth" : std::fabs(r.newXType) < 0.01f ? "corner" : r.newXType >= 0.99f ? "B-spline" : "custom";
+            if (kit::beginComboFlat("##xtype", tn)) {
+                for (auto [nm, v] : {std::pair<const char*, float>{"smooth", -1.0f}, {"corner", 0.0f}, {"B-spline", 1.0f}})
+                    if (ImGui::Selectable(nm, r.newXType == v)) r.newXType = v;
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("New points: smooth (the curve passes through them, rounded),\na corner, or B-spline (the curve is pulled towards them)");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(46);
+            ImGui::DragFloat("##xtypev", &r.newXType, 0.01f, -1, 1, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("-1 smooth, 0 corner, 1 B-spline, or anything between");
+            ImGui::SameLine();
+        }
+        if (freehandTool(r.tool)) {
+            label("detail");
+            ImGui::SetNextItemWidth(50);
+            ImGui::SliderFloat("##fhdetail", &r.freehandDetail, 0, 1, "%.2f");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How closely the shape follows what you drew: more detail, more points");
+            ImGui::SameLine();
+            if (r.tool == Tool::MagneticFreehand) {
+                label("reach");
+                ImGui::SetNextItemWidth(46);
+                ImGui::DragFloat("##magrad", &r.magneticRadius, 0.25f, 1, 200, "%.0f px");
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("How far from your stroke it looks for an edge (image pixels). It follows the picture in the viewer:\n"
+                                      "view the plate (or this node over it, output alpha) for the edges you want.");
+                ImGui::SameLine();
+            }
+        }
+        gap();
+    } else if (reshapeTool(r.tool)) {
+        label("radius");
+        ImGui::SetNextItemWidth(56);
+        ImGui::DragFloat("##rsrad", &r.reshapeRadius, 0.5f, 1, 5000, "%.0f px");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far the reshape reaches (image pixels). Shift+drag in the viewer sets it");
+        ImGui::SameLine();
+        ImGui::TextDisabled(selItemsOf(r).empty() ? "(all shapes)" : "(selected shapes)");
+        ImGui::SameLine();
         gap();
     } else if (selectTool(r.tool) || pointTool(r.tool)) {  // the selection, and what's shown
         if (toggle("feather link", r.featherLink, "On: moving points takes their feather points along.\nOff: the feather points stay where they are."))
@@ -2163,6 +2498,47 @@ void drawRotoToolbar(App& app, UiState& ui) {
         if (toggle("hide jack", r.hideJack, "Hide the transform jack")) r.hideJack = !r.hideJack;
         if (toggle("jack on move", !r.hideJackOnMove, "Off: the jack hides while points are being moved")) r.hideJackOnMove = !r.hideJackOnMove;
         gap();
+        if (power) {
+            ImGui::BeginDisabled(r.sel.empty());
+            if (toggle("snap to edges", false, "Move the selected points onto the nearest edges in the picture in the viewer (Alt+S)"))
+                snapSelectedToEdges(app, ui, n);
+            ImGui::EndDisabled();
+            label("reach");
+            ImGui::SetNextItemWidth(46);
+            ImGui::DragFloat("##snaprad", &r.magneticRadius, 0.25f, 1, 200, "%.0f px");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("How far a point looks for an edge (image pixels)");
+            ImGui::SameLine();
+            // the selected X-spline points' type
+            bool anyX = false;
+            float xv = 0;
+            for (auto& [si, pi] : r.sel)
+                if (si < (int)items.size() && items[si].value("kind", std::string()) == "xspline") {
+                    const Pts p = roto::pointsAt(items[si], frame);
+                    if (pi < (int)p.size()) xv = (float)p[pi].s, anyX = true;
+                }
+            if (anyX) {
+                label("point type");
+                ImGui::SetNextItemWidth(60);
+                if (ImGui::SliderFloat("##selxtype", &xv, -1, 1, "%.2f")) {
+                    const double v = xv;
+                    const bool ak = r.autokey;
+                    auto groups = selByShape(r);
+                    if (ImGui::IsItemActivated()) app.checkpoint();
+                    editShapes(app, n->name, [groups, frame, ak, v](json& sh) {
+                        for (auto& [si, idx] : groups) {
+                            if (si >= (int)sh.size() || sh[si].value("kind", std::string()) != "xspline") continue;
+                            Pts p = roto::pointsAt(sh[si], frame);
+                            for (int i : idx)
+                                if (i < (int)p.size()) p[i].s = v;
+                            roto::setPointsAt(sh[si], frame, p, ak);
+                        }
+                    });
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The selected X-spline points: -1 smooth, 0 corner, 1 B-spline (Z / Shift+Z / Shift+B)");
+                ImGui::SameLine();
+            }
+            gap();
+        }
     }
     if (paintTool(r.tool)) {  // the brush: what the next stroke is
         if (r.tool == Tool::Brush) {
@@ -2256,6 +2632,12 @@ void drawRotoToolbar(App& app, UiState& ui) {
         }
     }
     if (!paintTool(r.tool)) {
+        if (power) {
+            if (toggle("colours", r.shapeColors, "Each shape's outline in its own colour (set it in the Shape tab)")) r.shapeColors = !r.shapeColors;
+            if (toggle("fill", r.fillShapes, "Fill the shapes lightly in their colours, to see what each one covers")) r.fillShapes = !r.fillShapes;
+            if (toggle("fade", r.fadeOutline, "Fade each outline with its shape's opacity")) r.fadeOutline = !r.fadeOutline;
+            gap();
+        }
         if (toggle("onion", r.onion, "Onion skin: the shapes a few frames back (red) and ahead (green)")) r.onion = !r.onion;
         if (r.onion) {
             ImGui::SetNextItemWidth(42);
@@ -2369,6 +2751,30 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
         }
     };
     walk("", 1);
+    // Power Roto's search: names containing the text; /l layers, /s shapes, /k keyed, /h hidden, /x locked
+    if (powerNode(n) && !r.listFilter.empty()) {
+        std::string f = r.listFilter, flag;
+        if (f.size() >= 2 && f[0] == '/') {
+            flag = f.substr(1, 1);
+            f = f.size() > 2 ? f.substr(2) : std::string();
+            while (!f.empty() && f[0] == ' ') f.erase(0, 1);
+        }
+        auto lower = [](std::string v) {
+            for (auto& ch : v) ch = (char)std::tolower((unsigned char)ch);
+            return v;
+        };
+        const std::string lf = lower(f);
+        rows.erase(std::remove_if(rows.begin(), rows.end(), [&](const std::pair<int, int>& rw) {
+                       const json& it = items[rw.first];
+                       if (!lf.empty() && lower(it.value("name", std::string())).find(lf) == std::string::npos) return true;
+                       if (flag == "l") return !roto::isLayer(it);
+                       if (flag == "s") return roto::isLayer(it) || roto::isStroke(it);
+                       if (flag == "k") return roto::keyFrames(it).empty();
+                       if (flag == "h") return it.value("visible", true);
+                       if (flag == "x") return !it.value("locked", false);
+                       return false;
+                   }), rows.end());
+    }
     // strokes on this frame (cleanup paint: a stroke or two per frame over thousands of frames)
     std::vector<int> onFrame;
     if (paint)
@@ -2403,6 +2809,12 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
     };
 
     ImGui::SeparatorText(paint ? "curves and strokes" : "curves");
+    if (powerNode(n)) {
+        char buf[128];
+        std::snprintf(buf, sizeof buf, "%s", r.listFilter.c_str());
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputTextWithHint("##curvesearch", "search  (/l layers, /s shapes, /k keyed, /h hidden, /x locked)", buf, sizeof buf)) r.listFilter = buf;
+    }
     if (paint) {
         char lbl[64];
         std::snprintf(lbl, sizeof lbl, "this frame only (%zu)##thisframe", onFrame.size());
@@ -2589,7 +3001,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 const std::string b = s.value("blend", std::string("over"));
                 if (ImGui::Selectable((b + "##bl").c_str(), false)) ImGui::OpenPopup("##blendpick");
                 if (ImGui::BeginPopup("##blendpick")) {
-                    for (const char* o : {"over", "plus", "minus", "max", "min", "multiply"})
+                    for (const char* o : blendModes(n))
                         if (ImGui::Selectable(o, b == o)) setItem(i, "blend", o);
                     ImGui::EndPopup();
                 }
@@ -3155,7 +3567,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 std::string b = s.value("blend", std::string("over"));
                 ImGui::SetNextItemWidth(120);
                 if (kit::beginComboFlat("##blend", b.c_str())) {
-                    for (const char* o : {"over", "plus", "minus", "max", "min", "multiply"})
+                    for (const char* o : blendModes(n))
                         if (ImGui::Selectable(o, b == o)) {
                             app.checkpoint();
                             itemSet("blend", o);
@@ -3463,6 +3875,204 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
         }
     }
 
+    if (section == 8) {  // Power Roto's Edge tab: grow / shrink, the edge blur, the channel, the outline colour
+        if (cs < 0 || layer || stroke) noShape("Select a shape for its edge.");
+        else {
+            number("grow / shrink", "grow", 0.0, -500, 500, "%.1f px", true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Moves the whole edge out (positive) or in (negative), feather and all");
+            number("blur", "blur", 0.0, 0, 500, "%.1f px", true);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Softens the edge this many pixels each way (on top of the feather)");
+            row("blur type");
+            {
+                const std::string bt = s.value("blur_type", std::string("centred"));
+                ImGui::SetNextItemWidth(120);
+                if (kit::beginComboFlat("##btype", bt.c_str())) {
+                    for (const char* o : {"centred", "inner", "outer"})
+                        if (ImGui::Selectable(o, bt == o)) {
+                            app.checkpoint();
+                            itemSet("blur_type", o);
+                        }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("centred: across the edge; inner: only inside it (the shape never grows);\nouter: only outside it (the inside stays solid)");
+            }
+            row("channel");
+            {
+                const std::string ch = s.value("channel", std::string());
+                ImGui::SetNextItemWidth(120);
+                if (kit::beginComboFlat("##chan", ch.empty() ? "output" : ch.c_str())) {
+                    for (const char* o : {"", "R", "G", "B", "A"})
+                        if (ImGui::Selectable(*o ? o : "output", ch == o)) {
+                            app.checkpoint();
+                            if (*o) itemSet("channel", o);
+                            else itemEdit([](json& x) { x.erase("channel"); });
+                        }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("output: the node's output channels (and the shape's colour). R, G, B or A: the shape is a\n"
+                                      "plain matte in that channel only - several mattes in one image, one per channel");
+            }
+            row("outline colour");
+            {
+                const ImU32 c = shapeUiColor(s, cs);
+                float col[3] = {((c >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f, ((c >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f, ((c >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f};
+                if (ImGui::ColorEdit3("##uicol", col, ImGuiColorEditFlags_NoInputs)) itemSet("ui_color", {col[0], col[1], col[2]});
+                if (ImGui::IsItemActivated()) app.checkpoint();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The shape's outline in the viewer (not its render)");
+            }
+        }
+    }
+
+    if (section == 9) {  // Power Roto's Points tab: point groups and whole-shape operations
+        // point groups: click recalls a saved selection; Ctrl+click saves the current one there
+        ImGui::SeparatorText("point groups");
+        const json groups = n->params.data.value("point_groups", json::object());
+        for (int g = 1; g <= 8; ++g) {
+            const std::string key = std::to_string(g);
+            const bool has = groups.contains(key) && !groups[key].empty();
+            if (g > 1) ImGui::SameLine(0, 3);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(has ? theme().segmentOn : theme().segment));
+            const bool click = ImGui::Button((key + "##pg").c_str(), ImVec2(26, 0));
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(has ? "Click: select group %s (%zu points). Ctrl+click: save the selection here instead" : "Ctrl+click: save the selected points as group %s", key.c_str(),
+                                  has ? groups[key].size() : (size_t)0);
+            if (!click) continue;
+            if (ImGui::GetIO().KeyCtrl) {
+                json pts = json::array();
+                for (auto& [si, pi] : r.sel)
+                    if (si < (int)items.size()) pts.push_back({items[si].value("name", std::string()), pi});
+                json all = groups;
+                if (pts.empty()) all.erase(key);
+                else all[key] = pts;
+                setParam("point_groups", all);
+            } else if (has) {
+                r.sel.clear();
+                r.fsel.clear();
+                for (auto& e : groups[key]) {
+                    if (!e.is_array() || e.size() != 2) continue;
+                    const std::string nm = e[0].get<std::string>();
+                    for (int si = 0; si < (int)items.size(); ++si)
+                        if (items[si].value("name", std::string()) == nm && e[1].get<int>() < (int)roto::pointsAt(items[si], frame).size()) {
+                            r.sel.insert({si, e[1].get<int>()});
+                            r.curShape = si;
+                        }
+                }
+            }
+        }
+        ImGui::SeparatorText("shapes");
+        std::set<int> selShapes;
+        for (int i : selItemsOf(r))
+            if (i < (int)items.size() && !roto::isStroke(items[i]) && !roto::isLayer(items[i])) selShapes.insert(i);
+        if (selShapes.empty() && cs >= 0 && !layer && !stroke) selShapes.insert(cs);
+        const auto selPts = selByShape(r);
+        auto op = [&](const char* label, const char* tip, bool ok, std::function<void()> fn) {
+            ImGui::BeginDisabled(!ok);
+            if (ImGui::Button(label)) fn();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", tip);
+            ImGui::EndDisabled();
+            ImGui::SameLine(0, 4);
+        };
+        const std::vector<int> shapesV(selShapes.begin(), selShapes.end());
+        op("reverse", "The selected shapes' points in the other order (the curve doesn't change)", !shapesV.empty(), [&] {
+            app.checkpoint();
+            editShapes(app, name, [shapesV](json& sh) {
+                for (int i : shapesV)
+                    if (i < (int)sh.size()) roto::forEachKey(sh[i], [](const Pts& p) { return roto::reversed(p); });
+            });
+            r.sel.clear();
+        });
+        op("distribute", "Spread the selected shapes' points evenly along their curves (every key)", !shapesV.empty(), [&] {
+            app.checkpoint();
+            editShapes(app, name, [shapesV](json& sh) {
+                for (int i : shapesV) {
+                    if (i >= (int)sh.size()) continue;
+                    const std::string k = sh[i].value("kind", std::string());
+                    const bool closed = sh[i].value("closed", true), ctrl = k == "bspline" || k == "xspline";
+                    roto::forEachKey(sh[i], [&](const Pts& p) { return ctrl ? roto::distributePolygon(p, closed) : roto::distributeBezier(p, closed); });
+                }
+            });
+        });
+        op("tween", "A key on this frame on the straight line between the keys either side\n(takes the overshoot out of an in-between)", !shapesV.empty(), [&] {
+            int done = 0;
+            for (int i : shapesV) {
+                json t = items[i];
+                done += roto::tweenKey(t, frame) ? 1 : 0;
+            }
+            if (!done) {
+                app.message("tween: the selected shapes need a key before and after this frame");
+                return;
+            }
+            app.checkpoint();
+            editShapes(app, name, [shapesV, frame](json& sh) {
+                for (int i : shapesV)
+                    if (i < (int)sh.size()) roto::tweenKey(sh[i], frame);
+            });
+        });
+        op("to Bezier", "Turn the selected B-splines and X-splines into Beziers (the same curve, with tangents)", !shapesV.empty(), [&] {
+            app.checkpoint();
+            editShapes(app, name, [shapesV](json& sh) {
+                for (int i : shapesV)
+                    if (i < (int)sh.size()) roto::convertToBezier(sh[i]);
+            });
+            r.sel.clear();
+        });
+        ImGui::NewLine();
+        // split: two points of one closed shape; extract: some points of one shape; join: two open shapes
+        const bool twoOnOne = selPts.size() == 1 && selPts.begin()->second.size() == 2;
+        op("split", "Select two points of a closed shape: it splits in two along the line between them", twoOnOne, [&] {
+            const int si = selPts.begin()->first, a = selPts.begin()->second[0], b = selPts.begin()->second[1];
+            json test = items[si];
+            const std::string nn = uniqueName(items, items[si].value("name", std::string("Shape")) + "_");
+            if (roto::splitShape(test, a, b, nn).is_null()) {
+                app.message("split: pick two points of a closed shape that aren't next to each other");
+                return;
+            }
+            app.checkpoint();
+            editShapes(app, name, [si, a, b, nn](json& sh) {
+                if (si >= (int)sh.size()) return;
+                json other = roto::splitShape(sh[si], a, b, nn);
+                if (!other.is_null()) sh.insert(sh.begin() + si + 1, other);
+            });
+            r.sel.clear();
+        });
+        const bool somePts = selPts.size() == 1 && selPts.begin()->second.size() >= 2 &&
+                             selPts.begin()->second.size() < roto::pointsAt(items[selPts.begin()->first], frame).size();
+        op("extract", "A new shape from the selected points of a shape (the original stays)", somePts, [&] {
+            const int si = selPts.begin()->first;
+            const std::vector<int> idx = selPts.begin()->second;
+            const std::string nn = uniqueName(items, items[si].value("name", std::string("Shape")) + "_");
+            app.checkpoint();
+            editShapes(app, name, [si, idx, nn](json& sh) {
+                if (si >= (int)sh.size()) return;
+                json e = roto::extractPoints(sh[si], idx, nn);
+                if (!e.is_null()) sh.push_back(e);
+            });
+            r.sel.clear();
+        });
+        bool twoOpen = shapesV.size() == 2;
+        for (int i : shapesV) twoOpen = twoOpen && !items[i].value("closed", true);
+        if (twoOpen) twoOpen = items[shapesV[0]].value("parent", std::string()) == items[shapesV[1]].value("parent", std::string());
+        op("join", "Join two open shapes (in the same layer) end to end into one", twoOpen, [&] {
+            const int a = shapesV[0], b = shapesV[1];
+            const std::string nn = items[a].value("name", std::string("Shape"));
+            app.checkpoint();
+            editShapes(app, name, [a, b, nn](json& sh) {
+                if (b >= (int)sh.size()) return;
+                json j = roto::joinShapes(sh[a], sh[b], nn);
+                if (j.is_null()) return;
+                sh[a] = j;
+                sh.erase(sh.begin() + b);
+            });
+            r.sel.clear();
+            r.curShape = a;
+        });
+        ImGui::NewLine();
+        ImGui::TextDisabled("Alt+S snaps the selected points to edges; Z / Shift+Z / Shift+B set X-spline points");
+    }
+
     if (section > 0 && !combined) {  // the curves list under every tab, to pick what the tab works on
         ImGui::Spacing();
         rotoCurvesTable(app, ui, n);
@@ -3471,16 +4081,16 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
 }
 
 void drawRotoPanel(App& app, UiState& ui, Node* n) {
-    const bool tabs = n->type == "Roto" || n->type == "RotoPaint";
+    const bool tabs = rotoLike(n);
     rotoSection(app, ui, n, 0, !tabs);
 }
 
 void drawRotoTab(App& app, UiState& ui, Node* n, int section) { rotoSection(app, ui, n, section, false); }
 
 bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name) {
-    for (int g = 0; g < 7; ++g)
+    for (int g = 0; g < 8; ++g)
         for (auto& ti : groupTools(g))
-            if (name == ti.name) {
+            if (name == ti.name && toolAvailable(n, ti.t)) {
                 setTool(app, ui, n, ti.t);
                 return true;
             }

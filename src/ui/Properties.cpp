@@ -3174,7 +3174,7 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
         for (auto& k : def->knobs) shown.insert(k.name);
         drawRotoPanel(app, ui, n);
         shown.insert("shapes");
-    } else if (n->type == "Roto" || n->type == "RotoPaint") {
+    } else if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "PowerRoto") {
         drawRotoPanel(app, ui, n);
         for (const char* k : {"shapes", "output", "premultiply", "motionblur", "shutter", "shutter_offset", "clip_to", "replace"}) shown.insert(k);
     } else if (n->type == "ImageGen" && def) {
@@ -3309,11 +3309,13 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
         auto tabFlags = [&](const std::string& t) {
             return forceTab && t == forceTab && ImGui::GetFrameCount() < 30 ? ImGuiTabItemFlags_SetSelected : 0;
         };
-        if (n->type == "Roto" || n->type == "RotoPaint") {  // the classic roto tabs
+        if (n->type == "Roto" || n->type == "RotoPaint" || n->type == "PowerRoto") {  // the classic roto tabs (Power Roto: and its own)
             static const std::vector<std::pair<const char*, int>> kRotoTabs = {{"Transform", 1}, {"Motion Blur", 2}, {"Shape", 3}, {"Lifetime", 4}, {"Tracking", 5}};
             static const std::vector<std::pair<const char*, int>> kPaintTabs = {{"Stroke", 6}, {"Shape", 3}, {"Clone", 7}, {"Transform", 1},
                                                                                {"Motion Blur", 2}, {"Lifetime", 4}, {"Tracking", 5}};
-            for (auto& [label, sec] : n->type == "RotoPaint" ? kPaintTabs : kRotoTabs)
+            static const std::vector<std::pair<const char*, int>> kPowerTabs = {{"Transform", 1}, {"Shape", 3}, {"Edge", 8}, {"Points", 9},
+                                                                               {"Motion Blur", 2}, {"Lifetime", 4}, {"Tracking", 5}};
+            for (auto& [label, sec] : n->type == "RotoPaint" ? kPaintTabs : n->type == "PowerRoto" ? kPowerTabs : kRotoTabs)
                 if (ImGui::BeginTabItem(label, nullptr, tabFlags(label))) {
                     drawRotoTab(app, ui, n, sec);
                     ImGui::EndTabItem();

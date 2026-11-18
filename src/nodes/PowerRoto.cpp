@@ -61,6 +61,12 @@ namespace {
 V2 toFull(const EdgeMap& e, double px, double py) { return {(px + 0.5) / e.scale, (py + 0.5) / e.scale}; }
 int toPix(const EdgeMap& e, double v) { return (int)std::floor(v * e.scale); }
 double norm(const EdgeMap& e, float m) { return std::min(1.0, (double)m / e.maxMag); }
+// What a step onto a pixel costs the live-wire: falls all the way with the edge's strength (no
+// ceiling, so the wire keeps to the middle of a strong edge rather than anywhere along it).
+double stepCost(const EdgeMap& e, float m) {
+    const double k = (double)m / e.maxMag;
+    return 0.02 + 1.0 / (1.0 + 9.0 * k * k);
+}
 
 }  // namespace
 
@@ -77,10 +83,20 @@ V2 snapToEdge(const EdgeMap& e, V2 p, double radius) {
             const double d = std::hypot(x - cx, y - cy);
             if (d > rad) continue;
             const float m = e.at(x, y);
-            const double score = norm(e, m) - 0.3 * (d / rad) * (d / rad);  // the nearer of two equal edges
+            const double score = norm(e, m) - 0.3 * (d / rad) * (d / rad);  // the nearer of two edges
             if (score > best) best = score, bx = x, by = y, bm = m;
         }
     if (norm(e, bm) < 0.15) return p;  // nothing worth snapping to
+    // then up to the ridge of that edge (its strongest line, not wherever its band was nearest)
+    for (int guard = 0; guard < 2 * ir + 4; ++guard) {
+        int nx = bx, ny = by;
+        float nm = bm;
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx)
+                if (e.at(bx + dx, by + dy) > nm) nx = bx + dx, ny = by + dy, nm = e.at(nx, ny);
+        if (nx == bx && ny == by) break;
+        bx = nx, by = ny, bm = nm;
+    }
     // sub-pixel: the peak of a parabola through the neighbours, each way
     auto peak = [](float a, float b, float c) {
         const float d = a - 2 * b + c;
@@ -125,8 +141,7 @@ std::vector<V2> liveWire(const EdgeMap& e, V2 a, V2 b, double corridor) {
         for (int k = 0; k < 8; ++k) {
             const int nx = x + dx8[k], ny = y + dy8[k];
             if (!inBox(nx, ny) || !near(nx, ny)) continue;
-            const double m = norm(e, e.at(nx, ny));
-            const float c = (float)((0.02 + (1 - m) * (1 - m)) * (k < 4 ? 1.0 : M_SQRT2));  // cheap along strong edges
+            const float c = (float)(stepCost(e, e.at(nx, ny)) * (k < 4 ? 1.0 : M_SQRT2));  // cheap along strong edges
             const int j = (ny - y1) * W + (nx - x1);
             if (d + c < dist[j]) {
                 dist[j] = d + c;
@@ -163,11 +178,20 @@ std::vector<V2> magneticPath(const EdgeMap& e, const std::vector<V2>& stroke, do
     }
     const V2 last = stroke.back();
     if (std::hypot(last.x - anchors.back().x, last.y - anchors.back().y) > spacing * 0.3) anchors.push_back(last);
-    for (auto& p : anchors) p = snapToEdge(e, p, radius);
+    // anchors with no edge within reach are left out (the wire bridges them along the edge); the ends
+    // of an open stroke stay, snapped or not
+    std::vector<V2> kept;
+    for (size_t i = 0; i < anchors.size(); ++i) {
+        const V2 q = snapToEdge(e, anchors[i], radius);
+        const bool end = !closed && (i == 0 || i + 1 == anchors.size());
+        if (end || q.x != anchors[i].x || q.y != anchors[i].y) kept.push_back(q);
+    }
+    if (kept.size() >= 2) anchors = kept;
     if (closed && anchors.size() >= 3) anchors.push_back(anchors[0]);
     std::vector<V2> path;
     for (size_t i = 0; i + 1 < anchors.size(); ++i) {
-        auto seg = liveWire(e, anchors[i], anchors[i + 1], radius);
+        const double gap = std::hypot(anchors[i + 1].x - anchors[i].x, anchors[i + 1].y - anchors[i].y);
+        auto seg = liveWire(e, anchors[i], anchors[i + 1], std::max(radius, gap * 0.35));  // (room for a bridged curve)
         for (size_t k = path.empty() ? 0 : 1; k < seg.size(); ++k) path.push_back(seg[k]);
     }
     if (closed && path.size() >= 2) path.pop_back();  // (the loop's start again)

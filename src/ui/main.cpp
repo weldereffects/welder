@@ -1109,7 +1109,7 @@ int main(int argc, char** argv) {
         }
         // STRATA_TEST_KEYS=tok;tok;...: one step every 12 frames from frame 15, then the viewers' routing is
         // printed. Tokens: "at=x,y" (move the mouse), "sel=Node" (select it), "key=[ctrl+][shift+]K"
-        // (K: a digit, a letter, "grave"), "click=x,y", "drag=x0,y0,x1,y1".
+        // (K: a digit, a letter, "grave"), "click=x,y", "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
         bool keysTest = false;
         if (const char* tk = std::getenv("STRATA_TEST_KEYS"); tk && *tk && !opt.screenshot.empty()) {
             std::vector<std::string> toks;
@@ -1163,6 +1163,12 @@ int main(int argc, char** argv) {
                         float x = 0, y = 0;
                         std::sscanf(arg.c_str(), "%f,%f", &x, &y);
                         tio.AddMousePosEvent(x, y);
+                    } else if (what == "circle") {  // circle=cx,cy,r: a drag once round a circle (freehand drawing)
+                        std::sscanf(arg.c_str(), "%f,%f,%f", &drag[0], &drag[1], &drag[2]);
+                        tio.AddMousePosEvent(drag[0] + drag[2], drag[1]);
+                        dragging = true;
+                    } else if (what == "shapejson") {  // a Roto's items, whole
+                        if (Node* rn = app.node(arg)) std::printf("KEYS shapejson %s\n", rn->params.data.value("shapes", json::array()).dump().c_str());
                     } else if (what == "drag" || what == "hold") {  // hold: a drag that isn't let go (mid-stroke screenshots)
                         std::sscanf(arg.c_str(), "%f,%f,%f,%f", &drag[0], &drag[1], &drag[2], &drag[3]);
                         tio.AddMousePosEvent(drag[0], drag[1]);
@@ -1269,6 +1275,15 @@ int main(int argc, char** argv) {
                     tio.AddMouseButtonEvent(0, true);
                 } else if (what == "click" && k == 4) {
                     tio.AddMouseButtonEvent(0, false);
+                } else if (what == "circle" && dragging) {
+                    if (k == 1) tio.AddMouseButtonEvent(0, true);
+                    else if (k >= 2 && k <= 10) {  // (the first and last positions meet)
+                        const float a = (k - 1) / 9.0f * 6.2831853f;
+                        tio.AddMousePosEvent(drag[0] + drag[2] * std::cos(a), drag[1] + drag[2] * std::sin(a));
+                    } else if (k == 11) {
+                        tio.AddMouseButtonEvent(0, false);
+                        dragging = false;
+                    }
                 } else if ((what == "drag" || what == "dragnode" || what == "hold") && dragging) {
                     if (k == 2) tio.AddMouseButtonEvent(0, true);
                     else if (k > 2 && k < 10) {
@@ -1341,7 +1356,7 @@ int main(int argc, char** argv) {
                         for (auto& t : n->params.data["tracks"])
                             for (auto& k : track::keysOf(t))
                                 std::printf("DRAG track %s %g %.3f %.3f%s\n", t.value("name", "").c_str(), k.frame, k.x, k.y, k.user ? " key" : "");
-                    if ((n->type == "Roto" || n->type == "SplineWarp") && n->params.has("shapes"))
+                    if ((n->type == "Roto" || n->type == "PowerRoto" || n->type == "SplineWarp") && n->params.has("shapes"))
                         std::printf("DRAG %s shapes %s\n", n->name.c_str(), n->params.data["shapes"].dump().c_str());
                     if (n->type == "CameraTracker") std::printf("DRAG %s scene %s\n", n->name.c_str(), n->params.has("scene") ? n->params.data["scene"].dump().c_str() : "{}");
                     if (n->type == "EditMesh" && n->params.has("mesh")) {

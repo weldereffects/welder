@@ -286,7 +286,7 @@ void drawPlanarPanel(App& app, UiState& ui, Node* n) {
     if (kit::beginComboFlat("##fromroto", "from roto shape...")) {
         bool any = false;
         for (auto& node : app.comp->nodes) {
-            if (node->type != "Roto" && node->type != "RotoPaint") continue;
+            if (node->type != "Roto" && node->type != "RotoPaint" && node->type != "PowerRoto") continue;
             const json& shapes = node->params.data.value("shapes", json::array());
             for (auto& s : shapes) {
                 if (roto::isStroke(s) || roto::isLayer(s)) continue;
