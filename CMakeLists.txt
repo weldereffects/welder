@@ -97,6 +97,7 @@ add_library(strata_core STATIC
   src/nodes/NodeUtils.cpp
   src/nodes/IONodes.cpp
   src/nodes/Roto.cpp
+  src/nodes/PowerRoto.cpp
   src/nodes/SplineWarp.cpp
   src/nodes/MergeExtraNodes.cpp
   src/nodes/KillOutline.cpp

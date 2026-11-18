@@ -26,7 +26,7 @@ namespace strata::roto {
 // ------------------------------------------------------------------ storage
 
 namespace {
-constexpr int kComps = 10;  // x, y, lx, ly, rx, ry, fx, fy, dw, df
+constexpr int kComps = 11;  // x, y, lx, ly, rx, ry, fx, fy, dw, df, s
 double comp(const Pt& p, int c) { return (&p.x)[c]; }
 double& comp(Pt& p, int c) { return (&p.x)[c]; }
 double rnd(double v) { return std::round(v * 1000.0) / 1000.0; }  // keep files readable
@@ -49,7 +49,8 @@ json ptsJson(const Pts& pts) {
     json a = json::array();
     for (auto& p : pts) {
         json e = {rnd(p.x), rnd(p.y), rnd(p.lx), rnd(p.ly), rnd(p.rx), rnd(p.ry)};
-        const bool extra = p.dw != 0 || p.df != 0;
+        const bool typed = p.s != 0;  // (an X-spline point's type / a B-spline weight: the 11th value)
+        const bool extra = p.dw != 0 || p.df != 0 || typed;
         if (p.fx != 0 || p.fy != 0 || extra) {
             e.push_back(rnd(p.fx));
             e.push_back(rnd(p.fy));
@@ -58,6 +59,7 @@ json ptsJson(const Pts& pts) {
             e.push_back(rnd(p.dw));
             e.push_back(rnd(p.df));
         }
+        if (typed) e.push_back(rnd(p.s));
         a.push_back(e);
     }
     return a;
@@ -282,10 +284,52 @@ bool alive(const json& s, double frame) {
     return true;
 }
 
+namespace {
+
+// An X-spline (Power Roto) as Bezier points, one per control point. Each point's type s blends three
+// ways of passing it: -1 smooth (through the point, the tangent along its neighbours, as a cardinal
+// spline), 0 a corner (through it, no tangents) and 1 B-spline (pulled towards it, as a uniform cubic
+// B-spline). In between, the tangents shrink towards the corner and the curve moves towards the
+// B-spline's. Open curves end on their end points.
+Pts xsplineToBezier(const Pts& p, bool closed) {
+    const int n = (int)p.size();
+    Pts r(n);
+    auto P = [&](int i) -> const Pt& { return closed ? p[(i % n + n) % n] : p[std::clamp(i, 0, n - 1)]; };
+    for (int i = 0; i < n; ++i) {
+        const Pt &a = P(i - 1), &b = P(i), &c = P(i + 1);
+        const bool end = !closed && (i == 0 || i == n - 1);
+        const double t = end ? std::min(0.0, std::clamp(b.s, -1.0, 1.0)) : std::clamp(b.s, -1.0, 1.0);
+        Pt& o = r[i];
+        if (t <= 0) {  // smooth (cardinal) to corner
+            const double w = -t;
+            o.x = b.x, o.y = b.y;
+            const double tx = (c.x - a.x) / 6 * w, ty = (c.y - a.y) / 6 * w;
+            o.rx = tx, o.ry = ty, o.lx = -tx, o.ly = -ty;
+            if (end) {  // one-sided at an open end: towards the only neighbour
+                const Pt& nb = i == 0 ? c : a;
+                const double hx = (nb.x - b.x) / 3 * w, hy = (nb.y - b.y) / 3 * w;
+                if (i == 0) o.rx = hx, o.ry = hy, o.lx = o.ly = 0;
+                else o.lx = hx, o.ly = hy, o.rx = o.ry = 0;
+            }
+        } else {  // corner to B-spline
+            const double jx = b.x + ((a.x + 4 * b.x + c.x) / 6 - b.x) * t, jy = b.y + ((a.y + 4 * b.y + c.y) / 6 - b.y) * t;
+            o.x = jx, o.y = jy;
+            o.rx = ((2 * b.x + c.x) / 3 - jx) * t, o.ry = ((2 * b.y + c.y) / 3 - jy) * t;
+            o.lx = ((a.x + 2 * b.x) / 3 - jx) * t, o.ly = ((a.y + 2 * b.y) / 3 - jy) * t;
+        }
+        o.fx = b.fx, o.fy = b.fy, o.dw = b.dw, o.df = b.df;
+    }
+    return r;
+}
+
+}  // namespace
+
 Pts toBezier(const json& s, const Pts& p) {
-    if (s.value("kind", std::string()) != "bspline" || p.size() < 3) return p;
+    const std::string kind = s.value("kind", std::string());
+    if (kind == "xspline" && p.size() >= 2) return xsplineToBezier(p, s.value("closed", true));
+    if (kind != "bspline" || p.size() < 3) return p;
     // Closed uniform cubic B-spline as Bezier segments; tension pulls the curve
-    // towards the control points (1 = through them).
+    // towards the control points (1 = through them), plus each point's own weight.
     const int n = (int)p.size();
     const double tau = std::clamp(s.value("tension", 0.0), 0.0, 1.0);
     Pts r(n);
@@ -293,8 +337,9 @@ Pts toBezier(const json& s, const Pts& p) {
     for (int i = 0; i < n; ++i) {
         const Pt &a = P(i - 1), &b = P(i), &c = P(i + 1);
         double jx = (a.x + 4 * b.x + c.x) / 6, jy = (a.y + 4 * b.y + c.y) / 6;
-        jx += (b.x - jx) * tau;
-        jy += (b.y - jy) * tau;
+        const double tw = std::clamp(tau + b.s, 0.0, 1.0);
+        jx += (b.x - jx) * tw;
+        jy += (b.y - jy) * tw;
         r[i].x = jx;
         r[i].y = jy;
         r[i].rx = (2 * b.x + c.x) / 3 - jx;
@@ -322,7 +367,7 @@ Pts curveAt(const json& s, double frame, const Xf& parent) {
             l = {L.x - q.x, L.y - q.y}, r = {Rr.x - q.x, Rr.y - q.y}, f = {F.x - q.x, F.y - q.y};
         }
         const double dw = p.dw, df = p.df;
-        p = {q.x, q.y, l.x, l.y, r.x, r.y, f.x, f.y, dw, df};
+        p = {q.x, q.y, l.x, l.y, r.x, r.y, f.x, f.y, dw, df, p.s};
     }
     return c;
 }
@@ -409,6 +454,7 @@ Pts insertControl(const Pts& p, int seg) {
     m.y = (a.y + b.y) / 2;
     m.fx = (a.fx + b.fx) / 2;
     m.fy = (a.fy + b.fy) / 2;
+    m.s = (a.s + b.s) / 2;
     r.insert(r.begin() + seg + 1, m);
     return r;
 }
@@ -418,7 +464,8 @@ Pts insertControl(const Pts& p, int seg) {
 void insertPoint(json& s, int seg, double t, double frame) {
     (void)frame;
     bool closed = s.value("closed", true);
-    bool bspline = s.value("kind", std::string()) == "bspline";
+    const std::string kind = s.value("kind", std::string());
+    const bool bspline = kind == "bspline" || kind == "xspline";  // (control points: a new one between two)
     auto split = [&](const Pts& p) { return bspline ? insertControl(p, seg) : splitSegment(p, closed, seg, t); };
     if (!animated(s)) {
         s["points"] = ptsJson(split(parsePts(s.value("points", json::array()))));
@@ -641,13 +688,14 @@ Pts rectangle(double x1, double y1, double x2, double y2) {
 
 // ------------------------------------------------------------------ rasterising
 
-void rasterize(const std::vector<V2>& poly, const Region& r, double feather, double falloff, std::vector<float>& cov, int type) {
+void rasterize(const std::vector<V2>& poly, const Region& r, double feather, double falloff, std::vector<float>& cov, int type,
+               double grow) {
     const int W = r.x2 - r.x1, H = r.y2 - r.y1;
     cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
     const size_t n = poly.size();
     if (n < 3 || W <= 0 || H <= 0) return;
     const double f = std::fabs(feather) < 0.5 ? 0.0 : feather;
-    const double band = std::fabs(f) + 1.0;  // distances beyond this don't change the result
+    const double band = std::fabs(f) + std::fabs(grow) + 1.0;  // distances beyond this don't change the result
 
     struct Edge {
         double ax, ay, bx, by, dx, dy, len2, ylo, yhi, xlo, xhi;
@@ -697,7 +745,7 @@ void rasterize(const std::vector<V2>& poly, const Region& r, double feather, dou
                 double px = e->ax + t * e->dx - cx, py = e->ay + t * e->dy - cy;
                 md = std::min(md, std::sqrt(px * px + py * py));
             }
-            const double sd = inside ? md : -md;  // signed distance to the edge, positive inside
+            const double sd = (inside ? md : -md) + grow;  // signed distance to the (grown) edge, positive inside
             double a;
             if (f == 0.0) a = std::clamp(sd + 0.5, 0.0, 1.0);
             else if (f > 0) a = smooth01((sd + f) / f, falloff, type);  // soft edge outside the shape
@@ -708,11 +756,11 @@ void rasterize(const std::vector<V2>& poly, const Region& r, double feather, dou
 }
 
 void rasterizeShape(const Pts& curve, double scale, const Region& r, double feather, double falloff, std::vector<float>& cov,
-                    int type) {
+                    int type, double grow) {
     bool perPoint = false;
     for (auto& p : curve) perPoint = perPoint || p.fx != 0 || p.fy != 0;
     if (!perPoint) {
-        rasterize(flatten(curve, true, scale), r, feather, falloff, cov, type);
+        rasterize(flatten(curve, true, scale), r, feather, falloff, cov, type, grow);
         return;
     }
     // Per-point feather: the feather curve is the curve moved by each point's
@@ -731,8 +779,8 @@ void rasterizeShape(const Pts& curve, double scale, const Region& r, double feat
     std::vector<V2> mp = flattenWith(curve, true, scale, st, &segOf, &tOf);
     std::vector<V2> fp = flattenWith(fc, true, scale, st, nullptr, nullptr);
     std::vector<float> covMain, covF;
-    rasterize(mp, r, feather, falloff, covMain, type);
-    rasterize(fp, r, 0, 1, covF, type);
+    rasterize(mp, r, feather, falloff, covMain, type, grow);
+    rasterize(fp, r, 0, 1, covF, type, grow);
     cov.resize(covMain.size());
     for (size_t i = 0; i < cov.size(); ++i) cov[i] = std::min(covMain[i], covF[i]);
     // Which way each point's feather goes.
@@ -767,7 +815,7 @@ int featherType(const std::string& name) {
 }
 
 void rasterizeOpen(const Pts& curve, double scale, const Region& r, double width, double feather, double falloff, std::vector<float>& cov,
-                   int type) {
+                   int type, double grow) {
     const int W = r.x2 - r.x1, H = r.y2 - r.y1;
     cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
     if (W <= 0 || H <= 0 || curve.size() < 2) return;
@@ -781,7 +829,7 @@ void rasterizeOpen(const Pts& curve, double scale, const Region& r, double width
         const int sn = std::min(sg + 1, (int)curve.size() - 1);
         const double t = k < tOf.size() ? std::clamp(tOf[k], 0.0, 1.0) : 0.0;
         const double dw = curve[sg].dw + (curve[sn].dw - curve[sg].dw) * t, df = curve[sg].df + (curve[sn].df - curve[sg].df) * t;
-        half[k] = std::max(0.25, (width + dw) * scale * 0.5);
+        half[k] = std::max(0.25, (width + dw) * scale * 0.5 + grow);
         fea[k] = std::max(0.0, (feather + df) * scale);
     }
     // max of the coverage of each segment (a round-capped, tapered capsule), pixel by pixel near it
@@ -808,6 +856,67 @@ void rasterizeOpen(const Pts& curve, double scale, const Region& r, double width
             }
         }
     }
+}
+
+int blurType(const std::string& name) {
+    if (name == "inner") return kBlurInner;
+    if (name == "outer") return kBlurOuter;
+    return kBlurCentred;
+}
+
+void blurCoverage(std::vector<float>& cov, int w, int h, double sigma) {
+    if (sigma <= 0.25 || w <= 0 || h <= 0 || (int)cov.size() != w * h) return;
+    // three box passes of radius b each way: variance 3 * b (b + 1) / 3 = b (b + 1) = sigma^2
+    const int b = std::max(1, (int)std::lround(std::sqrt(sigma * sigma + 0.25) - 0.5));
+    std::vector<float> line, out;
+    auto pass = [&](int len, int count, int stride, int step) {  // `count` lines of `len` samples
+        line.resize(len);
+        out.resize(len);
+        for (int l = 0; l < count; ++l) {
+            float* base = cov.data() + (size_t)l * stride;
+            for (int k = 0; k < len; ++k) line[k] = base[(size_t)k * step];
+            for (int rep = 0; rep < 3; ++rep) {
+                double sum = 0;  // (past the ends: the end value, repeated)
+                for (int k = -b; k <= b; ++k) sum += line[std::clamp(k, 0, len - 1)];
+                for (int k = 0; k < len; ++k) {
+                    out[k] = (float)(sum / (2 * b + 1));
+                    sum += line[std::min(k + b + 1, len - 1)] - line[std::max(k - b, 0)];
+                }
+                std::swap(line, out);
+            }
+            for (int k = 0; k < len; ++k) base[(size_t)k * step] = line[k];
+        }
+    };
+    pass(w, h, w, 1);  // rows
+    pass(h, w, 1, w);  // columns
+}
+
+void edgeCoverage(const std::function<void(const Region&, double, std::vector<float>&)>& raster, const Region& r, double grow,
+                  double blur, int type, std::vector<float>& cov) {
+    const int W = r.x2 - r.x1, H = r.y2 - r.y1;
+    if (blur <= 0.25) {
+        raster(r, grow, cov);
+        return;
+    }
+    // blur reaches about 2 sigma = blur pixels each way: draw a margin around the region for it
+    const double sigma = blur * 0.5;
+    const int m = (int)std::ceil(3 * sigma) + 2;
+    const Region big{r.x1 - m, r.y1 - m, r.x2 + m, r.y2 + m};
+    const int BW = W + 2 * m, BH = H + 2 * m;
+    const double off = type == kBlurOuter ? blur : type == kBlurInner ? -blur : 0.0;  // the soft edge on one side
+    std::vector<float> soft;
+    raster(big, grow + off, soft);
+    blurCoverage(soft, BW, BH, sigma);
+    std::vector<float> hard;
+    if (type != kBlurCentred) raster(r, grow, hard);  // inner: never past the edge; outer: never less than inside
+    cov.assign((size_t)std::max(0, W) * std::max(0, H), 0.0f);
+    for (int y = 0; y < H; ++y)
+        for (int x = 0; x < W; ++x) {
+            float v = soft[(size_t)(y + m) * BW + (x + m)];
+            if (type == kBlurOuter) v = std::max(v, hard[(size_t)y * W + x]);
+            else if (type == kBlurInner) v = std::min(v, hard[(size_t)y * W + x]);
+            cov[(size_t)y * W + x] = v;
+        }
 }
 
 // ------------------------------------------------------------------ strokes
@@ -970,7 +1079,7 @@ public:
         for (auto& s : items()) {
             if (roto::keyFrames(s).size() > 1) return true;
             if (s.contains("life") && s["life"].value("type", std::string("all")) != "all") return true;
-            for (const char* k : {"opacity", "feather"})
+            for (const char* k : {"opacity", "feather", "grow", "blur"})
                 if (s.contains(k) && params::isAnimated(s[k])) return true;
             for (const char* k : {"transform", "matrix"})
                 if (s.contains(k) && s[k].dump().find("\"keys\"") != std::string::npos) return true;
@@ -1033,6 +1142,10 @@ public:
             }
             if (x1 > x2) continue;
             double pad = (s.value("feather_on", true) ? std::max(0.0, params::evalScalar(s.value("feather", json(0.0)), frame, 0.0)) : 0.0) * sc + 2;
+            // grow and an outer / centred blur reach past the curve
+            const double grow = std::max(0.0, params::evalScalar(s.value("grow", json(0.0)), frame, 0.0));
+            const double blur = std::max(0.0, params::evalScalar(s.value("blur", json(0.0)), frame, 0.0));
+            pad += (grow + (roto::blurType(s.value("blur_type", std::string("centred"))) == roto::kBlurInner ? 0.0 : 2 * blur)) * sc;
             if (open) {
                 double extra = 0;  // the widest / most feathered point
                 for (auto& p : roto::pointsAt(s, frame)) extra = std::max(extra, p.dw * 0.5 + std::max(0.0, p.df));
@@ -1252,26 +1365,42 @@ private:
             const double falloff = params::evalScalar(s.value("falloff", json(1.0)), a.frame, 1.0);
             const int ftype = roto::featherType(s.value("feather_type", std::string("smooth")));
             const bool invert = s.value("invert", false);
-            const std::string blend = s.value("blend", std::string("over"));
-            if (open)
-                roto::rasterizeOpen(curve, sc, {R.x1, R.y1, R.x2, R.y2}, params::evalScalar(s.value("width", json(10.0)), a.frame, 10.0),
-                                    feather / std::max(1e-9, sc), falloff, cov, ftype);
-            else
-                roto::rasterizeShape(curve, sc, {R.x1, R.y1, R.x2, R.y2}, feather, falloff, cov, ftype);
+            std::string blend = s.value("blend", std::string("over"));
+            if (blend == "add") blend = "plus";  // (Power Roto's names)
+            else if (blend == "subtract") blend = "minus";
+            // edge controls: grow / shrink, and a blur across the edge (centred, inner or outer)
+            const double grow = params::evalScalar(s.value("grow", json(0.0)), a.frame, 0.0) * sc;
+            const double blur = std::max(0.0, params::evalScalar(s.value("blur", json(0.0)), a.frame, 0.0)) * sc;
+            const int btype = roto::blurType(s.value("blur_type", std::string("centred")));
+            const double width = open ? params::evalScalar(s.value("width", json(10.0)), a.frame, 10.0) : 0.0;
+            auto raster = [&](const roto::Region& rg, double g, std::vector<float>& out) {
+                if (open) roto::rasterizeOpen(curve, sc, rg, width, feather / std::max(1e-9, sc), falloff, out, ftype, g);
+                else roto::rasterizeShape(curve, sc, rg, feather, falloff, out, ftype, g);
+            };
+            roto::edgeCoverage(raster, {R.x1, R.y1, R.x2, R.y2}, grow, blur, btype, cov);
+            // a shape rendered into one channel (Power Roto): a plain matte there, nothing elsewhere
+            const std::string chan = s.value("channel", std::string());
+            const int only = chan.empty() ? -1 : img.ch(chan);
+            if (!chan.empty() && only < 0) continue;
             for (int y = R.y1; y < R.y2; ++y) {
                 float* p = img.row(y);
                 const float* c = &cov[(size_t)(y - R.y1) * W];
                 for (int x = 0; x < W; ++x, p += nch) {
                     float v = (invert ? 1.0f - c[x] : c[x]) * (float)opacity;
-                    if (v == 0.0f && (blend == "over" || blend == "plus" || blend == "minus" || blend == "max")) continue;
+                    if (v == 0.0f && (blend == "over" || blend == "plus" || blend == "minus" || blend == "max" || blend == "difference")) continue;
                     auto mix = [&](float& d, float src) {
                         if (blend == "plus") d += src;
                         else if (blend == "minus") d = std::max(0.0f, d - src);
                         else if (blend == "max") d = std::max(d, src);
                         else if (blend == "min") d = std::min(d, src);
                         else if (blend == "multiply") d = d * src;
+                        else if (blend == "difference") d = std::fabs(d - src);
                         else d = src + d * (1.0f - v);  // over
                     };
+                    if (only >= 0) {
+                        mix(p[only], v);
+                        continue;
+                    }
                     if (writeRGB) {
                         if (iR >= 0) mix(p[iR], col[0] * v);
                         if (iG >= 0) mix(p[iG], col[1] * v);
@@ -1602,6 +1731,9 @@ private:
 void registerRotoNodes() {
     NodeRegistry::instance().add("Roto", [] { return std::make_unique<RotoNode>(false); });
     NodeRegistry::instance().add("RotoPaint", [] { return std::make_unique<RotoNode>(true); });
+    // Power Roto: the same shapes and renderer as Roto (X-splines, edge controls and per-shape channels
+    // are drawn by any of them), with its own viewer tools and panel (src/ui/RotoTool.cpp).
+    NodeRegistry::instance().add("PowerRoto", [] { return std::make_unique<RotoNode>(false); });
 }
 
 }  // namespace strata

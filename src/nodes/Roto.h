@@ -3,7 +3,7 @@
 //
 // The node's "shapes" param is a list of items, drawn first to last (the last
 // one is on top). A shape:
-//   {"name": "Bezier1", "kind": "bezier" | "bspline" | "ellipse" | "rectangle",
+//   {"name": "Bezier1", "kind": "bezier" | "bspline" | "xspline" | "ellipse" | "rectangle",
 //    "closed": true, "visible": true, "invert": false,
 //    "opacity": 1, "feather": 0, "falloff": 1, "blend": "over",
 //    "color": [1, 1, 1, 1], "tension": 0 (B-splines),
@@ -13,10 +13,16 @@
 //    "life": {"type": "all" | "single" | "range" | "to" | "from", "start": f, "end": f},
 //    "feather_on": true, "feather_type": "linear" | "smooth" | "smooth0" | "smooth1",
 //    "motionblur": true (false: sharp while the others blur), "locked": false (viewer only),
-//    "width": 10 (an open spline: "closed": false draws the curve as a line this wide)}
+//    "width": 10 (an open spline: "closed": false draws the curve as a line this wide),
+//    "grow": 0 (px: shrink < 0 < grow, animatable), "blur": 0 (px: half the soft edge's width,
+//    animatable), "blur_type": "centred" | "inner" | "outer", "channel": "" | "R" | "G" | "B" | "A"
+//    (render into this channel only, as a plain matte)}
 // x, y are full-resolution pixels (origin bottom-left, y up); l / r are the
 // incoming / outgoing tangent handles and f the feather point, all relative to
-// the point. For B-splines x, y are control points and the tangents are unused.
+// the point. For B-splines and X-splines x, y are control points and the tangents are unused.
+// The 11th value, s, is per point: on an X-spline its type, from -1 (smooth: the curve passes through
+// the point with a rounded tangent) through 0 (a corner through the point) to 1 (B-spline: the curve
+// is pulled towards the point); on a B-spline, extra weight (0-1: pulls the curve towards the point).
 // opacity, feather and the transform values may be animated like any param.
 //
 // A paint stroke (RotoPaint):
@@ -28,6 +34,7 @@
 
 #include <array>
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -42,6 +49,7 @@ struct Pt {
     double rx = 0, ry = 0;  // outgoing tangent (relative)
     double fx = 0, fy = 0;  // feather point (relative)
     double dw = 0, df = 0;  // an open spline's extra width and feather at this point (pixels, on top of the shape's)
+    double s = 0;           // X-spline point type (-1 smooth, 0 corner, 1 B-spline) / B-spline weight
 };
 using Pts = std::vector<Pt>;
 
@@ -153,15 +161,25 @@ enum { kFeatherLinear = 0, kFeatherSmooth = 1, kFeatherSmooth0 = 2, kFeatherSmoo
 int featherType(const std::string& name);
 // A closed polygon (pixel coordinates), anti-aliased, with an outward
 // (feather > 0) or inward (< 0) soft edge in pixels.
+// `grow` (pixels) moves the edge out (> 0) or in (< 0) first.
 void rasterize(const std::vector<V2>& poly, const Region& region, double feather, double falloff, std::vector<float>& cov,
-               int type = kFeatherSmooth);
+               int type = kFeatherSmooth, double grow = 0);
 // A whole shape curve at `scale`: shape feather plus per-point feather.
 void rasterizeShape(const Pts& curve, double scale, const Region& region, double feather, double falloff,
-                    std::vector<float>& cov, int type = kFeatherSmooth);
+                    std::vector<float>& cov, int type = kFeatherSmooth, double grow = 0);
 // An open spline: the curve drawn as a line `width` pixels wide (full resolution) with a soft
 // edge `feather` pixels beyond it.
 void rasterizeOpen(const Pts& curve, double scale, const Region& region, double width, double feather, double falloff,
-                   std::vector<float>& cov, int type = kFeatherSmooth);
+                   std::vector<float>& cov, int type = kFeatherSmooth, double grow = 0);
+// A shape's edge controls on top of its coverage (Power Roto): grown / shrunk by `grow` pixels, then
+// blurred `blur` pixels each way across the edge - centred on it, or only inside or outside it.
+// `raster(region, grow)` draws the shape; the result covers `region`.
+enum { kBlurCentred = 0, kBlurInner = 1, kBlurOuter = 2 };
+int blurType(const std::string& name);
+void edgeCoverage(const std::function<void(const Region&, double, std::vector<float>&)>& raster, const Region& region, double grow,
+                  double blur, int type, std::vector<float>& cov);
+// A separable blur of a coverage buffer (three box passes: close to a Gaussian of this sigma).
+void blurCoverage(std::vector<float>& cov, int w, int h, double sigma);
 
 // Paint strokes.
 struct StrokePt {

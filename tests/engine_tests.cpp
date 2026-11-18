@@ -27,6 +27,7 @@
 #include "nodes/NodeUtils.h"
 #include "nodes/Sample.h"
 #include "nodes/Roto.h"
+#include "nodes/PowerRoto.h"
 #include "nodes/Track.h"
 #include "nodes/Planar.h"
 #include "nodes/Retime.h"
@@ -2438,6 +2439,259 @@ int main(int argc, char** argv) {
         items[1]["visible"] = false;
         auto c2 = comp(json::array({{{"name", "R"}, {"type", "Roto"}, {"params", {{"shapes", items}}}}}));
         CHECK_NEAR(px(render(*c2, "R", 2), 27, 12, "A"), 0, 1e-6);
+    });
+
+    test("power roto: x-splines, b-spline weights, point type stored", [] {
+        // a square of control points: all smooth (-1) passes through them, all B-spline (1) is pulled
+        // inside them, all corner (0) is the square itself
+        auto square = [](double t) {
+            roto::Pts p = roto::rectangle(10, 10, 50, 40);
+            for (auto& q : p) q.s = t;
+            return p;
+        };
+        json xs = {{"name", "X"}, {"kind", "xspline"}, {"closed", true}};
+        roto::Pts smooth = roto::toBezier(xs, square(-1));
+        CHECK(smooth.size() == 4);
+        CHECK_NEAR(smooth[0].x, 10, 1e-9);
+        CHECK_NEAR(smooth[0].y, 10, 1e-9);
+        CHECK(std::hypot(smooth[0].rx, smooth[0].ry) > 1);  // rounded through the point
+        roto::Pts corner = roto::toBezier(xs, square(0));
+        CHECK_NEAR(corner[1].x, 50, 1e-9);
+        CHECK(corner[1].rx == 0 && corner[1].ry == 0 && corner[1].lx == 0);
+        roto::Pts bs = roto::toBezier(xs, square(1));
+        CHECK(bs[0].x > 10 + 1 && bs[0].y > 10 + 1);  // pulled inside, towards the middle
+        // the same as a uniform B-spline when every point is a B-spline point
+        roto::Pts ref = roto::toBezier(json{{"kind", "bspline"}}, roto::rectangle(10, 10, 50, 40));
+        CHECK_NEAR(bs[2].x, ref[2].x, 1e-9);
+        CHECK_NEAR(bs[2].ry, ref[2].ry, 1e-9);
+        // rendered: smooth covers more than corner (it bulges past the square's sides), B-spline less
+        auto area = [](const json& shape) {
+            auto c = comp(json::array({{{"name", "R"}, {"type", "PowerRoto"}, {"params", {{"shapes", json::array({shape})}}}}}));
+            auto img = render(*c, "R");
+            double a = 0;
+            for (int y = 0; y < 48; ++y)
+                for (int x = 0; x < 64; ++x) a += px(img, x, y, "A");
+            return a;
+        };
+        json sx = xs, cx = xs, bx = xs;
+        sx["points"] = roto::ptsJson(square(-1));
+        cx["points"] = roto::ptsJson(square(0));
+        bx["points"] = roto::ptsJson(square(1));
+        CHECK_NEAR(area(cx), 40 * 30, 2.0);
+        CHECK(area(sx) > area(cx) + 20);
+        CHECK(area(bx) < area(cx) - 50);
+        // the type survives saving and keys, and interpolates
+        roto::Pts back = roto::parsePts(roto::ptsJson(square(-0.5)));
+        CHECK_NEAR(back[3].s, -0.5, 1e-9);
+        json k = xs;
+        roto::setPointsAt(k, 1, square(-1), true);
+        roto::setPointsAt(k, 11, square(1), true);
+        CHECK_NEAR(roto::pointsAt(k, 6)[0].s, 0, 1e-9);
+        // inserting into an X-spline adds a control point (in every key)
+        roto::insertPoint(k, 0, 0.5, 1);
+        CHECK(roto::pointsAt(k, 1).size() == 5 && roto::pointsAt(k, 11).size() == 5);
+        // a B-spline point's weight pulls the curve to it
+        roto::Pts w = roto::rectangle(10, 10, 50, 40);
+        w[2].s = 1;
+        roto::Pts wb = roto::toBezier(json{{"kind", "bspline"}}, w);
+        CHECK_NEAR(wb[2].x, 50, 1e-9);
+        CHECK_NEAR(wb[2].y, 40, 1e-9);
+        CHECK(wb[0].x > 10 + 1);
+        // to a Bezier: the same curve
+        json conv = bx;
+        roto::convertToBezier(conv);
+        CHECK(conv["kind"] == "bezier");
+        CHECK_NEAR(roto::pointsAt(conv, 1)[2].x, roto::toBezier(bx, square(1))[2].x, 1e-3);
+        CHECK_NEAR(area(conv), area(bx), 1.0);
+    });
+
+    test("power roto: grow, edge blur, channels, blends", [] {
+        json sq = {{"name", "S"}, {"kind", "rectangle"}, {"points", roto::ptsJson(roto::rectangle(20, 14, 44, 34))}};
+        auto alphaAt = [](const json& shapes, int x, int y, const std::string& ch = "A", const json& extra = json::object()) {
+            json p = {{"shapes", shapes}};
+            for (auto& [k, v] : extra.items()) p[k] = v;
+            auto c = comp(json::array({{{"name", "R"}, {"type", "PowerRoto"}, {"params", p}}}));
+            return px(render(*c, "R"), x, y, ch);
+        };
+        CHECK_NEAR(alphaAt(json::array({sq}), 18, 24), 0, 1e-6);
+        json g = sq;
+        g["grow"] = 3;
+        CHECK_NEAR(alphaAt(json::array({g}), 18, 24), 1, 1e-6);  // grown past x = 20
+        g["grow"] = -3;
+        CHECK_NEAR(alphaAt(json::array({g}), 21, 24), 0, 1e-6);  // shrunk in from x = 20
+        CHECK_NEAR(alphaAt(json::array({g}), 32, 24), 1, 1e-6);
+        // blur: centred straddles the edge; inner stays inside it; outer stays outside it
+        json b = sq;
+        b["blur"] = 4;
+        const float cIn = alphaAt(json::array({b}), 21, 24), cOut = alphaAt(json::array({b}), 18, 24);
+        CHECK(cIn > 0.5f && cIn < 0.99f && cOut > 0.01f && cOut < 0.5f);
+        b["blur_type"] = "inner";
+        CHECK_NEAR(alphaAt(json::array({b}), 18, 24), 0, 1e-3);
+        CHECK(alphaAt(json::array({b}), 21, 24) < 0.6f);
+        CHECK_NEAR(alphaAt(json::array({b}), 32, 24), 1, 0.01);  // (10 px in: solid)
+        b["blur_type"] = "outer";
+        CHECK_NEAR(alphaAt(json::array({b}), 21, 24), 1, 1e-3);
+        CHECK(alphaAt(json::array({b}), 18, 24) > 0.3f);
+        CHECK_NEAR(alphaAt(json::array({b}), 8, 24), 0, 1e-3);
+        // the blur reaches past the shape's bbox: the node's bbox grows with it
+        {
+            json p = {{"shapes", json::array({b})}};
+            auto c = comp(json::array({{{"name", "R"}, {"type", "PowerRoto"}, {"params", p}}}));
+            Engine e;
+            Box d = e.dod(c->find("R"), 1);
+            CHECK(d.x1 <= 20 - 8 && d.x2 >= 44 + 8);
+        }
+        // a shape into one channel: a matte there only
+        json red = sq;
+        red["channel"] = "R";
+        CHECK_NEAR(alphaAt(json::array({red}), 32, 24, "R"), 1, 1e-6);
+        CHECK_NEAR(alphaAt(json::array({red}), 32, 24, "A"), 0, 1e-6);
+        // difference: where two shapes overlap cancels out
+        json other = {{"name", "T"}, {"kind", "rectangle"}, {"blend", "difference"}, {"points", roto::ptsJson(roto::rectangle(32, 14, 56, 34))}};
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 38, 24), 0, 1e-6);  // both
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 50, 24), 1, 1e-6);  // T only
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 25, 24), 1, 1e-6);  // S only
+        other["blend"] = "subtract";
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 38, 24), 0, 1e-6);
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 25, 24), 1, 1e-6);
+        other["blend"] = "multiply";  // (intersect)
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 38, 24), 1, 1e-6);
+        CHECK_NEAR(alphaAt(json::array({sq, other}), 25, 24), 0, 1e-6);
+        // the blur alone, on a buffer: keeps the total, spreads a step
+        std::vector<float> cov(40 * 1, 0.0f);
+        for (int x = 20; x < 40; ++x) cov[x] = 1;
+        roto::blurCoverage(cov, 40, 1, 3);
+        CHECK(cov[19] > 0.3f && cov[19] < 0.5f && cov[20] > 0.5f && cov[20] < 0.7f);
+    });
+
+    test("power roto: edge snapping, live-wire, magnetic freehand", [] {
+        // a picture with a bright disc (radius 12 at 32, 24): its edge is a circle
+        Image img(Box(0, 0, 64, 48), rgbaChannels());
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x) {
+                const float v = std::hypot(x + 0.5 - 32, y + 0.5 - 24) < 12 ? 1.0f : 0.0f;
+                float* p = img.px(x, y);
+                p[0] = p[1] = p[2] = v, p[3] = 1;
+            }
+        auto e = roto::edgeMap(img, 1.0);
+        CHECK(!e.empty());
+        auto onEdge = [](roto::V2 p) { return std::fabs(std::hypot(p.x - 32, p.y - 24) - 12) < 1.6; };
+        // a point near the edge lands on it; one far from any edge stays put
+        roto::V2 s = roto::snapToEdge(e, {32 + 15, 24}, 5);
+        CHECK(onEdge(s));
+        roto::V2 far = roto::snapToEdge(e, {4, 4}, 3);
+        CHECK_NEAR(far.x, 4, 1e-9);
+        // the wire between two points on the circle follows the arc, not the chord
+        auto wire = roto::liveWire(e, {44, 24}, {32, 36}, 8);
+        CHECK(wire.size() > 5);
+        int on = 0;
+        for (auto& p : wire) on += onEdge(p);
+        CHECK(on >= (int)wire.size() * 3 / 4);
+        // a rough circle drawn around the disc snaps onto it, and fits to a few smooth points
+        std::vector<roto::V2> stroke;
+        for (int k = 0; k < 64; ++k) {
+            const double a = 2 * M_PI * k / 64, r = 15 + 2 * std::sin(5 * a);
+            stroke.push_back({32 + r * std::cos(a), 24 + r * std::sin(a)});
+        }
+        auto path = roto::magneticPath(e, stroke, 5, true);
+        int pon = 0;
+        for (auto& p : path) pon += onEdge(p);
+        CHECK(path.size() > 20 && pon >= (int)path.size() * 3 / 4);
+        roto::Pts curve = roto::freehandCurve(path, true, 1.0);
+        CHECK(curve.size() >= 6 && curve.size() < path.size());
+        // rendered, it covers about the disc
+        json sh = {{"name", "M"}, {"kind", "bezier"}, {"points", roto::ptsJson(curve)}};
+        auto c = comp(json::array({{{"name", "R"}, {"type", "PowerRoto"}, {"params", {{"shapes", json::array({sh})}}}}}));
+        auto m = render(*c, "R");
+        double area = 0;
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x) area += px(m, x, y, "A");
+        CHECK(std::fabs(area - M_PI * 144) < M_PI * 144 * 0.15);
+        // freehand without snapping: a straight line drawn with many points keeps only its ends
+        std::vector<roto::V2> line;
+        for (int k = 0; k <= 20; ++k) line.push_back({(double)k, k * 0.5 + (k % 2) * 0.05});
+        CHECK(roto::simplify(line, 0.5, false).size() == 2);
+        // a square drawn by hand keeps its corners as corners
+        std::vector<roto::V2> sqr;
+        for (int k = 0; k < 10; ++k) sqr.push_back({(double)k, 0});
+        for (int k = 0; k < 10; ++k) sqr.push_back({10, (double)k});
+        for (int k = 0; k < 10; ++k) sqr.push_back({10.0 - k, 10});
+        for (int k = 0; k < 10; ++k) sqr.push_back({0, 10.0 - k});
+        roto::Pts fs = roto::freehandCurve(sqr, true, 0.5);
+        CHECK(fs.size() == 4);
+        for (auto& p : fs) CHECK(p.lx == 0 && p.rx == 0);
+    });
+
+    test("power roto: soft reshape and point operations", [] {
+        roto::Pts e = roto::ellipse(32, 24, 10, 10);  // points at (42,24) (32,34) (22,24) (32,14)
+        roto::Pts out;
+        CHECK(roto::softMove(out, e, {42, 24}, 15, {4, 0}) == 3);  // (32,14) and (32,34) are 14.1 away; (22,24) is 20
+        CHECK_NEAR(out[0].x, 46, 1e-9);                            // the nearest moves all the way
+        CHECK(out[1].x > 32 && out[1].x < 33);                     // the next a little
+        CHECK_NEAR(out[2].x, 22, 1e-9);                            // outside the radius: not at all
+        CHECK_NEAR(roto::softWeight(0, 10), 1, 1e-12);
+        CHECK_NEAR(roto::softWeight(10, 10), 0, 1e-12);
+        // reverse: the same curve the other way round
+        roto::Pts r = roto::reversed(e);
+        CHECK_NEAR(r[0].x, e[3].x, 1e-12);
+        CHECK_NEAR(r[0].rx, e[3].lx, 1e-12);
+        // distribute: uneven points end up evenly spaced along the curve, and it stays a circle
+        roto::Pts uneven = roto::splitSegment(roto::splitSegment(e, true, 0, 0.2), true, 0, 0.5);
+        roto::Pts ev = roto::distributeBezier(uneven, true);
+        CHECK(ev.size() == uneven.size());
+        std::vector<double> gaps;
+        for (size_t i = 0; i < ev.size(); ++i) {
+            const auto& a = ev[i];
+            const auto& b = ev[(i + 1) % ev.size()];
+            gaps.push_back(std::hypot(b.x - a.x, b.y - a.y));
+            CHECK(std::fabs(std::hypot(a.x - 32, a.y - 24) - 10) < 0.05);
+        }
+        CHECK(*std::max_element(gaps.begin(), gaps.end()) - *std::min_element(gaps.begin(), gaps.end()) < 0.3);
+        roto::Pts poly = roto::distributePolygon(roto::Pts{{0, 0}, {1, 0}, {10, 0}, {10, 10}}, false);
+        CHECK_NEAR(poly[1].x, 20.0 / 3, 1e-6);
+        // tween: a key halfway between its neighbours, on the straight line between them
+        json sh = {{"name", "T"}, {"kind", "bezier"}};
+        roto::setPointsAt(sh, 1, roto::rectangle(0, 0, 10, 10), true);
+        roto::setPointsAt(sh, 5, roto::rectangle(5, 0, 15, 10), true);
+        roto::setPointsAt(sh, 11, roto::rectangle(30, 0, 40, 10), true);
+        CHECK(roto::tweenKey(sh, 5));
+        CHECK_NEAR(roto::pointsAt(sh, 5)[0].x, 12, 1e-9);  // 0 + 30 * 4 / 10
+        CHECK(!roto::tweenKey(sh, 1));                       // no key before it
+        // split a closed shape into two along a chord; together they cover the same
+        json sq = {{"name", "Q"}, {"kind", "rectangle"}};
+        roto::Pts six = roto::rectangle(10, 10, 50, 40);
+        six = roto::splitSegment(six, true, 0, 0.5);  // (30,10) between corners
+        six = roto::splitSegment(six, true, 3, 0.5);  // (30,40)
+        for (auto& p : six) p.lx = p.ly = p.rx = p.ry = 0;
+        sq["points"] = roto::ptsJson(six);
+        json half = sq;
+        json other = roto::splitShape(half, 1, 4, "Q2");
+        CHECK(!other.is_null());
+        CHECK(roto::pointsAt(half, 1).size() == 4 && roto::pointsAt(other, 1).size() == 4);
+        auto area = [](const json& shapes) {
+            auto c = comp(json::array({{{"name", "R"}, {"type", "PowerRoto"}, {"params", {{"shapes", shapes}}}}}));
+            auto img = render(*c, "R");
+            double a = 0;
+            for (int y = 0; y < 48; ++y)
+                for (int x = 0; x < 64; ++x) a += px(img, x, y, "A");
+            return a;
+        };
+        CHECK_NEAR(area(json::array({half})), 600, 2.0);
+        CHECK_NEAR(area(json::array({other})), 600, 2.0);
+        // extract: a new shape from three points
+        json ex = roto::extractPoints(sq, {0, 1, 5}, "E");
+        CHECK(ex["name"] == "E" && roto::pointsAt(ex, 1).size() == 3 && ex["closed"] == true);
+        // join two open lines into one, the second turned round to meet the first's end
+        json a = {{"name", "A"}, {"kind", "bezier"}, {"closed", false}, {"points", roto::ptsJson(roto::Pts{{0, 0}, {10, 0}})}};
+        json b = {{"name", "B"}, {"kind", "bezier"}, {"closed", false}, {"points", roto::ptsJson(roto::Pts{{20, 5}, {11, 1}})},
+                  {"transform", {{"translate", {1, 0}}}}};
+        json j = roto::joinShapes(a, b, "J");
+        CHECK(!j.is_null());
+        roto::Pts jp = roto::pointsAt(j, 1);
+        CHECK(jp.size() == 4);
+        CHECK_NEAR(jp[2].x, 12, 1e-9);  // B's near end (through its translate), next
+        CHECK_NEAR(jp[3].x, 21, 1e-9);
+        CHECK(roto::joinShapes(sq, a, "x").is_null());
     });
 
     test("roto: ellipse area, anti-aliasing, feather, keys", [] {

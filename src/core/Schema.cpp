@@ -817,6 +817,11 @@ std::vector<NodeDef> build() {
                   Width(C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic", "lanczos4"}), 110)},
                  "Bends the image so source curves (A) land on destination curves (B). Draw curves with the roto tools; "
                  "switch the panel between A and B to shape each."});
+    d.push_back({"PowerRoto", "Draw", {},
+                 "Roto with a fuller shape toolset: X-splines (smooth, corner or B-spline at each point), freehand and magnetic "
+                 "freehand drawing that snaps to edges in the picture, magnetic and brush reshaping, snap points to edges, point "
+                 "groups, tween / reverse / distribute / split / join / extract; per shape: grow / shrink, an edge blur (centred, "
+                 "inner or outer), add / subtract / multiply / difference / max blends and a channel to render into."});
     d.push_back({"RotoPaint", "Draw", {}, "Shapes plus paint strokes: brush, eraser, clone, reveal, repair (dust-bust), blur, sharpen, smear, dodge, burn; tracked and grain-matched paint."});
     // ---------------------------------------------------------------- Keyer
     const char* pickTip = "Press pick, then click (or drag a box) over the screen in the viewer: samples this node's input.";
