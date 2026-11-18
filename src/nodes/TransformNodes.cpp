@@ -12,6 +12,7 @@
 #include <array>
 #include "Sample.h"
 #include "Planar.h"
+#include "Scene3D.h"
 #include "Track.h"
 #include "Stabilize.h"
 #include <mutex>
@@ -666,6 +667,140 @@ public:
         }
         if (auto* m = dynamic_cast<MatrixNode*>(n)) return m->matrix(e, f) * m->matrix(e, ref).inverse();
         return std::nullopt;
+    }
+};
+
+// CardTransform: the image driven by a card of a Scene3D (on its "scene" input) seen through the
+// scene's camera (Scene3D.h has the maths):
+//   insert      the whole input frame pinned onto the card at each frame
+//   match-move  an element lined up with the plate at reference_frame follows the card
+//   stabilize   the card's plane stays where it was at reference_frame
+// params: card (a card of the scene; the first when empty), mode, reference_frame, clip_to_card
+// (cuts what falls outside the card's quad), bbox ("expand": the warped bbox, may pass the
+// format; "format": cut at the format), filter, black_outside, motionblur, shutter,
+// shutteroffset. With nothing on "scene" the image passes through. A frame where the card is
+// behind the camera is black (the image is moved out of the way, so a chain stays correct).
+class CardTransformNode : public TransformNode {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 1 ? "scene" : ""; }
+    Box roi(Engine& e, int idx, const Box& req, double f) override { return idx == 1 ? Box() : TransformNode::roi(e, idx, req, f); }
+    bool timeDependent() const override { return true; }
+    int identityInput(double) override { return sceneNode() ? -1 : 0; }
+    bool concatenates() const override { return !params.flag("clip_to_card", false) && params.str("bbox", "expand") == "expand"; }
+
+    Node* sceneNode() const {
+        Node* n = input(1);
+        for (int d = 0; n && n->type == "Dot" && d < 32; ++d) n = n->input(0);
+        return n && dynamic_cast<scene3d::SceneSource*>(n) ? n : nullptr;
+    }
+    std::vector<std::string> knobChoices(const std::string& knob) const override {
+        std::vector<std::string> r;
+        if (knob != "card") return r;
+        if (Node* s = sceneNode()) r = scene3d::cardNames(s->params);
+        return r;
+    }
+    // The plate's format: what the scene's camera sees.
+    Format format(Engine& e, double f) override {
+        if (Node* s = sceneNode()) return s->format(e, f);
+        return nodeFormat(e, this, input(0), f);
+    }
+
+    struct Eval {
+        bool ok = false;
+        Mat3 M;                         // render scale
+        std::array<double, 8> quad{};   // the card's quad in the output (render scale), for clip_to_card
+    };
+    Eval eval(Engine& e, double f) {
+        Eval r;
+        Node* sn = sceneNode();
+        if (!sn) return r;
+        auto* src = dynamic_cast<scene3d::SceneSource*>(sn);
+        const double sc = e.scale();
+        Format pf = sn->format(e, f), inf = nodeFormat(e, this, input(0), f);
+        const double W = pf.width / sc, H = pf.height / sc, Win = inf.width / sc, Hin = inf.height / sc;
+        const scene3d::Mode mode = scene3d::parseMode(params.str("mode", "insert"));
+        std::string name = params.str("card", "");
+        const double ref = params.num("reference_frame", f, comp ? comp->firstFrame : 1.0);
+        auto at = [&](double t, cam3d::Camera& cam, scene3d::Card& card) {
+            scene3d::Snapshot s = src->scene(t);
+            if (!s.camera || s.cards.empty()) return false;
+            const scene3d::Card* c = name.empty() ? &s.cards[0] : s.card(name);
+            if (!c) return false;
+            cam = *s.camera;
+            card = *c;
+            return scene3d::cardInFront(cam, card);
+        };
+        cam3d::Camera ct, cr;
+        scene3d::Card kt, kr;
+        if (!at(f, ct, kt)) return r;
+        const scene3d::H3 Gt = scene3d::cardToImage(ct, kt, W, H);
+        scene3d::H3 Gr = Gt, M, Q = Gt;
+        if (mode != scene3d::Mode::Insert) {
+            if (!at(ref, cr, kr)) return r;
+            Gr = scene3d::cardToImage(cr, kr, W, H);
+        }
+        if (mode == scene3d::Mode::Insert) M = scene3d::insertMatrix(Gt, Win, Hin);
+        else if (mode == scene3d::Mode::MatchMove) M = scene3d::matchMoveMatrix(Gt, Gr);
+        else {
+            M = scene3d::stabilizeMatrix(Gt, Gr);
+            Q = Gr;
+        }
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) r.M.m[i][j] = M.m[i][j];
+        r.M = Mat3::scale(sc, sc) * r.M * Mat3::scale(1 / sc, 1 / sc);
+        const double cu[4] = {-0.5, 0.5, 0.5, -0.5}, cv[4] = {-0.5, -0.5, 0.5, 0.5};
+        for (int k = 0; k < 4; ++k) {
+            double x, y;
+            scene3d::applyH(Q, cu[k], cv[k], x, y);
+            r.quad[2 * k] = x * sc;
+            r.quad[2 * k + 1] = y * sc;
+        }
+        r.ok = true;
+        return r;
+    }
+    Mat3 matrixAt(Engine& e, double f) override {
+        if (!sceneNode()) return Mat3();
+        Eval ev = eval(e, f);
+        if (!ev.ok) return Mat3::translate(5e7, 5e7);  // nothing to show: out of the way
+        Mat3 M = ev.M;
+        if (params.flag("invert", false)) M = M.inverse();
+        return M;
+    }
+    Box dod(Engine& e, double f) override {
+        Box b = TransformNode::dod(e, f);
+        if (!sceneNode()) return b;
+        if (params.flag("clip_to_card", false)) {
+            Eval ev = eval(e, f);
+            if (!ev.ok) return Box();
+            double x0 = 1e30, y0 = 1e30, x1 = -1e30, y1 = -1e30;
+            for (int k = 0; k < 4; ++k) {
+                x0 = std::min(x0, ev.quad[2 * k]), x1 = std::max(x1, ev.quad[2 * k]);
+                y0 = std::min(y0, ev.quad[2 * k + 1]), y1 = std::max(y1, ev.quad[2 * k + 1]);
+            }
+            auto ci = [](double v) { return (int)std::clamp(v, -1e8, 1e8); };
+            b = b.intersect(Box(ci(std::floor(x0)) - 1, ci(std::floor(y0)) - 1, ci(std::ceil(x1)) + 1, ci(std::ceil(y1)) + 1));
+        }
+        if (params.str("bbox", "expand") == "format") b = b.intersect(format(e, f).box());
+        return b;
+    }
+    void render(RenderArgs& a, Image& out) override {
+        TransformNode::render(a, out);
+        if (!sceneNode() || !params.flag("clip_to_card", false)) return;
+        Eval ev = eval(a.engine, a.frame);
+        if (!ev.ok) {
+            std::fill(out.data.begin(), out.data.end(), 0.0f);
+            return;
+        }
+        const int n = out.nch();
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y) {
+            float* o = out.row(y);
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x, o += n) {
+                const float c = (float)scene3d::quadCoverage(ev.quad, x + 0.5, y + 0.5);
+                if (c >= 1.0f) continue;
+                for (int k = 0; k < n; ++k) o[k] *= c;
+            }
+        }
     }
 };
 
@@ -1723,6 +1858,7 @@ void registerTransformNodes() {
     r.add("TVIScale", [] { return std::make_unique<TVIScaleNode>(); });
     r.add("GridWarp", [] { return std::make_unique<GridWarpNode>(); });
     r.add("ReferenceLink", [] { return std::make_unique<ReferenceLinkNode>(); });
+    r.add("CardTransform", [] { return std::make_unique<CardTransformNode>(); });
     r.add("Position", [] { return std::make_unique<PositionNode>(); });
     r.add("Reformat", [] { return std::make_unique<ReformatNode>(); });
     r.add("Crop", [] { return std::make_unique<CropNode>(); });

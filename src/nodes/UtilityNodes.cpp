@@ -242,6 +242,9 @@ void registerCryptomatteNode();
 namespace geo {
 void register3DNodes();
 }
+namespace scene3d {
+void registerScene3DNode();
+}
 
 void registerBuiltinNodes() {
     static bool done = false;
@@ -269,6 +272,7 @@ void registerBuiltinNodes() {
     registerSlateNodes();
     registerRetimeNodes();
     geo::register3DNodes();
+    scene3d::registerScene3DNode();
     registerScanlineRender();
     registerCameraTrackerNodes();
     registerSplatNodes();
