@@ -570,6 +570,12 @@ Node* activeFlowField(App& app);
 Node* activeTrackMask(App& app);
 void drawTrackMaskViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
 void trackMaskClear(App& app, Node* n, bool all);
+void trackMaskAddObject(App& app, Node* n);
+void trackMaskDeleteObject(App& app, Node* n, int id);
+void trackMaskSetActive(App& app, Node* n, int id);
+void trackMaskRename(App& app, Node* n, int id, const std::string& name);
+void trackMaskToggleKeyframe(App& app, Node* n);
+void trackMaskJumpKey(App& app, Node* n, int dir);
 void rotoExportPoints(App& app, UiState& ui, Node* n);
 // (UI tests) pick the Roto tool by its toolbar name ("Repair", "Brush"...); false if there's none.
 bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name);

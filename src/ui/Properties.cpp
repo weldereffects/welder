@@ -17,6 +17,7 @@
 #include "nodes/Scene3D.h"
 #include "nodes/SceneImport.h"
 #include "nodes/MLNodes.h"
+#include "nodes/TrackMaskScene.h"
 #include "nodes/NodeUtils.h"
 #include "core/Schema.h"
 #include "imgui_internal.h"
@@ -2574,26 +2575,68 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         else ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.5f, 1), "%s", chain.c_str());
         return;
     }
-    if (k.info == "trackmask") {  // TrackMask: the clicks so far, and whether the track is from them
-        int frames = 0, pts = 0, boxes = 0;
-        if (c.node->params.has("prompts") && c.node->params.data["prompts"].is_array())
-            for (auto& p : c.node->params.data["prompts"]) {
-                ++frames;
-                if (p.contains("points") && p["points"].is_array()) pts += (int)p["points"].size();
-                if (p.contains("box") && p["box"].is_array()) ++boxes;
+    if (k.info == "trackmask") {  // TrackMask: its objects (pick the active one), keyframes, and whether the track is current
+        const tmscene::Scene sc = tmscene::parse(c.node->params);
+        const int fr = (int)std::lround(c.app.frame);
+        if (sc.objects.empty()) ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "Click on an object in the viewer to start (or find objects from text).");
+        static char renameBuf[64] = "";
+        static int renaming = 0;
+        for (auto& o : sc.objects) {
+            ImGui::PushID(o.id);
+            const ImVec4 col(o.color[0], o.color[1], o.color[2], 1);
+            ImGui::ColorButton("##c", col, ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(12, 12));
+            ImGui::SameLine();
+            int clicks = 0, keys = 0;
+            for (auto& a : o.anchors) {
+                clicks += (int)a.points.size() + (a.box.is_array() ? 1 : 0);
+                keys += a.keyframe ? 1 : 0;
             }
-        if (!frames) {
-            ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "Click on the object in the viewer to start.");
-        } else {
-            ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.5f, 1), "%d click(s), %d box(es) on %d frame(s)", pts, boxes, frames);
+            const tmscene::Anchor* here = o.anchorAt(fr);
+            std::string label = o.name + "   " + std::to_string(o.anchors.size()) + " anchor(s)" + (keys ? ", " + std::to_string(keys) + " key(s)" : "") +
+                                (here && here->keyframe ? "   [key here]" : here ? "   [anchor here]" : "") + (o.text.empty() ? "" : "   text: " + o.text) +
+                                (o.channels != "A" ? "   -> " + o.channels : "");
+            if (renaming == o.id) {
+                ImGui::SetNextItemWidth(160);
+                if (ImGui::InputText("##rename", renameBuf, sizeof renameBuf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
+                    trackMaskRename(c.app, c.node, o.id, renameBuf);
+                    renaming = 0;
+                }
+                if (!ImGui::IsItemActive() && ImGui::IsMouseClicked(0) && !ImGui::IsItemHovered()) renaming = 0;
+            } else if (ImGui::Selectable(label.c_str(), o.id == sc.active, ImGuiSelectableFlags_AllowDoubleClick)) {
+                if (ImGui::IsMouseDoubleClicked(0)) {
+                    renaming = o.id;
+                    std::snprintf(renameBuf, sizeof renameBuf, "%s", o.name.c_str());
+                } else {
+                    trackMaskSetActive(c.app, c.node, o.id);
+                }
+            }
+            ImGui::PopID();
+        }
+        if (ImGui::SmallButton("New object")) trackMaskAddObject(c.app, c.node);
+        if (const tmscene::Object* act = sc.find(sc.active)) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Delete object")) trackMaskDeleteObject(c.app, c.node, act->id);
+            ImGui::SameLine();
+            const tmscene::Anchor* here = act->anchorAt(fr);
+            if (ImGui::SmallButton(here && here->keyframe ? "Remove keyframe" : "Set keyframe")) trackMaskToggleKeyframe(c.app, c.node);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("A correction keyframe: the active object's matte on this frame is kept as it is now,\n"
+                                  "and the track holds to it forwards and backwards");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("< key")) trackMaskJumpKey(c.app, c.node, -1);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("key >")) trackMaskJumpKey(c.app, c.node, 1);
+        }
+        if (sc.anyPrompts()) {
             bool current = false;
             const std::string src = mlnodes::trackMaskSource(c.node, c.app.frame, &current);
-            if (src.empty()) ImGui::TextDisabled("Not tracked yet: press Track (each click previews its frame).");
-            else if (!current) ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "The clicks changed since the last Track: press Track again.");
-            else ImGui::TextDisabled("Tracked from these clicks.");
+            if (src.empty()) ImGui::TextDisabled("Not tracked here yet: press Track (each click previews its frame).");
+            else if (!current) ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "This frame is from older anchors: press Track (only the changed frames run).");
+            else ImGui::TextDisabled(src == "preview" ? "Preview of this frame." : "Tracked from the current anchors.");
         }
         ImGui::PushTextWrapPos(0);
-        ImGui::TextDisabled("Viewer: click the object, Shift+click not it, drag a box, Ctrl+click removes; M shows the matte.");
+        ImGui::TextDisabled("Viewer: click the object, Shift+click not it, drag a box, Ctrl+click removes; M shows the matte. "
+                            "Double-click an object to rename it.");
         ImGui::PopTextWrapPos();
         return;
     }
@@ -3228,7 +3271,7 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
     if (n->type == "WarpStabilize") shown.insert({"motion", "motion_id"});    // the analysis (data, not knobs)
     if (n->type == "FlowField") shown.insert("strokes");
     if (n->type == "EditMesh") shown.insert({"mesh", "mesh_id"});  // the mesh itself (data, edited with the buttons / viewer)
-    if (n->type == "TrackMask") shown.insert({"prompts", "preview_frame"});  // the clicks (made in the viewer)
+    if (n->type == "TrackMask") shown.insert({"prompts", "scene", "tracks", "preview_frame", "retrack_all"});  // the objects and clicks (viewer and panel)
     if (n->type == "Precomp") shown.insert({"use_cache", "version"});  // set by Precomp / Clear
     if (n->type == "PointsToMesh") shown.insert("tracks");  // the chosen points (set from the CameraTracker)                       // painted in the viewer
     std::vector<OfxParamInfo> ofx = n->type == "OFX" ? ofxNodeParams(n) : std::vector<OfxParamInfo>{};

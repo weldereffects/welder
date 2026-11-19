@@ -115,6 +115,8 @@ void App::mlLoop(std::string name, std::string slot) {
                 }
                 h = hashString(in.name, h);
                 if (in.frame) h = hashCombine(h, e.hash(src, *in.frame));
+                else if (!in.frames.empty())
+                    for (int f : in.frames) h = hashCombine(h, e.hash(src, f));
                 else
                     for (int f : frames) h = hashCombine(h, e.hash(src, f));
             }
@@ -155,13 +157,13 @@ void App::mlLoop(std::string name, std::string slot) {
         if (ec) throw std::runtime_error("can't create " + dir + ": " + ec.message());
         json inputs = json::object();
         int total = 0;
-        for (auto& in : spec.inputs) total += in.frame ? 1 : (int)frames.size();
+        for (auto& in : spec.inputs) total += in.frame ? 1 : !in.frames.empty() ? (int)in.frames.size() : (int)frames.size();
         int done = 0;
         for (auto& in : spec.inputs) {
             json fl = json::array();
             int W = 0, H = 0;
             bool connected = true;
-            const std::vector<int> inFrames = in.frame ? std::vector<int>{*in.frame} : frames;
+            const std::vector<int> inFrames = in.frame ? std::vector<int>{*in.frame} : !in.frames.empty() ? in.frames : frames;
             for (int f : inFrames) {
                 if (mlCancel_) throw std::runtime_error("cancelled");
                 progress(done++, total, "writing " + in.name + " frame " + std::to_string(f));

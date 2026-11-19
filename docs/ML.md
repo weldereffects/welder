@@ -13,7 +13,7 @@ working, and the node shows the result when it's ready.
 | **Reconstruct** | One pass of MapAnything gives every frame's camera (pose and focal), a depth.Z pass and a coloured point cloud. No training: it's a generalizable model. | MapAnything (Apache 2.0 weights) |
 | **Depth** | Video Depth Anything: depth for the whole shot that stays steady from frame to frame (no flicker), as depth.Z. Relative (the scene's shape) or metric (metres). Splits a cut sequence at its cuts. | Video Depth Anything Small (Apache 2.0); Base / Large (non-commercial) |
 | **CorridorKey** | CorridorKey 2.0 by Corridor Digital: AI green / blue screen keying that looks at the whole clip, so the matte holds steady and hair, motion blur and glass keep their real colour. An optional hint input (a rough matte) steers it. Outputs the despilled foreground with its matte. | CorridorKey 2.0 (its own licence: free to use on commercial work, not for resale) |
-| **TrackMask** | Track and mask: click an object on a frame (Shift+click what isn't it, or drag a box) and SAM 2.1 masks it, then follows it through the shot. The matte goes in alpha. | SAM 2.1 (Apache 2.0) |
+| **TrackMask** | Track and mask: up to 16 objects. Click an object on any frame (Shift+click what isn't it, or drag a box), or find objects from text, and SAM 2.1 masks each one and follows it through the shot, forwards and backwards. Correction keyframes hold the track to a frame you checked; only the frames an edit changes are tracked again. Each object goes into its own channels (alpha by default). | SAM 2.1 (Apache 2.0); OWLv2 for text (Apache 2.0) |
 | **NeRF** | A NeRF of the shot, trained with joint camera optimisation. **Train**, then **Render** through any camera. | none (trained per shot) |
 
 Two 3D nodes work without the worker:
@@ -349,15 +349,29 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
   folder's `PUT_FILES_HERE.txt`.
 
 ### TrackMask
-* **Input:** src. Open its properties and view it: the viewer's tools are on.
+* **Inputs:** src, and an optional mask (an object can take its mask from it on a frame). Open its
+  properties and view it: the viewer's tools are on.
+* **Objects:** up to 16, listed in the panel. Clicks go to the active one (click a row to pick
+  it, double-click to rename; **New object** / **Delete object**). Objects can be made, and
+  clicked on, on any frame.
   * **click** a point on the object; **Shift+click** a point that isn't it (a background
     bit it grabbed); **drag** a box round the object; **Ctrl+click** removes a point (off
-    the points: the box). Clicks belong to the frame they're made on.
+    the points: the box). Clicks belong to the frame they're made on (an anchor).
   * Each change runs a quick one-frame preview (the model stays loaded on the worker, so
     after the first one it's quick). **M** in the viewer shows the matte in red.
-* **Track** follows the object through the frame range, forwards and backwards from the
-  first frame with clicks. Where it goes wrong, click on that frame too and Track again:
-  every clicked frame steers it.
+* **Track** follows every object through the frame range: backwards from its first anchor,
+  between anchors (with both as SAM's conditioning frames), and forwards from its last.
+  **track** both / forward / backward runs only the frames on that side of the current one.
+  Frames already tracked from the current anchors are skipped, so after an edit only the
+  frames between that object's neighbouring anchors run again.
+* **Set keyframe** (a correction keyframe): keeps the active object's matte on this frame
+  exactly as it shows now, and the track holds to it from both sides. **< key** / **key >**
+  jump between the active object's keyframes. Clicking on a keyframe's frame replaces the
+  kept matte with the new clicks.
+* **Text:** type what to look for in **find** ("person, dog") and press **Find text objects**:
+  OWLv2 (Google, Apache 2.0) boxes each one on the current frame and each box becomes an
+  object. **Re-find Text Objects** looks for them again every few frames while tracking and
+  picks up an object again where its track lost it, matched by position and look.
 * **model:** large (best), base_plus, small, tiny (quickest) - all SAM 2.1, Apache 2.0.
 * **matte:** grow / shrink (px), softness (px), invert; **output** alpha (the plate with
   the matte in alpha, optionally premultiplied) or matte (white on black).

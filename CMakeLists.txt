@@ -147,6 +147,7 @@ add_library(strata_core STATIC
   src/nodes/RetimeNodes.cpp
   src/nodes/Splat.cpp
   src/nodes/MLNodes.cpp
+  src/nodes/TrackMaskScene.cpp
   src/nodes/ImageGenNode.cpp
   src/nodes/ColorMgmtNodes.cpp
   src/color/Color.cpp

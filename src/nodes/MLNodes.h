@@ -36,6 +36,7 @@ struct InputSpec {
     int index = 0;     // node input
     bool required = false;
     std::optional<int> frame;  // only this frame (a still: LTX's style); by default every frame of the job
+    std::vector<int> frames;   // or only these frames (TrackMask's mask input: its anchors' frames)
 };
 
 struct JobSpec {
@@ -79,6 +80,9 @@ protected:
     // "rgba" and "take" outputs are converted from linear Rec.709 to the comp's working space.
     bool fillFromOutput(RenderArgs& a, Image& out, const std::string& slot, const std::string& output,
                         const std::vector<std::pair<int, int>>& chanMap, std::optional<int> outFrame = std::nullopt);
+    // The same from a given job's result.
+    bool fillFromKey(RenderArgs& a, Image& out, const std::string& key, const std::string& output,
+                     const std::vector<std::pair<int, int>>& chanMap, std::optional<int> outFrame = std::nullopt);
 };
 
 bool isML(const Node* n);
@@ -86,6 +90,9 @@ bool isML(const Node* n);
 // TrackMask: which result shows on frame f ("main" = the track, "preview", "" = none), and whether
 // the track is from the current clicks.
 std::string trackMaskSource(Node* n, double f, bool* current);
+// TrackMask: object `objectId`'s matte on frame f as it shows now (rows top first, at the worker's size w x h),
+// for a correction keyframe. False when there's none.
+bool trackMaskMatte(Node* n, int objectId, double f, std::vector<float>& out, int& w, int& h);
 
 // Cameras (refined / estimated) a job wrote as out/cameras.json, as a camera at `frame`.
 std::optional<cam3d::Camera> cameraFromResult(const std::string& key, double frame, double haperture);

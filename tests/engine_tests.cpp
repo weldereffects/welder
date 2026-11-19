@@ -27,6 +27,7 @@
 #include "nodes/NodeUtils.h"
 #include "nodes/Sample.h"
 #include "nodes/Roto.h"
+#include "nodes/TrackMaskScene.h"
 #include "nodes/PowerRoto.h"
 #include "nodes/Markup.h"
 #include "nodes/Track.h"
@@ -5324,11 +5325,12 @@ Connections:  {
         }
         ml::setHome("");
     });
-    test("TrackMask: clicks to the worker's coordinates, the matte in alpha (grow / soften / invert), current vs old results", [] {
+    test("TrackMask: an older save's clicks load as one object, to the worker's coordinates, the matte in alpha (grow / soften / invert), current vs old frames", [] {
         auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm";
         std::filesystem::remove_all(home);
         ml::setHome(home.string());
         const int W = 64, H = 48;
+        // an older TrackMask: "prompts" on one frame
         auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.3, 0.4, 1}}}}},
                                    {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K"}},
                                     {"params", {{"prompts", json::array({{{"frame", 3}, {"points", {{10, 40, 1}, {50, 8, 0}}}, {"box", {5, 30, 20, 44}}}})},
@@ -5339,6 +5341,9 @@ Connections:  {
         Node* n = c->find("TM");
         auto* m = dynamic_cast<mlnodes::MLNode*>(n);
         Engine e;
+        const tmscene::Scene sc = tmscene::parse(n->params);
+        CHECK(sc.objects.size() == 1 && sc.objects[0].id == 1 && sc.objects[0].name == "Object1" && sc.active == 1);
+        CHECK(sc.objects[0].anchors.size() == 1 && sc.objects[0].anchors[0].frame == 3);
         // the job: points / box flipped to the top row = 0, the preview just its frame
         auto s = m->spec("main", e);
         std::printf("  %s\n", s.params.dump().c_str());
@@ -5346,27 +5351,32 @@ Connections:  {
         CHECK(s.error.empty());
         CHECK(s.models.size() == 1 && s.models[0] == "sam2.1-hiera-large");
         CHECK(s.first == 1 && s.last == 6);
-        const json& q = s.params["prompts"][0];
+        CHECK(s.params["needed"]["1"].size() == 6);
+        CHECK(s.params["object_tags"]["1"].size() == 6);
+        const json& q = s.params["objects"][0]["anchors"][0];
+        CHECK(s.params["objects"][0]["id"] == 1);
         CHECK_NEAR(q["points"][0][1].get<double>(), H - 40, 1e-9);
         CHECK(q["points"][1][2].get<int>() == 0);
         CHECK_NEAR(q["box"][1].get<double>(), H - 44, 1e-9);  // the box's top edge (y up 44) is row 4
         CHECK_NEAR(q["box"][3].get<double>(), H - 30, 1e-9);
         auto sp = m->spec("preview", e);
         CHECK(sp.first == 3 && sp.last == 3 && sp.params.value("preview", false));
-        const std::string tag = s.params["tag"].get<std::string>();
-        // a finished track from these clicks: a matte with the left half 1
-        auto mkjob = [&](const std::string& key, const std::string& tg, int frame, float value) {
+        CHECK(sp.params["object_tags"]["1"].contains("3"));  // the object has its anchor there: the preview is its result
+        // a finished track from these anchors: a matte with the left half 1
+        auto mkjob = [&](const std::string& key, const json& tags, std::vector<int> frames, float value, const json& extra) {
             auto d = home / "jobs" / key;
             std::filesystem::create_directories(d / "out");
             std::ofstream(d / "job.json") << "{}";
             std::ofstream(d / "status.json") << json{{"state", "done"}, {"progress", 1}}.dump();
-            std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", {frame}}, {"width", W}, {"height", H}}}}}, {"tag", tg}}.dump();
+            json r = {{"outputs", {{"matte", {{"frames", frames}, {"width", W}, {"height", H}}}}}, {"object_tags", tags}};
+            for (auto& [k, v] : extra.items()) r[k] = v;
+            std::ofstream(d / "result.json") << r.dump();
             std::vector<float> mt(W * H, 0.0f);
             for (int y = 0; y < H; ++y)
                 for (int x = 0; x < W / 2; ++x) mt[y * W + x] = value;
-            CHECK(ml::writeNpy((d / "out" / ("matte." + std::to_string(frame) + ".npy")).string(), mt.data(), W, H, 1, true));
+            for (int f : frames) CHECK(ml::writeNpy((d / "out" / ("matte." + std::to_string(f) + ".npy")).string(), mt.data(), W, H, 1, true));
         };
-        mkjob("seg-main", tag, 3, 1.0f);
+        mkjob("seg-main", s.params["object_tags"], {1, 2, 3, 4, 5, 6}, 1.0f, {{"objects", {1}}});
         n->params.data["ml"] = {{"main", {{"result", "seg-main"}}}};
         auto img = render(*c, "TM", 3);
         CHECK_NEAR(px(img, 5, 20, "A"), 1, 1e-3);
@@ -5374,6 +5384,7 @@ Connections:  {
         CHECK_NEAR(px(img, 5, 20, "G"), 0.3, 1e-5);  // the plate as it was
         bool current = false;
         CHECK(mlnodes::trackMaskSource(n, 3, &current) == "main" && current);
+        CHECK(!m->spec("main", e).error.empty());  // every frame up to date: nothing to run
         // grow 4 px: the edge moves right; invert; matte output
         n->params.data["grow"] = 4;
         n->paramsChanged();
@@ -5396,22 +5407,214 @@ Connections:  {
         std::printf("  softened edge: %.3f\n", edge);
         CHECK(edge > 0.2f && edge < 0.8f);
         n->params.data["softness"] = 0;
-        // the clicks change: the track is old; a preview from the new clicks shows on its frame
-        n->params.data["prompts"][0]["points"].push_back({30, 30, 1});
+        // the scene is stored in the new form (the older list goes)
+        tmscene::Scene s2 = tmscene::parse(n->params);
+        s2.objects[0].anchorAt(3)->points.push_back({30, 30, 1});
+        tmscene::store(n->params, s2);
         n->paramsChanged();
-        CHECK(mlnodes::trackMaskSource(n, 3, &current) == "main" && !current);
-        const std::string tag2 = m->spec("preview", e).params["tag"].get<std::string>();
-        CHECK(tag2 != tag);
-        mkjob("seg-prev", tag2, 3, 0.5f);
+        CHECK(!n->params.has("prompts") && n->params.has("scene"));
+        CHECK(mlnodes::trackMaskSource(n, 3, &current) == "main" && !current);  // an older result
+        CHECK(mlnodes::trackMaskSource(n, 5, &current) == "main" && !current);
+        // a preview from the new clicks shows on its frame, the older track elsewhere
+        const json ptags = m->spec("preview", e).params["object_tags"];
+        mkjob("seg-prev", ptags, {3}, 0.5f, {{"objects", {1}}, {"tag", m->spec("preview", e).params["tag"]}});
         n->params.data["ml"]["preview"] = {{"result", "seg-prev"}};
         n->paramsChanged();
-        CHECK(mlnodes::trackMaskSource(n, 3, &current) == "preview");
-        CHECK(mlnodes::trackMaskSource(n, 4, &current) == "main");  // elsewhere: the older track
+        // (its frame tag matches: a whole frame's result, shown as current)
+        CHECK(mlnodes::trackMaskSource(n, 3, &current) == "main" || mlnodes::trackMaskSource(n, 3, &current) == "preview");
+        CHECK(current);
+        CHECK(mlnodes::trackMaskSource(n, 4, &current) == "main" && !current);  // elsewhere: the older track
         auto pv = render(*c, "TM", 3);
         CHECK_NEAR(px(pv, 5, 20, "A"), 0.5, 2e-3);
         // no clicks: it says so
-        n->params.data["prompts"] = json::array();
+        n->params.data["scene"] = {{"objects", json::array()}};
         CHECK(!m->spec("main", e).error.empty());
+        ml::setHome("");
+    });
+    test("TrackMask scene: 16 objects, anchors on any frame, save round trip, RLE masks, visibility keys", [] {
+        Params p;
+        tmscene::Scene s;
+        for (int i = 0; i < 20; ++i) s.add();
+        CHECK(s.objects.size() == 16);
+        CHECK(s.add() == nullptr);
+        CHECK(s.active == 16);
+        CHECK(s.remove(5) && !s.find(5) && s.objects.size() == 15);
+        tmscene::Object* o = s.add("car");
+        CHECK(o && o->id == 17 && o->name == "car");  // ids are not reused
+        tmscene::Object* a = s.find(1);
+        a->anchorFor(40).points.push_back({1, 2, 1});
+        a->anchorFor(10).box = {0, 0, 5, 5};
+        a->anchorFor(25).keyframe = true;
+        CHECK(a->anchorFrames() == (std::vector<int>{10, 25, 40}));  // kept sorted
+        CHECK(a->keyframes() == (std::vector<int>{25}));
+        CHECK(a->bracket(5) == std::make_pair(INT_MIN, 10));
+        CHECK(a->bracket(30) == std::make_pair(25, 40));
+        CHECK(a->bracket(40) == std::make_pair(40, INT_MAX));
+        a->vis = json::array({{20, 0}, {30, 1}});
+        CHECK(a->visibleAt(10) == false);  // before the first key: its value
+        CHECK(a->visibleAt(25) == false && a->visibleAt(30) && a->visibleAt(99));
+        a->channels = "RA";
+        a->text = "red car";
+        std::vector<float> m(12 * 7, 0.0f);
+        for (int y = 2; y < 5; ++y)
+            for (int x = 3; x < 9; ++x) m[y * 12 + x] = 0.9f;
+        a->anchorAt(25)->mask = tmscene::encodeRle(m, 12, 7);
+        int w = 0, h = 0;
+        auto back = tmscene::decodeRle(a->anchorAt(25)->mask, &w, &h);
+        CHECK(w == 12 && h == 7);
+        int diff = 0;
+        for (size_t i = 0; i < m.size(); ++i) diff += (m[i] >= 0.5f) != (back[i] >= 0.5f);
+        CHECK(diff == 0);
+        tmscene::store(p, s);
+        const json saved = json::parse(p.data.dump());  // through text, as a comp file
+        Params q;
+        q.data = saved;
+        tmscene::Scene r = tmscene::parse(q);
+        CHECK(tmscene::toJson(r) == tmscene::toJson(s));
+        CHECK(r.objects.size() == 16 && r.nextId == 18 && r.find(1)->channels == "RA" && r.find(1)->text == "red car");
+        CHECK(r.find(1)->anchorAt(25)->keyframe && !r.find(1)->anchorAt(25)->mask.is_null());
+        // a save with more than 16 objects keeps the first 16
+        json many = saved;
+        for (int i = 0; i < 5; ++i) many["scene"]["objects"].push_back({{"id", 100 + i}});
+        q.data = many;
+        CHECK(tmscene::parse(q).objects.size() == 16);
+    });
+    test("TrackMask: a correction keyframe re-tracks only the frames between its neighbouring anchors (c)", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm2";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 32, H = 24;
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K"}}}}),
+                     W, H);
+        c->firstFrame = 1;
+        c->lastFrame = 40;
+        Node* n = c->find("TM");
+        auto* m = dynamic_cast<mlnodes::MLNode*>(n);
+        tmscene::Scene s;
+        tmscene::Object* car = s.add("car");
+        car->anchorFor(10).points.push_back({5, 5, 1});
+        car->anchorFor(30).points.push_back({8, 5, 1});
+        tmscene::Object* dog = s.add("dog");
+        dog->anchorFor(5).box = {1, 1, 9, 9};
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        Engine e;
+        auto s1 = m->spec("main", e);
+        CHECK(s1.error.empty() && s1.params["needed"]["1"].size() == 40 && s1.params["needed"]["2"].size() == 40);
+        // the whole track done
+        auto d = home / "jobs" / "seg-all";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}}.dump();
+        json fr = json::array();
+        for (int f = 1; f <= 40; ++f) fr.push_back(f);
+        std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", fr}, {"width", W}, {"height", H}}}}},
+                                                 {"objects", {1, 2}}, {"object_tags", s1.params["object_tags"]}}.dump();
+        n->params.data["ml"] = {{"main", {{"result", "seg-all"}}}};
+        n->paramsChanged();
+        CHECK(!m->spec("main", e).error.empty());  // nothing stale
+        // a keyframe for the car on frame 20
+        s = tmscene::parse(n->params);
+        tmscene::Anchor& k = s.find(1)->anchorFor(20);
+        k.keyframe = true;
+        std::vector<float> mk(W * H, 1.0f);
+        k.mask = tmscene::encodeRle(mk, W, H);
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        auto s2 = m->spec("main", e);
+        CHECK(!s2.params["needed"].contains("2"));  // the dog: nothing changed
+        std::vector<int> needed = s2.params["needed"]["1"].get<std::vector<int>>();
+        std::vector<int> want;
+        for (int f = 11; f <= 29; ++f) want.push_back(f);
+        std::printf("  after a keyframe on 20: %zu frames to track (%d-%d), job frames %d-%d\n", needed.size(), needed.front(), needed.back(), s2.first, s2.last);
+        CHECK(needed == want);  // 1-10 and 30-40 (and every frame of the dog) stay as they were
+        CHECK(s2.first == 10 && s2.last == 30);  // the anchors either side are tracked from
+        CHECK(s2.params["objects"].size() == 1 && s2.params["objects"][0]["anchors"].size() == 3);
+        CHECK(s2.params["objects"][0]["anchors"][1].contains("mask"));
+        bool current = false;
+        mlnodes::trackMaskSource(n, 5, &current);
+        CHECK(current);
+        mlnodes::trackMaskSource(n, 15, &current);
+        CHECK(!current);
+        // forwards from frame 25 only
+        n->params.data["direction"] = "forward";
+        m->runFrame = 25;
+        auto s3 = m->spec("main", e);
+        CHECK(s3.params["needed"]["1"].front() == 25 && s3.params["needed"]["1"].back() == 29);
+        n->params.data["direction"] = "both";
+        // text objects that Re-find picks up again depend on all their anchors
+        n->params.data["refind"] = true;
+        s = tmscene::parse(n->params);
+        s.find(2)->text = "dog";
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        auto s4 = m->spec("main", e);
+        CHECK(s4.params.value("refind", false));
+        CHECK(std::find(s4.models.begin(), s4.models.end(), "owlv2-base") != s4.models.end());
+        ml::setHome("");
+    });
+    test("TrackMask: objects into their own channels, visibility keys, deleted objects left out, the mask input's frames", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm3";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 40, H = 20;
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.3, 0.4, 1}}}}},
+                                   {{"name", "M"}, {"type", "Constant"}, {"params", {{"color", {1, 1, 1, 1}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K", "M"}}}}),
+                     W, H);
+        c->firstFrame = 1;
+        c->lastFrame = 3;
+        Node* n = c->find("TM");
+        auto* m = dynamic_cast<mlnodes::MLNode*>(n);
+        tmscene::Scene s;
+        tmscene::Object* o1 = s.add();
+        o1->anchorFor(2).points.push_back({5, 5, 1});
+        tmscene::Object* o2 = s.add();
+        o2->anchorFor(2).input = "A";  // its mask from the mask input on frame 2
+        o2->channels = "R";
+        tmscene::Object* o3 = s.add();
+        o3->anchorFor(2).box = {0, 0, 4, 4};
+        tmscene::store(n->params, s);
+        Engine e;
+        auto sp = m->spec("main", e);
+        CHECK(sp.inputs.size() == 2 && sp.inputs[1].name == "mask" && sp.inputs[1].frames == std::vector<int>{2});
+        // a result: object 1 left quarter, object 2 right quarter, object 3 everywhere
+        auto d = home / "jobs" / "seg";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}}.dump();
+        std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", {2}}, {"width", W}, {"height", H}}}}},
+                                                 {"objects", {1, 2, 3}}, {"object_tags", sp.params["object_tags"]}}.dump();
+        std::vector<float> mt(W * H * 3, 0.0f);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) {
+                mt[(y * W + x) * 3 + 0] = x < W / 4;
+                mt[(y * W + x) * 3 + 1] = x >= 3 * W / 4;
+                mt[(y * W + x) * 3 + 2] = 1;
+            }
+        CHECK(ml::writeNpy((d / "out" / "matte.2.npy").string(), mt.data(), W, H, 3, true));
+        n->params.data["ml"] = {{"main", {{"result", "seg"}}}};
+        // object 3 hidden by a visibility key; object 2 into red only
+        s = tmscene::parse(n->params);
+        s.find(3)->vis = json::array({{1, 0}});
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        auto img = render(*c, "TM", 2);
+        CHECK_NEAR(px(img, 2, 10, "A"), 1, 1e-3);   // object 1
+        CHECK_NEAR(px(img, 20, 10, "A"), 0, 1e-3);  // (object 3 is hidden)
+        CHECK_NEAR(px(img, 38, 10, "A"), 0, 1e-3);  // object 2 isn't in alpha ...
+        CHECK_NEAR(px(img, 38, 10, "R"), 1, 1e-3);  // ... it's in red
+        CHECK_NEAR(px(img, 2, 10, "R"), 0, 1e-3);
+        CHECK_NEAR(px(img, 2, 10, "G"), 0.3, 1e-5);  // green untouched
+        // shown again, and object 1 deleted
+        s = tmscene::parse(n->params);
+        s.find(3)->vis = json::array();
+        s.remove(1);
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        auto img2 = render(*c, "TM", 2);
+        CHECK_NEAR(px(img2, 20, 10, "A"), 1, 1e-3);
         ml::setHome("");
     });
     test("Lens distortion: model, LensDistortion / STMap nodes, solving it in the camera tracker", [] {

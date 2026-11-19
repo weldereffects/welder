@@ -915,7 +915,7 @@ int main(int argc, char** argv) {
             if (frameCount == 44) tio.AddMouseButtonEvent(0, false);
             if (frameCount == 60)
                 if (Node* n = app.comp ? app.comp->find(std::getenv("STRATA_TEST_TRACKMASK")) : nullptr)
-                    std::fprintf(stderr, "TMTEST prompts %s preview_frame %g\n", n->params.data.value("prompts", json::array()).dump().c_str(),
+                    std::fprintf(stderr, "TMTEST scene %s preview_frame %g\n", n->params.data.value("scene", json::object()).dump().c_str(),
                                  n->params.num("preview_frame", 0, -1));
         }
         // STRATA_TEST_PRECOMP=<backdrop>[,<dir>]: make it a Precomp (local + network folders in <dir>), precomp it, report

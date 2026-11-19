@@ -346,6 +346,23 @@
    "license": "Apache 2.0",
    "license_url": "https://huggingface.co/facebook/sam2.1-hiera-large"
   },
+  "owlv2-base": {
+   "label": "OWLv2 base (TrackMask: find objects from text)",
+   "repo": "google/owlv2-base-patch16-ensemble",
+   "files": [
+    "config.json",
+    "preprocessor_config.json",
+    "model.safetensors",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt",
+    "special_tokens_map.json"
+   ],
+   "size_gb": 0.62,
+   "gated": false,
+   "license": "Apache 2.0",
+   "license_url": "https://huggingface.co/google/owlv2-base-patch16-ensemble"
+  },
   "corridorkey-2": {
    "label": "CorridorKey 2.0 (Corridor Digital) with C-RADIOv4, MoGe-2 and RVM",
    "repo": "nikopueringer/CorridorKey2.0",

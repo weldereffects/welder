@@ -2336,17 +2336,31 @@ std::vector<NodeDef> build() {
                  "or newer. Runs on the ML worker."});
     d.push_back({"TrackMask", "AI",
                  frames({InfoRow("trackmask", ""),
-                         Btn("trackmask_clear_frame", "Clear this frame", "Remove this frame's clicks and box"),
-                         Same(Btn("trackmask_clear_all", "Clear all", "Remove every frame's clicks")),
+                         Btn("trackmask_clear_frame", "Clear this frame", "Remove the active object's clicks and box on this frame"),
+                         Same(Btn("trackmask_clear_all", "Clear object", "Remove every anchor of the active object")),
+                         Tip(C("direction", "track", "both", {"both", "forward", "backward"}),
+                             "Which frames Track runs: all of them, or from the frame you're on forwards / backwards. "
+                             "Frames already tracked from the current anchors are skipped"),
                          Tip(C("model", "model", "large", {"large", "base_plus", "small", "tiny"}),
                              "SAM 2.1 (Apache 2.0). large: the best edges and tracking; tiny: the quickest"),
                          Tip(I("max_size", "max size", 1280, 256, 4096), "The frames are made this small (long side) for the model"),
+                         Div("text"),
+                         Tip(S("text_query", "find", ""), "What to look for (\"person, dog\"): Find text objects makes an object of each "
+                                                           "one OWLv2 finds on this frame"),
+                         Tip(F("text_threshold", "find threshold", 0.2, 0.01, 0.9), "The least score a found box needs"),
+                         Tip(B("refind", "Re-find Text Objects", false),
+                             "While tracking, look for the text objects again every few frames and pick each one up again "
+                             "where its track lost it (matched by position and look)"),
+                         EnableIf(I("refind_every", "re-find every (frames)", 10, 1, 100), "refind=true"),
                          Div("matte"), F("grow", "grow / shrink (px)", 0, -50, 50), F("softness", "softness (px)", 0, 0, 50),
                          B("invert", "invert", false), C("output", "output", "alpha", {"alpha", "matte"}),
                          B("premultiply", "premultiply", false)}),
-                 "Track and mask: click the object in the viewer (Shift+click: not it, drag: a box) and SAM 2.1 masks it, "
-                 "then follows it through the shot (Track). Click again on any frame where it goes wrong and Track again. "
-                 "The matte goes in alpha (M in the viewer shows it). Runs on the ML worker."});
+                 "Track and mask: up to 16 objects. Click an object in the viewer (Shift+click: not it, drag: a box), "
+                 "or find objects from text, and SAM 2.1 masks each one and follows it through the shot (Track), forwards "
+                 "and backwards from any frame. Where a track goes wrong, click again on that frame, or set a correction "
+                 "keyframe on a frame that looks right; only the frames that change are tracked again. Each object goes "
+                 "into its own channels (A by default); the optional mask input can give an object its mask on a frame. "
+                 "M in the viewer shows the matte. Runs on the ML worker."});
     d.push_back({"Reconstruct", "AI",
                  frames({I("frame_step", "every nth frame", 1, 1, 20), I("max_frames", "max frames", 150, 2, 400),
                          B("depth", "depth.Z", true), I("max_points", "max points", 500000, 1000, 5000000),

@@ -1,6 +1,8 @@
 #include "MLNodes.h"
 
 #include <algorithm>
+#include <climits>
+#include <cstdio>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +17,7 @@
 #include "ImageGenNode.h"
 #include "NodeUtils.h"
 #include "Splat.h"
+#include "TrackMaskScene.h"
 
 namespace strata::mlnodes {
 
@@ -56,7 +59,11 @@ std::string MLNode::models(const JobSpec& s) const {
 
 bool MLNode::fillFromOutput(RenderArgs& a, Image& out, const std::string& slot, const std::string& output,
                             const std::vector<std::pair<int, int>>& chanMap, std::optional<int> outFrame) {
-    std::string key = result(slot);
+    return fillFromKey(a, out, result(slot), output, chanMap, outFrame);
+}
+
+bool MLNode::fillFromKey(RenderArgs& a, Image& out, const std::string& key, const std::string& output,
+                         const std::vector<std::pair<int, int>>& chanMap, std::optional<int> outFrame) {
     if (key.empty()) return false;
     int f = outFrame ? *outFrame : (int)std::lround(a.frame);
     if (!outFrame && std::fabs(a.frame - f) > 1e-6) return false;
@@ -584,67 +591,257 @@ public:
 };
 
 // ================================================================= TrackMask
-// Click an object (or drag a box round it) on a frame; SAM 2.1 masks it and follows it through
-// the shot. The clicks ("prompts": [{frame, points: [[x, y, 1 object / 0 not it]], box}], full-res
-// pixels, y up) are edited in the viewer (ui/TrackMaskTool.cpp); each edit runs a one-frame
-// preview, Track runs the range. The output: src with the matte in alpha (or the matte alone),
-// grown / shrunk, softened, inverted here.
+// Up to 16 objects, each picked on any frames (clicks, boxes, correction keyframes, the mask input, text), that
+// SAM 2.1 masks and follows through the shot. The scene ("scene" param, src/nodes/TrackMaskScene.h) is edited in
+// the viewer (ui/TrackMaskTool.cpp) and the panel; each edit runs a one-frame preview, Track runs the frames
+// that aren't up to date. Every frame of a track carries a tag of the anchors it came from, so after an edit
+// only the frames those anchors reach are tracked again; the other frames keep showing the earlier result.
+// The output: src with the objects' mattes in their channels (A by default), grown / shrunk, softened,
+// inverted here.
+namespace {
+
+std::string tmHex(uint64_t h) {
+    char b[17];
+    std::snprintf(b, sizeof b, "%016llx", (unsigned long long)h);
+    return b;
+}
+
+// The scene, parsed once per change of its JSON.
+std::shared_ptr<const tmscene::Scene> sceneOf(const Node* n) {
+    static std::mutex mu;
+    static std::map<const Node*, std::pair<uint64_t, std::shared_ptr<const tmscene::Scene>>> cache;
+    const json* sj = n->params.has("scene") ? &n->params.data["scene"] : n->params.has("prompts") ? &n->params.data["prompts"] : nullptr;
+    const uint64_t h = hashString(sj ? sj->dump() : std::string("{}"), n->params.has("scene") ? 1 : 2);
+    std::lock_guard<std::mutex> l(mu);
+    auto it = cache.find(n);
+    if (it != cache.end() && it->second.first == h) return it->second.second;
+    auto s = std::make_shared<const tmscene::Scene>(tmscene::parse(n->params));
+    if (cache.size() > 256) cache.clear();
+    cache[n] = {h, s};
+    return s;
+}
+
+}  // namespace
+
 uint64_t promptsHash(const Node* n) {
-    const json* p = n->params.has("prompts") ? &n->params.data["prompts"] : nullptr;
-    const std::string s = p ? p->dump() : "[]";
-    return hashString(s + "|" + n->params.str("model", "large") + "|" + std::to_string((int)n->params.num("max_size", 0, 1280)));
+    const auto s = sceneOf(n);
+    return hashString(tmscene::toJson(*s)["objects"].dump() + "|" + n->params.str("model", "large") + "|" +
+                      std::to_string((int)n->params.num("max_size", 0, 1280)) + "|" + (n->params.flag("refind", false) ? "r" : "") +
+                      std::to_string((int)n->params.num("refind_every", 0, 10)));
 }
 
 class TrackMaskNode : public MLNode {
 public:
-    int maxInputs() const override { return 1; }
-    std::string inputLabel(int) const override { return "src"; }
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 0 ? "src" : "mask"; }
     bool timeDependent() const override { return true; }
-    std::vector<std::string> slots() const override { return {"main", "preview"}; }
-    std::string slotLabel(const std::string& s) const override { return s == "main" ? "Track" : "Preview this frame"; }
+    std::vector<std::string> slots() const override { return {"main", "preview", "find"}; }
+    std::string slotLabel(const std::string& s) const override {
+        return s == "main" ? "Track" : s == "find" ? "Find text objects" : "Preview this frame";
+    }
     ChannelSet channels(Engine& e, double f) override { return inputChannels(e, input(0), f, {}); }
     Box roi(Engine&, int, const Box& req, double) override { return req; }
 
-    // Which result shows on frame f: the track when it's from the current clicks, else the
-    // preview on its frame (and the older track elsewhere).
-    std::string sourceFor(double f, bool* current = nullptr) const {
-        const std::string tag = std::to_string(promptsHash(this));
-        auto tagOf = [&](const std::string& slot) {
-            auto r = resultJson(slot);
-            return r ? r->value("tag", std::string()) : std::string();
+    std::shared_ptr<const tmscene::Scene> scene() const { return sceneOf(this); }
+
+    // What the worker's tracking of an object on frame f depends on: model, size, and the anchors either side
+    // of f (an object Re-find picks up again: all its anchors).
+    uint64_t base() const {
+        return hashString(params.str("model", "large") + "|" + std::to_string((int)params.num("max_size", 0, 1280)));
+    }
+    bool refinds(const tmscene::Object& o) const { return params.flag("refind", false) && !o.text.empty(); }
+    std::string objectTag(const tmscene::Object& o, int f) const {
+        const uint64_t b = base();
+        if (refinds(o)) {
+            uint64_t h = hashCombine(hashString(o.text, b), (uint64_t)params.num("refind_every", 0, 10));
+            h = hashCombine(h, (uint64_t)o.id);
+            for (auto& a : o.anchors) h = hashCombine(h, tmscene::anchorHash(a));
+            return tmHex(h);
+        }
+        return tmHex(tmscene::frameTag(o, f, b));
+    }
+
+    // The finished jobs to show from, newest first: the preview, then the tracks.
+    std::vector<std::string> resultKeys() const {
+        std::vector<std::string> v;
+        auto add = [&](const std::string& k) {
+            if (!k.empty() && std::find(v.begin(), v.end(), k) == v.end()) v.push_back(k);
         };
-        const bool mainCurrent = !result("main").empty() && tagOf("main") == tag;
-        if (current) *current = mainCurrent;
-        if (mainCurrent) return "main";
-        if (!result("preview").empty() && tagOf("preview") == tag && std::lround(f) == std::lround(params.num("preview_frame", 0, -1e9)))
-            return "preview";
-        return result("main").empty() ? "" : "main";
+        add(result("preview"));
+        add(result("main"));
+        if (params.has("tracks") && params.data["tracks"].is_array())
+            for (auto& k : params.data["tracks"])
+                if (k.is_string()) add(k.get<std::string>());
+        return v;
+    }
+    static bool hasFrame(const json& r, int f) {
+        if (!r.contains("outputs") || !r["outputs"].contains("matte")) return false;
+        const json& fr = r["outputs"]["matte"].value("frames", json::array());
+        return std::find(fr.begin(), fr.end(), f) != fr.end();
+    }
+    // The object's channel in a result (an older single-object result: object 1 is channel 0), -1 if not in it.
+    static int channelOf(const json& r, int id) {
+        if (r.contains("objects") && r["objects"].is_array()) {
+            const auto& ids = r["objects"];
+            for (size_t i = 0; i < ids.size(); ++i)
+                if (ids[i].get<int>() == id) return (int)i;
+            return -1;
+        }
+        return id == 1 ? 0 : -1;
+    }
+    static std::string tagIn(const json& r, int id, int f) {
+        if (!r.contains("object_tags") || !r["object_tags"].is_object()) return "";
+        const std::string os = std::to_string(id), fs = std::to_string(f);
+        const json& ot = r["object_tags"];
+        if (!ot.contains(os) || !ot[os].is_object()) return "";
+        return ot[os].value(fs, std::string());
+    }
+
+    struct Source {
+        std::string key;       // the job to read the matte from ("" = none)
+        int channel = -1;      // the object's channel in it
+        bool current = false;  // from the object's current anchors
+        bool preview = false;
+    };
+    // Where object o's matte on frame f comes from: the newest result made from its current anchors; else the
+    // newest that has it on that frame (from older anchors).
+    Source sourceFor(const tmscene::Object& o, int f) const {
+        const std::string tag = objectTag(o, f);
+        const auto keys = resultKeys();
+        const std::string pk = result("preview");
+        std::vector<std::pair<std::string, std::shared_ptr<const json>>> rs;
+        for (auto& k : keys)
+            if (auto r = ml::jobResult(k)) rs.push_back({k, r});
+        for (auto& [k, r] : rs) {
+            const int ch = channelOf(*r, o.id);
+            if (ch >= 0 && hasFrame(*r, f) && tagIn(*r, o.id, f) == tag) return {k, ch, true, k == pk};
+        }
+        for (auto& [k, r] : rs) {
+            if (k == pk) continue;  // a preview only counts where it's current
+            const int ch = channelOf(*r, o.id);
+            if (ch >= 0 && hasFrame(*r, f) && (r->contains("object_tags") ? !tagIn(*r, o.id, f).empty() : true)) return {k, ch, false, false};
+        }
+        return {};
+    }
+    // For the panel: the first object with anchors's source on frame f ("" = none), and whether every object
+    // with anchors is from its current anchors there.
+    std::pair<Source, bool> frameSource(double fr) const {
+        const int f = (int)std::lround(fr);
+        const auto s = scene();
+        Source first;
+        bool all = true, any = false;
+        for (auto& o : s->objects) {
+            if (o.anchors.empty()) continue;
+            Source src = sourceFor(o, f);
+            if (!any && !src.key.empty()) first = src, any = true;
+            all = all && src.current;
+        }
+        return {first, any && all};
+    }
+
+    void resultAttached(const std::string& slot, const std::string& key) override {
+        auto r = ml::jobResult(key);
+        if (slot == "main") {
+            json t = json::array({key});
+            if (params.has("tracks") && params.data["tracks"].is_array())
+                for (auto& k : params.data["tracks"])
+                    if (k.is_string() && k.get<std::string>() != key && t.size() < 12) t.push_back(k);
+            params.data["tracks"] = t;
+        } else if (slot == "find" && r && r->contains("detections")) {
+            // each box found becomes an object, anchored by it on that frame
+            tmscene::Scene s = tmscene::parse(params);
+            const int f = r->value("frame", 0);
+            const double H = r->value("height", 0.0);
+            const std::string q = r->value("query", std::string());
+            int first = 0, n = 0;
+            for (auto& d : (*r)["detections"]) {
+                if (!d.contains("box") || !d["box"].is_array() || d["box"].size() != 4) continue;
+                const std::string dq = d.value("query", q);
+                tmscene::Object* o = s.add(dq + " " + std::to_string(++n));
+                if (!o) break;
+                o->text = dq;
+                const auto& b = d["box"];
+                auto r1 = [](double v) { return std::round(v * 10) / 10; };
+                o->anchorFor(f).box = {r1(b[0].get<double>()), r1(H - b[3].get<double>()), r1(b[2].get<double>()), r1(H - b[1].get<double>())};
+                if (!first) first = o->id;
+            }
+            if (first) s.active = first;
+            tmscene::store(params, s);
+            params.data["preview_frame"] = f;
+        }
+        paramsChanged();
     }
 
     void render(RenderArgs& a, Image& out) override {
         copyInput(a, out, input(0));
-        const int A = out.ch("A");
-        const std::string slot = sourceFor(a.frame);
-        const double sc = a.engine.scale();
-        const int grow = (int)std::lround(params.num("grow", a.frame, 0) * sc);
-        const double soft = std::max(0.0, params.num("softness", a.frame, 0) * sc);
+        const int A = out.ch("A"), R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
+        const auto sc = scene();
+        const int f = (int)std::lround(a.frame);
+        const double es = a.engine.scale();
+        const int grow = (int)std::lround(params.num("grow", a.frame, 0) * es);
+        const double soft = std::max(0.0, params.num("softness", a.frame, 0) * es);
         const int pad = std::abs(grow) + (int)std::ceil(soft * 1.8) + 1;
         const Box P = a.region.pad(pad, pad);
-        Image m(P, {"A"});
+        const bool inv = params.flag("invert", false), matteOnly = params.str("output", "alpha") == "matte";
+        const bool premult = params.flag("premultiply", false);
+        const int W = P.width(), Hh = P.height();
+        // each shown object's matte from where it is on this frame, into the channels it goes to (the most of them)
+        const char* letters = "RGBA";
+        bool any[4] = {false, false, false, false};
+        std::array<std::vector<float>, 4> comb;
         bool have = false;
-        if (!slot.empty()) {
+        std::vector<float> om;
+        for (auto& o : sc->objects) {
+            if (!o.visibleAt(a.frame)) continue;
+            bool used = false;
+            for (int c = 0; c < 4; ++c)
+                if (o.channels.find(letters[c]) != std::string::npos) any[c] = used = true;
+            if (!used || (o.anchors.empty())) continue;
+            const Source src = sourceFor(o, f);
+            if (src.key.empty()) continue;
+            Image m(P, {"m"});
             RenderArgs pa{a.engine, a.frame, P};
-            have = fillFromOutput(pa, m, slot, "matte", {{0, 0}});
+            if (!fillFromKey(pa, m, src.key, "matte", {{0, src.channel}})) continue;
+            have = true;
+            for (int c = 0; c < 4; ++c) {
+                if (o.channels.find(letters[c]) == std::string::npos) continue;
+                if (comb[c].empty()) comb[c].assign((size_t)W * Hh, 0.0f);
+                for (size_t i = 0; i < comb[c].size(); ++i) comb[c][i] = std::max(comb[c][i], m.data[i]);
+            }
         }
         if (!have) {  // nothing tracked here (yet): no matte
             if (A >= 0)
                 for (int y = a.region.y1; y < a.region.y2; ++y)
-                    for (int x = a.region.x1; x < a.region.x2; ++x) out.px(x, y)[A] = params.flag("invert", false) ? 1.0f : 0.0f;
+                    for (int x = a.region.x1; x < a.region.x2; ++x) out.px(x, y)[A] = inv ? 1.0f : 0.0f;
             return;
         }
-        const int W = P.width(), H = P.height();
-        std::vector<float> v(m.data.begin(), m.data.end()), t(v.size());
-        // grow (max) / shrink (min) by |grow| px: separable square
+        for (int c = 0; c < 4; ++c)
+            if (!comb[c].empty()) growSoften(comb[c], W, Hh, grow, soft);
+        const int outCh[4] = {R, G, B, A};
+        for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int x = a.region.x1; x < a.region.x2; ++x) {
+                const size_t i = (size_t)(y - P.y1) * W + (x - P.x1);
+                float v[4];
+                for (int c = 0; c < 4; ++c) {
+                    v[c] = !comb[c].empty() ? std::clamp(comb[c][i], 0.0f, 1.0f) : 0.0f;
+                    if (inv && any[c]) v[c] = 1 - v[c];
+                }
+                if (!any[3]) v[3] = inv ? 1.0f : 0.0f;
+                float* px = out.px(x, y);
+                for (int c = 0; c < 3; ++c) {
+                    if (outCh[c] < 0) continue;
+                    if (any[c]) px[outCh[c]] = v[c];
+                    else if (matteOnly) px[outCh[c]] = v[3];
+                    else if (premult) px[outCh[c]] *= v[3];
+                }
+                if (A >= 0) px[A] = v[3];
+            }
+    }
+
+    // grow (max) / shrink (min) by |grow| px: separable square; then soften: three box passes (about a
+    // gaussian of `soft` px)
+    static void growSoften(std::vector<float>& v, int W, int H, int grow, double soft) {
+        std::vector<float> t(v.size());
         if (grow != 0) {
             const int r = std::abs(grow);
             const bool mx = grow > 0;
@@ -662,7 +859,6 @@ public:
                 v.swap(t);
             }
         }
-        // soften: three box passes (about a gaussian of `soft` px)
         if (soft >= 0.5) {
             const int r = std::max(1, (int)std::lround(soft * 0.6));
             for (int it = 0; it < 3; ++it)
@@ -679,67 +875,154 @@ public:
                     v.swap(t);
                 }
         }
-        const bool inv = params.flag("invert", false), matteOnly = params.str("output", "alpha") == "matte";
-        const bool premult = params.flag("premultiply", false);
-        const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
-        for (int y = a.region.y1; y < a.region.y2; ++y)
-            for (int x = a.region.x1; x < a.region.x2; ++x) {
-                float k = std::clamp(v[(size_t)(y - P.y1) * W + (x - P.x1)], 0.0f, 1.0f);
-                if (inv) k = 1 - k;
-                float* px = out.px(x, y);
-                if (matteOnly) {
-                    for (int c : {R, G, B})
-                        if (c >= 0) px[c] = k;
-                } else if (premult) {
-                    for (int c : {R, G, B})
-                        if (c >= 0) px[c] *= k;
+    }
+
+    // Per object with anchors: the frames Track would run (in the node's range, the direction asked, not
+    // already from its current anchors).
+    std::map<int, std::vector<int>> staleFrames(Engine& e, const tmscene::Scene& s) const {
+        auto [a, b] = range(e);
+        const std::string dir = params.str("direction", "both");
+        const int here = (int)std::lround(runFrame);
+        if (dir == "forward") a = std::max(a, here);
+        if (dir == "backward") b = std::min(b, here);
+        std::vector<std::shared_ptr<const json>> rs;
+        for (auto& k : resultKeys())
+            if (auto r = ml::jobResult(k)) rs.push_back(r);
+        const bool all = params.flag("retrack_all", false);
+        std::map<int, std::vector<int>> out;
+        for (auto& o : s.objects) {
+            if (o.anchors.empty()) continue;
+            std::vector<int> v;
+            for (int f = a; f <= b; ++f) {
+                bool ok = false;
+                if (!all) {
+                    const std::string tag = objectTag(o, f);
+                    for (auto& r : rs)
+                        if (channelOf(*r, o.id) >= 0 && hasFrame(*r, f) && tagIn(*r, o.id, f) == tag) {
+                            ok = true;
+                            break;
+                        }
                 }
-                if (A >= 0) px[A] = k;
+                if (!ok) v.push_back(f);
             }
+            if (!v.empty()) out[o.id] = v;
+        }
+        return out;
     }
 
     JobSpec spec(const std::string& slot, Engine& e) override {
         JobSpec s;
-        s.task = "segment";
-        s.inputs = {{"src", 0, true}};
         auto [a, b] = range(e);
-        s.first = a;
-        s.last = b;
-        const std::string model = params.str("model", "large");
-        // the clicks, in the plate's pixels with the top row 0 (the worker's images)
         const Format fm = input(0) ? input(0)->format(e, a) : (comp ? comp->format : Format());
         const double H = fm.height;
-        json prompts = json::array();
-        int n = 0;
-        if (params.has("prompts") && params.data["prompts"].is_array())
-            for (auto& p : params.data["prompts"]) {
-                json q = {{"frame", p.value("frame", 0.0)}, {"points", json::array()}, {"box", nullptr}};
-                if (p.contains("points") && p["points"].is_array())
-                    for (auto& pt : p["points"])
-                        if (pt.is_array() && pt.size() >= 3) {
-                            q["points"].push_back({pt[0].get<double>(), H - pt[1].get<double>(), pt[2].get<int>()});
-                            ++n;
-                        }
-                if (p.contains("box") && p["box"].is_array() && p["box"].size() == 4) {
-                    const auto& bx = p["box"];
-                    q["box"] = {std::min(bx[0].get<double>(), bx[2].get<double>()), H - std::max(bx[1].get<double>(), bx[3].get<double>()),
-                                std::max(bx[0].get<double>(), bx[2].get<double>()), H - std::min(bx[1].get<double>(), bx[3].get<double>())};
-                    ++n;
-                }
-                prompts.push_back(q);
-            }
-        s.params = pick(params, {{"max_size", 1280}});
-        s.params["model"] = model;
-        s.params["prompts"] = prompts;
-        s.params["tag"] = std::to_string(promptsHash(this));
-        if (slot == "preview") {
+        if (slot == "find") {
+            s.task = "textfind";
+            const int f = (int)std::lround(runFrame);
+            s.first = s.last = f;
+            s.inputs = {{"src", 0, true, f}};
+            s.params = {{"query", params.str("text_query", "")}, {"threshold", params.num("text_threshold", 0, 0.2)}, {"max", tmscene::kMaxObjects}};
+            s.models = {"owlv2-base"};
+            if (!input(0)) s.error = "connect the src input";
+            else if (params.str("text_query", "").find_first_not_of(" ,") == std::string::npos) s.error = "type what to look for first";
+            else if ((int)scene()->objects.size() >= tmscene::kMaxObjects) s.error = "16 objects already: delete one first";
+            return s;
+        }
+        s.task = "segment";
+        const auto sc = scene();
+        const std::string model = params.str("model", "large");
+        std::map<int, std::vector<int>> needed;
+        if (slot == "preview") {  // the objects with an anchor on the frame
             const int f = (int)std::lround(params.num("preview_frame", 0, a));
+            for (auto& o : sc->objects)
+                if (const tmscene::Anchor* an = o.anchorAt(f); an && !an->empty()) needed[o.id] = {f};
             s.first = s.last = f;
             s.params["preview"] = true;
+        } else {
+            needed = staleFrames(e, *sc);
+        }
+        // the frames the job reads: the frames to track, and the anchors they're tracked from
+        if (slot != "preview") {
+            int lo = INT_MAX, hi = INT_MIN;
+            for (auto& [id, fs] : needed) {
+                const tmscene::Object* o = sc->find(id);
+                lo = std::min(lo, fs.front());
+                hi = std::max(hi, fs.back());
+                if (refinds(*o)) {
+                    lo = std::min(lo, o->anchors.front().frame);
+                    hi = std::max(hi, o->anchors.back().frame);
+                    continue;
+                }
+                const auto bl = o->bracket(fs.front()), bh = o->bracket(fs.back());
+                if (bl.first != INT_MIN) lo = std::min(lo, bl.first);
+                else if (bl.second != INT_MAX) hi = std::max(hi, bl.second);  // tracked backwards from it
+                if (bh.second != INT_MAX) hi = std::max(hi, bh.second);
+            }
+            s.first = needed.empty() ? a : std::max(a, lo);
+            s.last = needed.empty() ? b : std::min(b, hi);
+        }
+        // the objects to track and their anchors, in the plate's pixels with the top row 0 (the worker's images)
+        json objs = json::array(), need = json::object(), tags = json::object();
+        std::vector<int> maskFrames;
+        int n = 0;
+        bool anyText = false;
+        for (auto& o : sc->objects) {
+            for (auto& an0 : o.anchors)
+                if (!an0.empty()) ++n;
+            auto it = needed.find(o.id);
+            if (it == needed.end()) continue;
+            json an = json::array();
+            for (auto& an0 : o.anchors) {
+                if (an0.frame < s.first || an0.frame > s.last || an0.empty()) continue;
+                json q = {{"frame", an0.frame}, {"points", json::array()}, {"box", nullptr}};
+                for (auto& pt : an0.points) q["points"].push_back({pt[0].get<double>(), H - pt[1].get<double>(), pt[2].get<int>()});
+                if (an0.box.is_array()) {
+                    const auto& bx = an0.box;
+                    q["box"] = {std::min(bx[0].get<double>(), bx[2].get<double>()), H - std::max(bx[1].get<double>(), bx[3].get<double>()),
+                                std::max(bx[0].get<double>(), bx[2].get<double>()), H - std::min(bx[1].get<double>(), bx[3].get<double>())};
+                }
+                if (!an0.mask.is_null()) q["mask"] = an0.mask;
+                if (!an0.input.empty()) {
+                    q["input"] = an0.input;
+                    if (input(1) && std::find(maskFrames.begin(), maskFrames.end(), an0.frame) == maskFrames.end()) maskFrames.push_back(an0.frame);
+                }
+                an.push_back(q);
+            }
+            if (!o.text.empty()) anyText = true;
+            objs.push_back({{"id", o.id}, {"text", o.text}, {"anchors", an}});
+            const std::string os = std::to_string(o.id);
+            need[os] = it->second;
+            json t = json::object();
+            for (int f : it->second) t[std::to_string(f)] = objectTag(o, f);
+            tags[os] = t;
+        }
+        std::sort(maskFrames.begin(), maskFrames.end());
+        s.inputs = {{"src", 0, true}};
+        if (!maskFrames.empty()) {
+            InputSpec mi{"mask", 1, false};
+            mi.frames = maskFrames;
+            s.inputs.push_back(mi);
+        }
+        s.params["max_size"] = (int)params.num("max_size", 0, 1280);
+        s.params["model"] = model;
+        s.params["objects"] = objs;
+        s.params["needed"] = need;
+        s.params["object_tags"] = tags;
+        s.params["tag"] = std::to_string(promptsHash(this));
+        bool refind = false;
+        if (slot == "main" && params.flag("refind", false))
+            for (auto& o : sc->objects)
+                if (needed.count(o.id) && !o.text.empty()) refind = true;
+        if (refind) {
+            s.params["refind"] = true;
+            s.params["refind_every"] = (int)params.num("refind_every", 0, 10);
+            s.params["text_threshold"] = params.num("text_threshold", 0, 0.2);
         }
         s.models = {"sam2.1-hiera-" + std::string(model == "base_plus" ? "base-plus" : model)};
+        if (refind) s.models.push_back("owlv2-base");
         if (!input(0)) s.error = "connect the src input";
         else if (!n) s.error = "click on the object in the viewer first (click: the object, Shift+click: not it, drag: a box)";
+        else if (needed.empty()) s.error = slot == "preview" ? "no anchors on this frame" : "every frame is already tracked from the current anchors";
+        (void)anyText;
         return s;
     }
 };
@@ -817,7 +1100,28 @@ public:
 std::string trackMaskSource(Node* n, double f, bool* current) {
     if (current) *current = false;
     auto* t = dynamic_cast<TrackMaskNode*>(n);
-    return t ? t->sourceFor(f, current) : std::string();
+    if (!t) return std::string();
+    const auto [s, all] = t->frameSource(f);
+    if (current) *current = all;
+    return s.key.empty() ? std::string() : s.preview ? std::string("preview") : std::string("main");
+}
+
+bool trackMaskMatte(Node* n, int objectId, double f, std::vector<float>& out, int& w, int& h) {
+    auto* t = dynamic_cast<TrackMaskNode*>(n);
+    if (!t) return false;
+    const auto sc = t->scene();
+    const tmscene::Object* o = sc->find(objectId);
+    if (!o) return false;
+    const auto src = t->sourceFor(*o, (int)std::lround(f));
+    if (src.key.empty()) return false;
+    auto img = ml::outputFrame(src.key, "matte", (int)std::lround(f));
+    if (!img || src.channel >= img->c) return false;
+    w = img->w;
+    h = img->h;
+    out.resize((size_t)w * h);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) out[(size_t)y * w + x] = img->at(x, y, src.channel);
+    return true;
 }
 
 }  // namespace strata::mlnodes
