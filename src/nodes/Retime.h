@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "../core/Engine.h"
 #include "../core/Image.h"
 #include "../core/Params.h"
 
@@ -115,40 +116,57 @@ void warpBlend(const Image& A, const Image& B, const Fields& f, const std::vecto
 void parallelFor(int n, const std::function<void(int, int)>& fn);  // fn(begin, end)
 
 // A small LRU of shared results keyed by hash; concurrent requests for the
-// same key wait for one build.
+// same key wait for one build. Several engines share these (the viewer, the
+// playback read-ahead): when the build a caller waited on was cancelled (an
+// edit stopped the read-ahead engine running it), a caller whose own render
+// goes on builds it itself instead of failing as if it had been cancelled too.
+// A build still running is never evicted (callers would start it again).
 template <class T>
 class SharedCache {
 public:
     explicit SharedCache(size_t cap) : cap_(cap) {}
     std::shared_ptr<const T> get(uint64_t key, const std::function<std::shared_ptr<const T>()>& build) {
-        std::shared_future<std::shared_ptr<const T>> fut;
-        std::promise<std::shared_ptr<const T>> prom;
-        bool mine = false;
-        {
-            std::lock_guard<std::mutex> l(m_);
-            for (auto it = items_.begin(); it != items_.end(); ++it)
-                if (it->first == key) {
-                    items_.splice(items_.begin(), items_, it);
-                    fut = it->second;
-                    break;
+        for (;;) {
+            std::shared_future<std::shared_ptr<const T>> fut;
+            std::promise<std::shared_ptr<const T>> prom;
+            bool mine = false;
+            {
+                std::lock_guard<std::mutex> l(m_);
+                for (auto it = items_.begin(); it != items_.end(); ++it)
+                    if (it->first == key) {
+                        items_.splice(items_.begin(), items_, it);
+                        fut = it->second;
+                        break;
+                    }
+                if (!fut.valid()) {
+                    fut = prom.get_future().share();
+                    items_.emplace_front(key, fut);
+                    trim();
+                    mine = true;
                 }
-            if (!fut.valid()) {
-                fut = prom.get_future().share();
-                items_.emplace_front(key, fut);
-                while (items_.size() > cap_) items_.pop_back();
-                mine = true;
             }
-        }
-        if (!mine) return fut.get();
-        try {
-            auto r = build();
-            prom.set_value(r);
-            return r;
-        } catch (...) {
-            prom.set_exception(std::current_exception());
-            std::lock_guard<std::mutex> l(m_);
-            items_.remove_if([&](auto& e) { return e.first == key; });
-            throw;
+            if (!mine) {
+                try {
+                    return fut.get();
+                } catch (const RenderCancelled&) {
+                    if (Engine* e = Engine::current(); e && e->cancelled()) throw;  // ours was cancelled too
+                    continue;  // only the builder's: build it here
+                }
+            }
+            try {
+                auto r = build();
+                prom.set_value(r);
+                std::lock_guard<std::mutex> l(m_);
+                trim();  // (it may have waited for this build to finish)
+                return r;
+            } catch (...) {
+                {
+                    std::lock_guard<std::mutex> l(m_);  // gone before anyone hears, so a retry builds afresh
+                    items_.remove_if([&](auto& e) { return e.first == key && !ready(e.second); });
+                }
+                prom.set_exception(std::current_exception());
+                throw;
+            }
         }
     }
     void clear() {
@@ -170,6 +188,15 @@ public:
     }
 
 private:
+    static bool ready(const std::shared_future<std::shared_ptr<const T>>& f) {
+        return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    }
+    void trim() {  // with m_ held: the least recent finished results go, down to the capacity
+        for (auto it = items_.end(); items_.size() > cap_ && it != items_.begin();) {
+            --it;
+            if (ready(it->second)) it = items_.erase(it);
+        }
+    }
     size_t cap_;
     std::mutex m_;
     std::list<std::pair<uint64_t, std::shared_future<std::shared_ptr<const T>>>> items_;

@@ -278,7 +278,11 @@ public:
     }
 
 private:
-    history::Chain<PosMap> chains_[2]{history::Chain<PosMap>(3), history::Chain<PosMap>(3)};
+    // A re-anchor period's states each (a coarse grid, ~7 MB at any scale; 48 frames by default): a
+    // change to this node's own knobs, or playing the range again, then re-solves no flow at all. With
+    // 3, the playback read-ahead (several frames at once) lost states before the next frame needed them,
+    // and any edit sent every frame back to the anchor through the optical flow again.
+    history::Chain<PosMap> chains_[2]{history::Chain<PosMap>(50), history::Chain<PosMap>(50)};
 
     struct Anchors {
         int cur = 1, prev = 1;

@@ -1601,10 +1601,20 @@ int main(int argc, char** argv) {
                 // STRATA_TEST_PLAYEDIT: knob edits while playing must still go through (read-ahead gives way)
                 static int queued = 0;
                 static std::atomic<int> applied{0};
-                if (std::getenv("STRATA_TEST_PLAYEDIT") && frameCount % 15 == 0 && glfwGetTime() - t0 < secs - 1) {
+                static const int editEvery = std::max(1, std::atoi(std::getenv("STRATA_TEST_PLAYEDIT_EVERY") ? std::getenv("STRATA_TEST_PLAYEDIT_EVERY") : "15"));
+                if (std::getenv("STRATA_TEST_PLAYEDIT") && frameCount % editEvery == 0 && glfwGetTime() - t0 < secs - 1) {
                     ++queued;
+                    static const char* knob = std::getenv("STRATA_TEST_PLAYEDIT_KNOB");  // <node>.<knob> (a number) instead
                     app.edit([](Comp& c) {
-                        if (Node* g = c.find("Grade1")) g->params.data["gain"] = {1.0 + 0.01 * (applied + 1), 1.1, 1.0, 1};
+                        if (knob && *knob) {
+                            const std::string nk = knob;
+                            const size_t dot = nk.find('.');
+                            if (Node* n = c.find(nk.substr(0, dot))) {
+                                n->params.data[nk.substr(dot + 1)] = 2.0 + 0.01 * (applied + 1);
+                                n->paramsChanged();
+                            }
+                        } else if (Node* g = c.find("Grade1"))
+                            g->params.data["gain"] = {1.0 + 0.01 * (applied + 1), 1.1, 1.0, 1};
                         ++applied;
                     });
                 }

@@ -1165,6 +1165,13 @@ void App::workerLoop() {
                 }
             } catch (const RenderCancelled&) {
                 cancelled = true;
+                // Not this engine's cancel (a shared result another engine was building got cancelled):
+                // nothing new was asked for, so the request isn't done - render it again. Counting it done
+                // left the viewer on its old frame until something else asked (playback stuck on a frame).
+                if (!engine_->cancelled()) {
+                    superseded = true;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
                 // Remember it was slow, so the next request starts with a preview.
                 double el = (double)(nowMs() - passStartMs_);
                 double& known2 = passMs_[{nodeName, sc}];
@@ -1200,7 +1207,18 @@ void App::workerLoop() {
 // ------------------------------------------------------------------ RAM playback cache
 
 void App::storeFrame(const ViewResult& r, uint64_t gen, double scale, const Box& region, const std::string& compare) {
-    size_t bytes = (r.image ? r.image->bytes() : 0) + (r.imageB ? r.imageB->bytes() : 0);
+    // packed to half floats outside the lock (render threads store frames side by side)
+    // (WELDER_FLOAT_FRAME_CACHE=1: full floats, as before - for comparisons)
+    static const bool asFloat = std::getenv("WELDER_FLOAT_FRAME_CACHE") != nullptr;
+    CachedFrame cf{r, nullptr, nullptr, gen, scale, region, compare, 0, r.content};
+    if (!asFloat) {
+        cf.image = HalfImage::pack(r.image);
+        cf.imageB = HalfImage::pack(r.imageB);
+        cf.r.image = cf.r.imageB = nullptr;
+    }
+    const size_t bytes = (cf.image ? cf.image->bytes() : 0) + (cf.imageB ? cf.imageB->bytes() : 0) +
+                         (cf.r.image ? cf.r.image->bytes() : 0) + (cf.r.imageB ? cf.r.imageB->bytes() : 0);
+    cf.bytes = bytes;
     std::lock_guard<std::mutex> l(resM_);
     auto key = std::make_pair(r.node, (int)std::lround(r.frame));
     auto it = frameCache_.find(key);
@@ -1209,7 +1227,7 @@ void App::storeFrame(const ViewResult& r, uint64_t gen, double scale, const Box&
         frameCache_.erase(it);
         frameLru_.erase(std::remove(frameLru_.begin(), frameLru_.end(), key), frameLru_.end());
     }
-    frameCache_[key] = {r, gen, scale, region, compare, bytes, r.content};
+    frameCache_[key] = std::move(cf);
     frameLru_.push_back(key);
     frameBytes_ += bytes;
     const size_t budget = cacheBudgetMB << 20;
@@ -1226,6 +1244,21 @@ void App::storeFrame(const ViewResult& r, uint64_t gen, double scale, const Box&
             frameCache_.erase(o);
         }
     }
+}
+
+ImagePtr App::unpackFrame(const HalfImage& h) {
+    // Playback shows a cached frame each tick: reuse an image the viewer has let go of, so a frame
+    // costs the conversion only, not a fresh allocation (most of the time at 4K).
+    for (auto& p : unpackPool_)
+        if (p.use_count() == 1 && p->bounds == h.bounds && p->channels == h.channels) {
+            h.unpackInto(*p);
+            return p;
+        }
+    auto im = std::make_shared<Image>(h.bounds, h.channels);
+    h.unpackInto(*im);
+    unpackPool_.push_back(im);
+    if (unpackPool_.size() > 4) unpackPool_.erase(unpackPool_.begin());
+    return im;
 }
 
 bool App::takeCached(const std::string& node, double f) {
@@ -1245,6 +1278,8 @@ bool App::takeCached(const std::string& node, double f) {
     const CachedFrame& c = it->second;
     if (c.gen != editGen_ || c.scale != scale || c.region != region || c.compare != compare) return false;
     result_ = c.r;
+    if (c.image) result_.image = unpackFrame(*c.image);
+    if (c.imageB) result_.imageB = unpackFrame(*c.imageB);
     result_.serial = ++resultSerial_;
     shownScale_ = scale;
     {
@@ -1452,6 +1487,7 @@ void App::clearFrameCache() {
     frameCache_.clear();
     frameLru_.clear();
     frameBytes_ = 0;
+    unpackPool_.clear();
 }
 
 void App::setCompareNode(const std::string& name) {

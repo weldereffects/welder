@@ -11,6 +11,7 @@
 // knob is being dragged only the quick passes run, so the viewer keeps up.
 #pragma once
 
+#include "core/HalfImage.h"
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -472,7 +473,8 @@ private:
     std::vector<std::string> undo_, redo_;
 
     struct CachedFrame {
-        ViewResult r;
+        ViewResult r;  // without its images: they're kept below in half floats (twice the frames in the same RAM)
+        std::shared_ptr<const HalfImage> image, imageB;
         uint64_t gen = 0;
         double scale = 0;
         Box region;
@@ -481,6 +483,8 @@ private:
         uint64_t content = 0;  // ViewResult::content: an edit that leaves it the same keeps the frame
     };
     std::map<std::pair<std::string, int>, CachedFrame> frameCache_;  // (node, frame), guarded by resM_
+    std::vector<std::shared_ptr<Image>> unpackPool_;  // images cached frames were unpacked into, reused once nothing holds them (resM_)
+    ImagePtr unpackFrame(const HalfImage& h);  // with resM_ held
     std::deque<std::pair<std::string, int>> frameLru_;
     size_t frameBytes_ = 0;
     std::atomic<uint64_t> editGen_{0};
