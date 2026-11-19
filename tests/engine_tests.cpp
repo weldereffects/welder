@@ -28,6 +28,7 @@
 #include "nodes/Sample.h"
 #include "nodes/Roto.h"
 #include "nodes/TrackMaskScene.h"
+#include "nodes/MaskCombine.h"
 #include "nodes/PowerRoto.h"
 #include "nodes/Markup.h"
 #include "nodes/Track.h"
@@ -5616,6 +5617,66 @@ Connections:  {
         auto img2 = render(*c, "TM", 2);
         CHECK_NEAR(px(img2, 20, 10, "A"), 1, 1e-3);
         ml::setHome("");
+    });
+    test("TrackMask mask combiner: Main -> R -> G -> B in that order, each with its operator; GPU = CPU (a)", [] {
+        using namespace maskops;
+        // one pixel, values where every other order of the same four steps gives another answer
+        const float main = 0.5f, r = 0.5f, g = 0.2f, b = 0.6f;
+        const int ops[4] = {kAdd, kMultiply, kSubtract, kAdd};
+        float m = 0.4f;
+        const float* ch[4] = {&main, &r, &g, &b};
+        combineCpu(&m, 1, ch, ops);
+        CHECK_NEAR(m, std::min(1.0f, ((std::min(1.0f, 0.4f + 0.5f)) * 0.5f - 0.2f) + 0.6f), 1e-6);  // 0.85
+        std::vector<int> perm = {0, 1, 2, 3};
+        int same = 0, orders = 0;
+        do {
+            float v = 0.4f;
+            for (int k : perm) v = applyOp(ops[k], v, *ch[k]);
+            ++orders;
+            if (std::fabs(v - m) < 1e-6f) ++same;
+        } while (std::next_permutation(perm.begin(), perm.end()));
+        std::printf("  Main->R->G->B gives %.3f; %d of %d orders give that\n", m, same, orders);
+        CHECK(orders == 24 && same == 1);
+        // each operator, and the mask clamped to 0-1
+        CHECK_NEAR(applyOp(kAdd, 0.7f, 0.6f), 1.0f, 1e-6);
+        CHECK_NEAR(applyOp(kSubtract, 0.3f, 0.6f), 0.0f, 1e-6);
+        CHECK_NEAR(applyOp(kIntersect, 0.3f, 0.6f), 0.3f, 1e-6);
+        CHECK_NEAR(applyOp(kMultiply, 0.5f, 3.0f), 0.5f, 1e-6);
+        CHECK_NEAR(applyOp(kOff, 0.5f, 1.0f), 0.5f, 1e-6);
+        CHECK(opFromName("Intersect") == kIntersect && opFromName("nonsense") == kOff);
+        // the node: no track yet, the mask input a constant (R .6, G .5, B .2, A .5)
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.1, 0.1, 0.1, 1}}}}},
+                                   {{"name", "M"}, {"type", "Constant"}, {"params", {{"color", {0.6, 0.5, 0.2, 0.5}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K", "M"}},
+                                    {"params", {{"mask_main", "Add"}, {"mask_r", "Multiply"}, {"mask_g", "Subtract"}, {"mask_b", "Add"}}}}}),
+                     32, 16);
+        auto img = render(*c, "TM", 1);
+        CHECK_NEAR(px(img, 5, 5, "A"), 0.2, 1e-5);  // ((0 + .5) * .6 - .5 = 0) + .2
+        CHECK_NEAR(px(img, 5, 5, "R"), 0.1, 1e-5);  // the plate untouched
+        Node* n = c->find("TM");
+        n->params.data["mask_b"] = "Off";
+        n->params.data["mask_g"] = "Intersect";
+        n->paramsChanged();
+        CHECK_NEAR(px(render(*c, "TM", 1), 5, 5, "A"), 0.3, 1e-5);  // (0 + .5) * .6, min .5
+        // the GPU (when there is one) gives the same as the CPU on a large region
+        const size_t N = (size_t)1 << 21;
+        std::vector<float> mm(N), c0(N), c1(N), c2(N), c3(N);
+        for (size_t i = 0; i < N; ++i) {
+            mm[i] = (float)((i * 37) % 101) / 100.0f;
+            c0[i] = (float)((i * 13) % 97) / 96.0f;
+            c1[i] = (float)((i * 7) % 89) / 70.0f;  // some over 1: clamped
+            c2[i] = (float)((i * 5) % 83) / 82.0f;
+            c3[i] = (float)((i * 3) % 79) / 78.0f;
+        }
+        const float* chs[4] = {c0.data(), c1.data(), c2.data(), c3.data()};
+        const int ops2[4] = {kIntersect, kAdd, kMultiply, kSubtract};
+        std::vector<float> cpu = mm, gpu = mm;
+        combineCpu(cpu.data(), N, chs, ops2);
+        const bool onGpu = combine(gpu.data(), N, chs, ops2, true);
+        double worst = 0;
+        for (size_t i = 0; i < N; ++i) worst = std::max(worst, (double)std::fabs(cpu[i] - gpu[i]));
+        std::printf("  %s: largest difference from the CPU %.2g\n", onGpu ? "GPU" : "no GPU (CPU both times)", worst);
+        CHECK(worst < 1e-6);
     });
     test("Lens distortion: model, LensDistortion / STMap nodes, solving it in the camera tracker", [] {
         lens::Lens L;

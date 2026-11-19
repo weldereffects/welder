@@ -880,6 +880,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     if (v.overlays && activeTrackMask(app)) {
         ViewXf xf{center, v.pan, v.zoom};
         drawTrackMaskViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawTrackMaskHud(app, ui, p0, p1);
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};

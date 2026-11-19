@@ -891,7 +891,7 @@ int main(int argc, char** argv) {
                 std::printf("VIEWSWAP after: %s zoom %.2f pan %.0f %.0f\n", app.viewed.c_str(), ui.viewer.zoom, ui.viewer.pan.x, ui.viewer.pan.y);
         }
         // STRATA_TEST_TRACKMASK: click, Shift+click and drag a box in the viewer for the open TrackMask; print its clicks
-        const bool tmTest = std::getenv("STRATA_TEST_TRACKMASK") && !opt.screenshot.empty() && frameCount < 70;
+        const bool tmTest = std::getenv("STRATA_TEST_TRACKMASK") && !opt.screenshot.empty() && frameCount < 110;
         if (tmTest) {
             ImGuiIO& tio = ImGui::GetIO();
             auto at = [&](float x, float y) { tio.AddMousePosEvent(x, y); };
@@ -917,6 +917,19 @@ int main(int argc, char** argv) {
                 if (Node* n = app.comp ? app.comp->find(std::getenv("STRATA_TEST_TRACKMASK")) : nullptr)
                     std::fprintf(stderr, "TMTEST scene %s preview_frame %g\n", n->params.data.value("scene", json::object()).dump().c_str(),
                                  n->params.num("preview_frame", 0, -1));
+            // then the object manager over the viewer: hide object 1, put it into R too, make object 1 active
+            auto clickAt = [&](const char* spot, int f0) {
+                const ImVec2 p = ui::trackMaskHudSpot(spot);
+                if (frameCount == f0) at(p.x, p.y);
+                if (frameCount == f0 + 2) tio.AddMouseButtonEvent(0, true);
+                if (frameCount == f0 + 4) tio.AddMouseButtonEvent(0, false);
+            };
+            clickAt("o1.eye", 64);
+            clickAt("o1.R", 72);
+            clickAt("o1.name", 80);
+            if (frameCount == 100)
+                if (Node* n = app.comp ? app.comp->find(std::getenv("STRATA_TEST_TRACKMASK")) : nullptr)
+                    std::fprintf(stderr, "TMTEST hud %s\n", n->params.data.value("scene", json::object()).dump().c_str());
         }
         // STRATA_TEST_PRECOMP=<backdrop>[,<dir>]: make it a Precomp (local + network folders in <dir>), precomp it, report
         static int pcDone = -1;

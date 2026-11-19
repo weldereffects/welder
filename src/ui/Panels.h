@@ -14,6 +14,10 @@
 #include "ViewerGL.h"
 #include "imgui.h"
 
+namespace strata::tmscene {
+struct Object;
+}
+
 namespace strata::ui {
 
 // Themes (ui/Theme.cpp): the ImGui style plus the colours Welder draws by hand. applyTheme()
@@ -574,8 +578,13 @@ void trackMaskAddObject(App& app, Node* n);
 void trackMaskDeleteObject(App& app, Node* n, int id);
 void trackMaskSetActive(App& app, Node* n, int id);
 void trackMaskRename(App& app, Node* n, int id, const std::string& name);
-void trackMaskToggleKeyframe(App& app, Node* n);
-void trackMaskJumpKey(App& app, Node* n, int dir);
+void trackMaskToggleKeyframe(App& app, Node* n, int id = 0);   // id 0: the active object
+void trackMaskJumpKey(App& app, Node* n, int dir, int id = 0);
+void trackMaskSetObject(App& app, Node* n, int id, std::function<void(tmscene::Object&)> fn);
+// The object manager floating over the viewer (TrackMaskHud.cpp), and (tests) where a control of it was last
+// drawn ("o<id>.eye", ".vis", ".name", ".R" ... ".A", ".prev", ".key", ".next", ".overlay", ".delete"; "add").
+void drawTrackMaskHud(App& app, UiState& ui, ImVec2 p0, ImVec2 p1);
+ImVec2 trackMaskHudSpot(const std::string& name);
 void rotoExportPoints(App& app, UiState& ui, Node* n);
 // (UI tests) pick the Roto tool by its toolbar name ("Repair", "Brush"...); false if there's none.
 bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name);

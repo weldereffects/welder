@@ -1,0 +1,30 @@
+// TrackMask's 4-channel mask combiner (nodes/MaskCombine.h): the Main, R, G and B channels blended onto
+// the matte in that order, each with its operator (0 off, 1 add, 2 subtract, 3 intersect, 4 multiply).
+// The pixels are a flat list, `width` to a row of work groups.
+#version 450
+layout(local_size_x = 256, local_size_y = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer M { float m[]; };
+layout(std430, set = 0, binding = 1) readonly buffer C { float ch[]; };  // 4 x n: Main, then R, G, B
+layout(std430, set = 0, binding = 2) writeonly buffer O { float o[]; };
+
+layout(push_constant) uniform P {
+    uint n, width;
+    int ops[4];
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.y * p.width + gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    precise float v = m[i];
+    for (int k = 0; k < 4; ++k) {
+        int op = p.ops[k];
+        if (op == 0) continue;
+        float c = clamp(ch[uint(k) * p.n + i], 0.0, 1.0);
+        if (op == 1) v = min(v + c, 1.0);
+        else if (op == 2) v = max(v - c, 0.0);
+        else if (op == 3) v = min(v, c);
+        else if (op == 4) v = v * c;
+    }
+    o[i] = v;
+}

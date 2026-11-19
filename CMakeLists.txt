@@ -148,6 +148,7 @@ add_library(strata_core STATIC
   src/nodes/Splat.cpp
   src/nodes/MLNodes.cpp
   src/nodes/TrackMaskScene.cpp
+  src/nodes/MaskCombine.cpp
   src/nodes/ImageGenNode.cpp
   src/nodes/ColorMgmtNodes.cpp
   src/color/Color.cpp
@@ -446,6 +447,7 @@ if(STRATA_BUILD_UI)
   src/ui/FlowPaintTool.cpp
   src/ui/MarkupTool.cpp
   src/ui/TrackMaskTool.cpp
+  src/ui/TrackMaskHud.cpp
   src/ui/AppML.cpp
   src/ui/MLPanel.cpp
   src/ui/ImageGenPanel.cpp

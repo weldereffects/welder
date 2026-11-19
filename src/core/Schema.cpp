@@ -2352,6 +2352,12 @@ std::vector<NodeDef> build() {
                              "While tracking, look for the text objects again every few frames and pick each one up again "
                              "where its track lost it (matched by position and look)"),
                          EnableIf(I("refind_every", "re-find every (frames)", 10, 1, 100), "refind=true"),
+                         Div("mask input"),
+                         Tip(C("mask_main", "Main (alpha)", "Off", {"Off", "Add", "Subtract", "Intersect", "Multiply"}),
+                             "The mask input's alpha, blended onto the matte first. Then R, then G, then B, each with its own operator"),
+                         C("mask_r", "R", "Off", {"Off", "Add", "Subtract", "Intersect", "Multiply"}),
+                         C("mask_g", "G", "Off", {"Off", "Add", "Subtract", "Intersect", "Multiply"}),
+                         C("mask_b", "B", "Off", {"Off", "Add", "Subtract", "Intersect", "Multiply"}),
                          Div("matte"), F("grow", "grow / shrink (px)", 0, -50, 50), F("softness", "softness (px)", 0, 0, 50),
                          B("invert", "invert", false), C("output", "output", "alpha", {"alpha", "matte"}),
                          B("premultiply", "premultiply", false)}),

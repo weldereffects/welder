@@ -368,6 +368,16 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
   exactly as it shows now, and the track holds to it from both sides. **< key** / **key >**
   jump between the active object's keyframes. Clicking on a keyframe's frame replaces the
   kept matte with the new clicks.
+* **Object manager** (floating over the viewer; drag its header to move it). Per object:
+  the eye (shown at all), the diamond (a visibility key on this frame: off / on from here on),
+  its name (click: the active object; double-click: rename), **R G B A** (the output channels
+  it goes into; alpha by default), **< o >** (previous keyframe, set / remove a correction
+  keyframe here, next keyframe), the square (hide its points and boxes), **x** (delete). **+**
+  adds an object.
+* **Mask input:** besides giving objects their masks, its **Main** (alpha), **R**, **G** and
+  **B** channels can each be blended onto the matte with its own operator (Off, Add,
+  Subtract, Intersect, Multiply), always in the order Main, R, G, B. On the GPU for large
+  frames.
 * **Text:** type what to look for in **find** ("person, dog") and press **Find text objects**:
   OWLv2 (Google, Apache 2.0) boxes each one on the current frame and each box becomes an
   object. **Re-find Text Objects** looks for them again every few frames while tracking and

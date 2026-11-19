@@ -116,19 +116,27 @@ void trackMaskRename(App& app, Node* n, int id, const std::string& name) {
 }
 
 // Toggle a correction keyframe for the active object on this frame: on keeps its matte as it shows now.
-void trackMaskToggleKeyframe(App& app, Node* n) {
+void trackMaskSetObject(App& app, Node* n, int id, std::function<void(tmscene::Object&)> fn) {
+    if (!n) return;
+    editScene(app, n->name, [id, fn](tmscene::Scene& s) {
+        if (auto* o = s.find(id)) fn(*o);
+    });
+}
+
+void trackMaskToggleKeyframe(App& app, Node* n, int id) {
     if (!n) return;
     const int fr = (int)std::lround(app.frame);
     const tmscene::Scene s0 = tmscene::parse(n->params);
-    const tmscene::Object* o0 = s0.find(s0.active);
+    if (!id) id = s0.active;
+    const tmscene::Object* o0 = s0.find(id);
     if (!o0) {
         app.message("TrackMask: click on the object first");
         return;
     }
     const tmscene::Anchor* a0 = o0->anchorAt(fr);
     if (a0 && a0->keyframe) {
-        editScene(app, n->name, [fr](tmscene::Scene& s) {
-            if (auto* o = s.activeObject())
+        editScene(app, n->name, [fr, id](tmscene::Scene& s) {
+            if (auto* o = s.find(id))
                 if (auto* a = o->anchorAt(fr)) {
                     a->keyframe = false;
                     a->mask = nullptr;
@@ -144,8 +152,8 @@ void trackMaskToggleKeyframe(App& app, Node* n) {
         app.message("TrackMask: nothing to keep on this frame yet (click on the object, or Track first)");
         return;
     }
-    editScene(app, n->name, [fr, rle](tmscene::Scene& s) {
-        if (auto* o = s.activeObject()) {
+    editScene(app, n->name, [fr, rle, id](tmscene::Scene& s) {
+        if (auto* o = s.find(id)) {
             tmscene::Anchor& a = o->anchorFor(fr);
             a.keyframe = true;
             if (!rle.is_null()) a.mask = rle;
@@ -154,10 +162,10 @@ void trackMaskToggleKeyframe(App& app, Node* n) {
 }
 
 // The active object's previous (dir < 0) / next keyframe (anchors when it has no keyframes): go there.
-void trackMaskJumpKey(App& app, Node* n, int dir) {
+void trackMaskJumpKey(App& app, Node* n, int dir, int id) {
     if (!n) return;
     const tmscene::Scene s = tmscene::parse(n->params);
-    const tmscene::Object* o = s.find(s.active);
+    const tmscene::Object* o = s.find(id ? id : s.active);
     if (!o) return;
     std::vector<int> ks = o->keyframes();
     if (ks.empty()) ks = o->anchorFrames();

@@ -17,6 +17,7 @@
 #include "ImageGenNode.h"
 #include "NodeUtils.h"
 #include "Splat.h"
+#include "MaskCombine.h"
 #include "TrackMaskScene.h"
 
 namespace strata::mlnodes {
@@ -808,6 +809,32 @@ public:
                 if (comb[c].empty()) comb[c].assign((size_t)W * Hh, 0.0f);
                 for (size_t i = 0; i < comb[c].size(); ++i) comb[c][i] = std::max(comb[c][i], m.data[i]);
             }
+        }
+        // the mask input's Main (alpha), R, G, B blended on, in that order, into alpha and the channels objects go to
+        const int ops[4] = {maskops::opFromName(params.str("mask_main", "Off")), maskops::opFromName(params.str("mask_r", "Off")),
+                            maskops::opFromName(params.str("mask_g", "Off")), maskops::opFromName(params.str("mask_b", "Off"))};
+        const bool combining = input(1) && (ops[0] || ops[1] || ops[2] || ops[3]);
+        if (combining) {
+            auto mk = a.fetch(input(1), P);
+            const char* names[4] = {"A", "R", "G", "B"};
+            std::array<std::vector<float>, 4> chv;
+            const float* chp[4] = {nullptr, nullptr, nullptr, nullptr};
+            for (int k = 0; k < 4; ++k) {
+                if (!ops[k]) continue;
+                const int ci = mk->ch(names[k]);
+                if (ci < 0) continue;
+                chv[k].assign((size_t)W * Hh, 0.0f);
+                for (int y = 0; y < Hh; ++y)
+                    for (int x = 0; x < W; ++x) chv[k][(size_t)y * W + x] = mk->at(P.x1 + x, P.y1 + y, ci);
+                chp[k] = chv[k].data();
+            }
+            any[3] = true;
+            for (int c = 0; c < 4; ++c) {
+                if (!any[c]) continue;
+                if (comb[c].empty()) comb[c].assign((size_t)W * Hh, 0.0f);
+                maskops::combine(comb[c].data(), comb[c].size(), chp, ops);
+            }
+            have = true;
         }
         if (!have) {  // nothing tracked here (yet): no matte
             if (A >= 0)
