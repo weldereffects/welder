@@ -405,6 +405,19 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
   flicker settles and real motion is kept), invert; **output** alpha (the plate with the
   matte in alpha, optionally premultiplied) or matte (white on black). Grow, edge offset
   and the guided filter run on the GPU for large frames, with the CPU as the fallback.
+* **Convert to Splines** turns the tracked mattes into animated Bezier shapes. Each object's outlines
+  are traced (holes come out as shapes blended minus), corners are kept as cusp points, and the
+  handles are fitted to the outline. Every key of a shape has the same number of points starting
+  at the same place, so the shape doesn't swim between keys.
+  * **convert:** the active object or all objects.
+  * **key every:** a key every N frames, plus one on the last frame.
+  * **points:** the count per shape (0: as many as the shape's most detailed frame needs).
+  * **tolerance** and **corner angle:** how closely the shapes follow the matte, and how sharp a
+    turn must be to count as a corner.
+  * **to:** a new PowerRoto (the default) or Roto node next to TrackMask and fed by its src, or
+    the clipboard.
+  * **motion blur samples** and **shutter angle:** set the roto node's motion blur (shutter =
+    angle / 360 frames).
 * The panel says when the clicks have changed since the last Track.
 
 ### NeRF

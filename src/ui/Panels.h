@@ -580,6 +580,7 @@ void trackMaskSetActive(App& app, Node* n, int id);
 void trackMaskRename(App& app, Node* n, int id, const std::string& name);
 void trackMaskToggleKeyframe(App& app, Node* n, int id = 0);   // id 0: the active object
 void trackMaskJumpKey(App& app, Node* n, int dir, int id = 0);
+void trackMaskToSplines(App& app, Node* n);
 void trackMaskSetObject(App& app, Node* n, int id, std::function<void(tmscene::Object&)> fn);
 // The object manager floating over the viewer (TrackMaskHud.cpp), and (tests) where a control of it was last
 // drawn ("o<id>.eye", ".vis", ".name", ".R" ... ".A", ".prev", ".key", ".next", ".overlay", ".delete"; "add").

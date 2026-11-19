@@ -14,6 +14,7 @@
 #include <GLFW/glfw3.h>
 
 #include "Panels.h"
+#include "core/NkExport.h"
 #include "ml/ML.h"
 #include "nodes/MLNodes.h"
 #include "nodes/TrackMaskScene.h"
@@ -174,6 +175,62 @@ void trackMaskJumpKey(App& app, Node* n, int dir, int id) {
     for (int k : ks)
         if (dir < 0 ? (k < fr && (best == fr || k > best)) : (k > fr && (best == fr || k < best))) best = k;
     if (best != fr) app.frame = best;
+}
+
+// Convert to Splines: the tracked mattes as animated Bezier shapes in a new PowerRoto / Roto node beside this
+// one (fed by its src), or on the clipboard.
+void trackMaskToSplines(App& app, Node* n) {
+    if (!n) return;
+    const tmscene::Scene s = tmscene::parse(n->params);
+    std::vector<int> ids;
+    if (n->params.str("spline_objects", "active object") == "all objects") {
+        for (auto& o : s.objects)
+            if (o.visible && !o.anchors.empty()) ids.push_back(o.id);
+    } else if (s.find(s.active)) {
+        ids.push_back(s.active);
+    }
+    if (ids.empty()) {
+        app.message("TrackMask: no object to convert");
+        return;
+    }
+    mlnodes::SplineOptions opt;
+    opt.keyStep = (int)n->params.num("spline_key_step", 0, 1);
+    opt.points = (int)n->params.num("spline_points", 0, 0);
+    opt.tolerance = n->params.num("spline_tolerance", 0, 1);
+    opt.cornerDeg = n->params.num("spline_corner", 0, 60);
+    const int first = app.comp->firstFrame, last = app.comp->lastFrame;
+    std::string why;
+    json shapes = mlnodes::trackMaskSplines(n, app.uiEngine(), ids, first, last, opt, &why);
+    if (shapes.empty()) {
+        app.message("TrackMask: " + why);
+        return;
+    }
+    const int samples = (int)n->params.num("spline_mb_samples", 0, 0);
+    json params = {{"shapes", shapes}};
+    if (samples > 0) {
+        params["motionblur"] = samples;
+        params["shutter"] = n->params.num("spline_shutter_angle", 0, 180) / 360.0;
+    }
+    const std::string target = n->params.str("spline_target", "PowerRoto");
+    const size_t count = shapes.size();
+    if (target == "Clipboard") {
+        json arr = json::array({{{"name", n->name + "_splines"}, {"type", "PowerRoto"}, {"params", params}, {"ui", json::object()},
+                                 {"inputs", json::array()}}});
+        ImGui::SetClipboardText(nk::clipboardText(arr).c_str());
+        app.message("TrackMask: " + std::to_string(count) + " shape(s) copied as a PowerRoto node - paste it in the node graph");
+        return;
+    }
+    const std::string src = n->input(0) ? n->input(0)->name : "";
+    const json uij = {{"x", n->ui.value("x", 0.0) + 160}, {"y", n->ui.value("y", 0.0)}};
+    const std::string from = n->name;
+    app.checkpoint();
+    app.edit([&app, target, params, uij, src, count, from](Comp& c) {
+        Node* r = c.addNode(target, target, params, uij);
+        if (!r) return;
+        if (Node* sn = c.find(src)) c.setInput(r, 0, sn);
+        app.selection = {r->name};
+        app.message(r->name + ": " + std::to_string(count) + " shape(s) from " + from + "'s mattes");
+    });
 }
 
 void drawTrackMaskViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered) {

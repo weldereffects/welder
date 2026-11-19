@@ -10,6 +10,7 @@
 #include <mutex>
 
 #include "../core/Comp.h"
+#include "MatteToSpline.h"
 #include "../color/Color.h"
 #include "../ml/ML.h"
 #include "CamSolve.h"
@@ -1384,6 +1385,94 @@ TrackMaskRefinerStatus trackMaskRefinerStatus(Node* n, double fr) {
     st.text = st.state == TrackMaskRefinerStatus::Refined ? name + ": edges refined on this frame"
                                                           : name + ": not refined here yet (Guided Smooth shown): press Refine edges";
     return st;
+}
+
+json trackMaskSplines(Node* n, Engine& e, const std::vector<int>& ids, int first, int last, const SplineOptions& opt, std::string* why) {
+    json shapes = json::array();
+    auto* t = dynamic_cast<TrackMaskNode*>(n);
+    if (!t) return shapes;
+    const auto sc = t->scene();
+    const int step = std::max(1, opt.keyStep);
+    std::vector<int> frames;
+    for (int f = first; f <= last; f += step) frames.push_back(f);
+    if (frames.empty() || frames.back() != last) frames.push_back(last);
+    for (int id : ids) {
+        const tmscene::Object* o = sc->find(id);
+        if (!o) continue;
+        // every frame's outlines, in the plate's pixels (y up)
+        std::vector<std::pair<int, std::vector<m2s::Loop>>> perFrame;
+        for (int f : frames) {
+            std::vector<float> m;
+            int w = 0, h = 0;
+            if (!trackMaskMatte(n, id, f, m, w, h) || w <= 0 || h <= 0) continue;
+            const Format fm = t->format(e, f);
+            const double sx = (double)fm.width / w, sy = (double)fm.height / h;
+            std::vector<float> up((size_t)w * h);  // rows bottom first, like the plate
+            for (int y = 0; y < h; ++y) std::copy(&m[(size_t)(h - 1 - y) * w], &m[(size_t)(h - y) * w], &up[(size_t)y * w]);
+            auto loops = m2s::contours(up.data(), w, h, (float)opt.threshold, 4.0);
+            for (auto& l : loops) {
+                for (auto& p : l.pts) p.x *= sx, p.y *= sy;
+                l.area *= sx * sy;
+            }
+            if (!loops.empty()) perFrame.push_back({f, std::move(loops)});
+        }
+        if (perFrame.empty()) continue;
+        // the outlines of the first frame with any (islands and holes at least 2% of the largest), each followed
+        // through the later frames by the nearest unused outline of its kind
+        const auto& firstLoops = perFrame.front().second;
+        const double big = std::fabs(firstLoops.front().area);
+        struct Track {
+            bool hole;
+            std::vector<std::pair<int, const m2s::Loop*>> loops;
+        };
+        std::vector<Track> tracks;
+        auto centre = [](const m2s::Loop& l) {
+            roto::V2 c;
+            for (auto& p : l.pts) c.x += p.x, c.y += p.y;
+            return roto::V2{c.x / l.pts.size(), c.y / l.pts.size()};
+        };
+        for (auto& l : firstLoops)
+            if (std::fabs(l.area) >= 0.02 * big && (opt.holes || !l.hole)) tracks.push_back({l.hole, {{perFrame.front().first, &l}}});
+        for (size_t k = 1; k < perFrame.size(); ++k) {
+            std::vector<bool> used(perFrame[k].second.size(), false);
+            for (auto& tr : tracks) {
+                const roto::V2 c0 = centre(*tr.loops.back().second);
+                int best = -1;
+                double bd = 1e300;
+                for (size_t q = 0; q < perFrame[k].second.size(); ++q) {
+                    const auto& l = perFrame[k].second[q];
+                    if (used[q] || l.hole != tr.hole || std::fabs(l.area) < 0.02 * big * 0.25) continue;
+                    const roto::V2 c = centre(l);
+                    const double d = std::hypot(c.x - c0.x, c.y - c0.y);
+                    if (d < bd) bd = d, best = (int)q;
+                }
+                if (best >= 0) {
+                    used[best] = true;
+                    tr.loops.push_back({perFrame[k].first, &perFrame[k].second[best]});
+                }
+            }
+        }
+        int part = 0;
+        for (auto& tr : tracks) {
+            int count = opt.points;
+            if (count <= 0)
+                for (auto& [f, l] : tr.loops) count = std::max(count, m2s::autoCount(*l, opt.tolerance));
+            std::vector<std::pair<double, roto::Pts>> keys;
+            std::optional<roto::V2> start;
+            for (auto& [f, l] : tr.loops) {
+                roto::Pts p = m2s::fit(*l, count, opt.tolerance, opt.cornerDeg, start);
+                if (p.empty()) continue;
+                start = roto::V2{p[0].x, p[0].y};
+                keys.push_back({(double)f, std::move(p)});
+            }
+            if (keys.empty()) continue;
+            const std::string name = o->name + (part ? (tr.hole ? "_hole" : "_part") + std::to_string(part) : std::string());
+            ++part;
+            shapes.push_back(m2s::shapeJson(name, keys, o->color, tr.hole));
+        }
+    }
+    if (why && shapes.empty()) *why = "no tracked matte on those frames: Track first";
+    return shapes;
 }
 
 bool trackMaskMatte(Node* n, int objectId, double f, std::vector<float>& out, int& w, int& h) {

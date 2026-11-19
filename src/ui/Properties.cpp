@@ -2887,6 +2887,10 @@ void buttonAction(Ctx& c, const std::string& action) {
         });
         return;
     }
+    if (action == "trackmask_to_splines") {
+        trackMaskToSplines(c.app, c.node);
+        return;
+    }
     if (action == "trackmask_clear_frame" || action == "trackmask_clear_all") {
         trackMaskClear(c.app, c.node, action == "trackmask_clear_all");
         return;

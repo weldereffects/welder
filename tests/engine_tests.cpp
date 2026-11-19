@@ -30,6 +30,7 @@
 #include "nodes/TrackMaskScene.h"
 #include "nodes/MaskCombine.h"
 #include "nodes/MatteOps.h"
+#include "nodes/MatteToSpline.h"
 #include "nodes/PowerRoto.h"
 #include "nodes/Markup.h"
 #include "nodes/Track.h"
@@ -5848,6 +5849,189 @@ Connections:  {
         n->params.data["trimap_erode"] = 12;
         n->paramsChanged();
         CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::NotYet);
+        ml::setHome("");
+    });
+    test("TrackMask Convert to Splines: matte -> outline -> Bezier -> raster round trip IoU > 0.96, corners kept, keys in step (b)", [] {
+        const int W = 160, H = 120;
+        auto rast = [&](const roto::Pts& p) {
+            std::vector<float> cov((size_t)W * H, 0.0f);
+            roto::rasterizeShape(p, 1.0, {0, 0, W, H}, 0, 1, cov);
+            return cov;
+        };
+        // mattes (rows bottom first, like the plate): a disc, a star (sharp corners), a rectangle, an L with a hole
+        auto make = [&](auto inside) {
+            std::vector<float> m((size_t)W * H);
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    // 4 x 4 supersampled: an anti-aliased matte like a model's
+                    int n = 0;
+                    for (int sy = 0; sy < 4; ++sy)
+                        for (int sx = 0; sx < 4; ++sx) n += inside(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4);
+                    m[(size_t)y * W + x] = n / 16.0f;
+                }
+            return m;
+        };
+        auto disc = [](double cx, double cy, double r) {
+            return [=](double x, double y) { return std::hypot(x - cx, y - cy) < r; };
+        };
+        auto star = [](double x, double y) {
+            const double a = std::atan2(y - 60, x - 80), r = std::hypot(x - 80, y - 60);
+            const double k = std::fmod(a + 10 * M_PI, 2 * M_PI / 5) / (2 * M_PI / 5);  // 0-1 round each arm
+            return r < 22 + 30 * (1 - std::fabs(2 * k - 1));
+        };
+        auto rect = [](double x, double y) { return x > 30 && x < 130 && y > 25 && y < 95; };
+        struct Case {
+            const char* name;
+            std::vector<float> m;
+        };
+        std::vector<Case> cases = {{"disc", make(disc(80, 60, 40))}, {"star", make(star)}, {"rectangle", make(rect)}};
+        for (auto& c : cases) {
+            auto loops = m2s::contours(c.m.data(), W, H, 0.5f);
+            CHECK(loops.size() == 1 && !loops[0].hole && loops[0].area > 0);
+            if (loops.empty()) continue;
+            const int n = m2s::autoCount(loops[0], 0.5);
+            const roto::Pts p = m2s::fit(loops[0], n, 0.5);
+            std::vector<float> bin = c.m;
+            for (auto& v : bin) v = v >= 0.5f ? 1.0f : 0.0f;
+            const double score = m2s::iou(rast(p), c.m);
+            std::printf("  %-9s %3d points, IoU %.4f\n", c.name, (int)p.size(), score);
+            CHECK(score > 0.96);
+        }
+        // the rectangle's corners are points, as cusps
+        {
+            auto loops = m2s::contours(cases[2].m.data(), W, H, 0.5f);
+            const roto::Pts p = m2s::fit(loops[0], 8, 0.5);
+            int nearCorner = 0;
+            for (auto& q : p)
+                for (auto [cx, cy] : {std::pair{30.0, 25.0}, {130.0, 25.0}, {130.0, 95.0}, {30.0, 95.0}})
+                    if (std::hypot(q.x - cx, q.y - cy) < 1.5) ++nearCorner;
+            CHECK(nearCorner == 4);
+        }
+        // a hole: an outline inside the other runs the other way and comes out as a hole
+        {
+            auto ring = make([](double x, double y) {
+                const double r = std::hypot(x - 80, y - 60);
+                return r < 45 && r > 20;
+            });
+            auto loops = m2s::contours(ring.data(), W, H, 0.5f);
+            CHECK(loops.size() == 2 && !loops[0].hole && loops[1].hole && loops[1].area < 0);
+            if (loops.size() == 2) {
+                auto a = rast(m2s::fit(loops[0], m2s::autoCount(loops[0], 0.5), 0.5));
+                auto b = rast(m2s::fit(loops[1], m2s::autoCount(loops[1], 0.5), 0.5));
+                for (size_t i = 0; i < a.size(); ++i) a[i] = std::max(0.0f, a[i] - b[i]);  // (the shape blended "minus")
+                const double score = m2s::iou(a, ring);
+                std::printf("  ring      IoU %.4f\n", score);
+                CHECK(score > 0.96);
+            }
+        }
+        // animation: a disc moving right; every key the same count, the first point following along
+        std::vector<std::pair<double, roto::Pts>> keys;
+        std::optional<roto::V2> start;
+        int count = 0;
+        double worst = 1;
+        for (int f = 1; f <= 5; ++f) {
+            auto m = make(disc(50 + f * 10, 60, 30));
+            auto loops = m2s::contours(m.data(), W, H, 0.5f);
+            if (loops.empty()) break;
+            if (!count) count = m2s::autoCount(loops[0], 0.5);
+            roto::Pts p = m2s::fit(loops[0], count, 0.5, 60, start);
+            start = roto::V2{p[0].x, p[0].y};
+            worst = std::min(worst, m2s::iou(rast(p), m));
+            keys.push_back({(double)f, p});
+        }
+        CHECK(keys.size() == 5);
+        for (size_t k = 1; k < keys.size(); ++k) {
+            CHECK(keys[k].second.size() == keys[0].second.size());
+            // the first point moves with the disc (10 px a frame), it doesn't jump round the outline
+            CHECK(std::fabs(keys[k].second[0].x - keys[k - 1].second[0].x - 10) < 2 && std::fabs(keys[k].second[0].y - keys[k - 1].second[0].y) < 2);
+        }
+        CHECK(worst > 0.96);
+        const json shape = m2s::shapeJson("disc", keys, {1, 0, 0});
+        CHECK(roto::animated(shape) && roto::keyFrames(shape).size() == 5);
+        CHECK(roto::pointsAt(shape, 3).size() == (size_t)count);
+    });
+    test("TrackMask Convert to Splines on a node: shapes keyed every Key Step frames, in the plate's pixels; the roto renders the matte", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm6";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 128, H = 64, MW = 64, MH = 32;  // the model's matte at half the plate's size
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K"}}, {"params", {{"mask_output", "Hard Mask"}, {"output", "matte"}}}}}),
+                     W, H);  // (Hard: the edge the shapes follow, without the upscaled matte's softness)
+        c->firstFrame = 1;
+        c->lastFrame = 5;
+        Node* n = c->find("TM");
+        auto* m = dynamic_cast<mlnodes::MLNode*>(n);
+        tmscene::Scene s;
+        s.add("ball")->anchorFor(1).points.push_back({40, 40, 1});
+        tmscene::store(n->params, s);
+        Engine e;
+        auto sp = m->spec("main", e);
+        auto d = home / "jobs" / "seg6";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}}.dump();
+        std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", {1, 2, 3, 4, 5}}, {"width", MW}, {"height", MH}}}}},
+                                                 {"objects", {1}}, {"object_tags", sp.params["object_tags"]}}.dump();
+        // an ellipse moving right, nearer the top of the frame (npy rows top first)
+        for (int f = 1; f <= 5; ++f) {
+            std::vector<float> mt(MW * MH);
+            for (int y = 0; y < MH; ++y)
+                for (int x = 0; x < MW; ++x) {
+                    int k = 0;
+                    for (int sy = 0; sy < 4; ++sy)
+                        for (int sx = 0; sx < 4; ++sx) {
+                            const double px = x + (sx + 0.5) / 4, py = y + (sy + 0.5) / 4;
+                            k += std::hypot((px - (14 + 4 * f)) / 10, (py - 11) / 7) < 1;
+                        }
+                    mt[y * MW + x] = k / 16.0f;
+                }
+            CHECK(ml::writeNpy((d / "out" / ("matte." + std::to_string(f) + ".npy")).string(), mt.data(), MW, MH, 1, true));
+        }
+        n->params.data["ml"] = {{"main", {{"result", "seg6"}}}};
+        n->paramsChanged();
+        mlnodes::SplineOptions opt;
+        opt.keyStep = 2;
+        opt.tolerance = 0.5;
+        std::string why;
+        json shapes = mlnodes::trackMaskSplines(n, e, {1}, 1, 5, opt, &why);
+        CHECK(shapes.size() == 1);
+        if (shapes.size() != 1) return;
+        CHECK(shapes[0]["name"] == "ball");
+        const auto kf = roto::keyFrames(shapes[0]);
+        CHECK(kf == std::vector<double>({1, 3, 5}));
+        // the shape in the plate (y up): centre near x = 2 * (14 + 4f), y = 64 - 22 = 42 on frame 3
+        const roto::Pts p3 = roto::pointsAt(shapes[0], 3);
+        double cx = 0, cy = 0;
+        for (auto& q : p3) cx += q.x, cy += q.y;
+        cx /= p3.size(), cy /= p3.size();
+        CHECK(std::fabs(cx - 52) < 1.5 && std::fabs(cy - 42) < 1.5);
+        // a PowerRoto of those shapes renders what TrackMask shows (on a key frame)
+        Node* r = c->addNode("PowerRoto", "PowerRoto", {{"shapes", shapes}, {"motionblur", 4}, {"shutter", 0.5}}, json::object());
+        CHECK(r != nullptr);
+        if (!r) return;
+        r->params.data["motionblur"] = 0;  // (no input: the shapes' alpha alone)
+        r->paramsChanged();
+        auto a = render(*c, "TM", 3), b = render(*c, r->name, 3);
+        std::vector<float> va, vb;
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) va.push_back(px(a, x, y, "A")), vb.push_back(px(b, x, y, "A"));
+        double sa = 0, sb = 0, ax = 0, ay = 0, bx = 0, by = 0;
+        for (size_t i = 0; i < va.size(); ++i) {
+            sa += va[i], sb += vb[i];
+            ax += va[i] * (i % W + 0.5), ay += va[i] * (i / W + 0.5), bx += vb[i] * (i % W + 0.5), by += vb[i] * (i / W + 0.5);
+        }
+        std::printf("  coverage: matte %.0f px at (%.2f, %.2f), roto %.0f px at (%.2f, %.2f)\n", sa, ax / sa, ay / sa, sb, bx / sb, by / sb);
+        const double score = m2s::iou(va, vb);
+        std::printf("  roto vs matte on frame 3: IoU %.4f\n", score);
+        CHECK(score > 0.96);
+        // an object that hasn't been tracked: nothing, and why
+        s = tmscene::parse(n->params);
+        const int id2 = s.add("empty")->id;
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        why.clear();
+        CHECK(mlnodes::trackMaskSplines(n, e, {id2}, 1, 5, opt, &why).empty() && !why.empty());
         ml::setHome("");
     });
     test("Lens distortion: model, LensDistortion / STMap nodes, solving it in the camera tracker", [] {

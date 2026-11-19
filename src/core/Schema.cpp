@@ -2396,7 +2396,20 @@ std::vector<NodeDef> build() {
                                       "How big a change between frames still counts as flicker"),
                                   "temporal_frames=1|2|3|4"),
                          B("invert", "invert", false), C("output", "output", "alpha", {"alpha", "matte"}),
-                         B("premultiply", "premultiply", false)}),
+                         B("premultiply", "premultiply", false),
+                         Div("splines"),
+                         Tip(C("spline_objects", "convert", "active object", {"active object", "all objects"}),
+                             "Which objects Convert to Splines makes shapes of"),
+                         Tip(I("spline_key_step", "key every (frames)", 1, 1, 100), "A shape key every this many frames (and on the last)"),
+                         Tip(I("spline_points", "points", 0, 0, 500), "Points per shape (0: as many as the most detailed frame needs)"),
+                         Tip(F("spline_tolerance", "tolerance (px)", 1, 0.1, 10), "How closely the shapes follow the matte"),
+                         Tip(F("spline_corner", "corner angle", 60, 10, 170), "Turns sharper than this are corners (cusp points)"),
+                         Tip(C("spline_target", "to", "PowerRoto", {"PowerRoto", "Roto", "Clipboard"}),
+                             "A new PowerRoto or Roto node next to this one, or the clipboard (paste in Welder or a .nk app)"),
+                         Tip(I("spline_mb_samples", "motion blur samples", 0, 0, 64), "The roto node's motion blur (0: off)"),
+                         Tip(F("spline_shutter_angle", "shutter angle", 180, 0, 720), "With motion blur on: 360 degrees = a whole frame"),
+                         Btn("trackmask_to_splines", "Convert to Splines",
+                             "The tracked mattes as animated Bezier shapes, keyed on the comp's frames")}),
                  "Track and mask: up to 16 objects. Click an object in the viewer (Shift+click: not it, drag: a box), "
                  "or find objects from text, and SAM 2.1 masks each one and follows it through the shot (Track), forwards "
                  "and backwards from any frame. Where a track goes wrong, click again on that frame, or set a correction "

@@ -150,6 +150,7 @@ add_library(strata_core STATIC
   src/nodes/TrackMaskScene.cpp
   src/nodes/MaskCombine.cpp
   src/nodes/MatteOps.cpp
+  src/nodes/MatteToSpline.cpp
   src/nodes/ImageGenNode.cpp
   src/nodes/ColorMgmtNodes.cpp
   src/color/Color.cpp

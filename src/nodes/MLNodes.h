@@ -102,6 +102,18 @@ struct TrackMaskRefinerStatus {
     std::string text;
 };
 TrackMaskRefinerStatus trackMaskRefinerStatus(Node* n, double f);
+// Convert to Splines: the objects' tracked mattes on first..last (every keyStep frames, and the last) as
+// roto shapes (Roto.h's format), keyed on those frames, one per outline (holes blended "minus").
+struct SplineOptions {
+    int keyStep = 1;
+    int points = 0;          // per shape; 0: as many as its most detailed frame needs
+    double tolerance = 1.0;  // px: how closely the outline is followed
+    double cornerDeg = 60;   // turns sharper than this are corners
+    double threshold = 0.5;
+    bool holes = true;
+};
+json trackMaskSplines(Node* n, Engine& e, const std::vector<int>& ids, int first, int last, const SplineOptions& opt,
+                      std::string* why = nullptr);
 bool trackMaskMatte(Node* n, int objectId, double f, std::vector<float>& out, int& w, int& h);
 
 // Cameras (refined / estimated) a job wrote as out/cameras.json, as a camera at `frame`.
