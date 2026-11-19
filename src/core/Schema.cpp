@@ -2409,7 +2409,15 @@ std::vector<NodeDef> build() {
                          Tip(I("spline_mb_samples", "motion blur samples", 0, 0, 64), "The roto node's motion blur (0: off)"),
                          Tip(F("spline_shutter_angle", "shutter angle", 180, 0, 720), "With motion blur on: 360 degrees = a whole frame"),
                          Btn("trackmask_to_splines", "Convert to Splines",
-                             "The tracked mattes as animated Bezier shapes, keyed on the comp's frames")}),
+                             "The tracked mattes as animated Bezier shapes, keyed on the comp's frames"),
+                         Div("bake"),
+                         Tip(S("bake_path", "bake folder", ""),
+                             "Where Bake Masks to Disk writes (empty: the ML folder's trackmask_bakes/<node name>)"),
+                         Tip(B("use_baked", "use baked frames", true),
+                             "Show frames from the bake where it was made from the same anchors, settings and inputs"),
+                         Btn("trackmask_bake", "Bake Masks to Disk",
+                             "Every frame's matte as a half-float EXR (Y + A), in the background. Frames already baked from "
+                             "the same anchors, refinement and settings are skipped")}),
                  "Track and mask: up to 16 objects. Click an object in the viewer (Shift+click: not it, drag: a box), "
                  "or find objects from text, and SAM 2.1 masks each one and follows it through the shot (Track), forwards "
                  "and backwards from any frame. Where a track goes wrong, click again on that frame, or set a correction "

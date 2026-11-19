@@ -183,6 +183,38 @@ class Task(unittest.TestCase):
         self.assertEqual(sorted(r["crops"]["0"]), ["1", "2"])
         self.assertTrue(os.path.exists(os.path.join(jd, "out", "refined_0.2.npy")))
 
+    def test_gpu_out_of_memory_refines_in_smaller_tiles(self):
+        W, H = 700, 120
+        mask = np.zeros((H, W), np.float32)
+        mask[20:100, 60:640] = 1
+        params = {"model": "vitmatte-small", "objects": [{"id": 0, "direct": True, "frames": [1]}],
+                  "object_tags": {"0": {"1": "t"}}, "tile": 1024}
+        seen = []
+
+        def picky(rgb, tri):
+            seen.append(max(tri.shape))
+            if max(tri.shape) > 300:
+                raise RuntimeError("CUDA out of memory. Tried to allocate 1.00 GiB")
+            return self.model(rgb, tri)
+        jd, ctx = self.job("oom", [1], W, H, params, mask=mask)
+        try:
+            r = self.mr.run(ctx, params, model_fn=picky)
+        finally:
+            ctx.close()
+        self.assertIn("1", r["crops"]["0"])
+        self.assertLessEqual(max(seen[-1:]), 256)
+        with open(os.path.join(jd, "log.txt")) as fh:
+            log = fh.read()
+        self.assertIn("512 px tiles", log)
+        self.assertIn("256 px tiles", log)
+
+    def test_is_oom(self):
+        from strata_ml.util import is_oom
+        self.assertTrue(is_oom(RuntimeError("CUDA out of memory. Tried to allocate")))
+        self.assertTrue(is_oom(RuntimeError("cuDNN error: CUDNN_STATUS_ALLOC_FAILED")))
+        self.assertFalse(is_oom(RuntimeError("shape mismatch")))
+        self.assertFalse(is_oom(ValueError("out of memory")))
+
     def test_needs_objects_and_src(self):
         jd, ctx = self.job("r3", [1], 32, 32, {"objects": []})
         try:

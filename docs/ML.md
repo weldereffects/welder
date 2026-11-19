@@ -418,6 +418,18 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
     the clipboard.
   * **motion blur samples** and **shutter angle:** set the roto node's motion blur (shutter =
     angle / 360 frames).
+* **Bake Masks to Disk** writes each frame's finished matte to the **bake folder** as a half-float
+  EXR in the background, like a render. The EXR holds Y (the matte as grey) and A, plus R / G / B
+  for objects routed there. A manifest keeps the hash each frame was made from: its anchors either
+  side (per object), its refined edge, the settings and the inputs. Baking again only writes the
+  frames whose hash changed, so after a correction keyframe only the frames between its
+  neighbouring anchors bake again. With **use baked frames** on, frames show from the bake when
+  their hash still matches. A damaged file or manifest is ignored: that frame is worked out and
+  baked again.
+* **GPU memory:** the worker keeps SAM's image features in a capped cache (a quarter of the free
+  GPU memory, 256 MB to 2 GB). When the GPU runs out of memory, Track runs again with a small cache
+  and then on the CPU. Refine edges first moves to smaller tiles (down to 256 px), then to the CPU.
+  Either way the job finishes slower rather than failing.
 * The panel says when the clicks have changed since the last Track.
 
 ### NeRF

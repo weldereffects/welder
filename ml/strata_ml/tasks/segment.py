@@ -17,7 +17,8 @@ params:
   preview   true: just the anchors' own frames (a quick look while clicking)
   refind    true: objects found from text are looked for again every `refind_every` frames (OWLv2), and picked
             up again where the track lost them
-  embed_cache_mb  the most the image features kept for reuse may take (GPU), LRU
+  embed_cache_mb  the most the image features kept for reuse may take (GPU), LRU (0 / unset: a quarter of the
+                  GPU's free memory, 256 MB - 2 GB)
 
 How it tracks (Welder tags frames the same way: src/nodes/TrackMaskScene.h): an object's anchors split the shot.
 Before its first anchor it's tracked backwards from it; between two anchors forwards from the first with both as
@@ -509,6 +510,35 @@ def refind(pred, dev, folder, detector, jpeg_frames, prompts, mattes, texts, n, 
     return added
 
 
+def auto_cache_mb():
+    """The feature cache's cap when none is set: a quarter of the GPU's free memory, 256 MB to 2 GB."""
+    from ..util import gpu_free_mb
+    free = gpu_free_mb()
+    return 2048 if free is None else int(max(256, min(2048, free / 4)))
+
+
+def track_with_fallback(pred, dev, folder, prompts, n, need, preview, report, cache_mb, log):
+    """infer_masks, and when the GPU runs out of memory: again with a small feature cache, then on the CPU (slow,
+    but the job finishes). Returns (mattes, predictor, device, cache_mb) as finally used."""
+    from ..util import free_gpu, is_oom
+    for attempt in range(3):
+        try:
+            return infer_masks(pred, dev, folder, prompts, n, need, preview, report, cache_mb, log), pred, dev, cache_mb
+        except Exception as e:  # noqa: BLE001
+            if not is_oom(e) or attempt == 2:
+                raise
+            free_gpu()
+            if attempt == 0 and cache_mb > 128:
+                cache_mb = 128
+                log(f"GPU out of memory: tracking again with a {cache_mb} MB feature cache")
+            else:
+                log("GPU out of memory again: tracking on the CPU (slower)")
+                if hasattr(pred, "to"):
+                    pred = pred.to("cpu")
+                dev = "cpu"
+                _LOADED.clear()  # (the next job loads it on the GPU again)
+
+
 def run(ctx, p):
     src = ctx.input("src")
     if src is None:
@@ -526,7 +556,7 @@ def run(ctx, p):
     needed = p.get("needed")
     mask_input = ctx.input("mask")
     ctx.progress(0.01, f"reading {len(frames)} frame(s)", force=True)
-    cache_mb = int(p.get("embed_cache_mb", 2048))
+    cache_mb = int(p.get("embed_cache_mb", 0)) or auto_cache_mb()
     with tempfile.TemporaryDirectory(dir=ctx.jobdir) as td:
         w, h, (sx, sy) = write_jpegs([src.rgb(f) for f in frames], td, int(p.get("max_size", 1280)))
         prompts, texts = {}, {}
@@ -552,7 +582,8 @@ def run(ctx, p):
         def report(done, n, f):
             ctx.progress(0.08 + 0.85 * min(1.0, done / max(1, n)), f"tracking: frame {frames[f]}")
 
-        mattes = infer_masks(pred, dev, td, prompts, len(frames), need, preview, report, cache_mb, ctx.log)
+        mattes, pred, dev, cache_mb = track_with_fallback(pred, dev, td, prompts, len(frames), need, preview, report,
+                                                           cache_mb, ctx.log)
         refound = {}
         if p.get("refind") and not preview and any(texts.values()):
             ctx.progress(0.94, "re-finding text objects", force=True)

@@ -238,6 +238,30 @@ class SegmentTask(unittest.TestCase):
         m = self.matte(jd, 2)
         self.assertGreater(m[30, 160], 0.99)
 
+    def test_gpu_out_of_memory_tracks_again_smaller_then_on_the_cpu(self):
+        orig = self.fake.propagate_in_video
+        fails = {"n": 2}
+
+        def flaky(*a, **kw):
+            if fails["n"]:
+                fails["n"] -= 1
+                raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+            return orig(*a, **kw)
+        self.fake.propagate_in_video = flaky
+        frames = list(range(1, 6))
+        jd, r = self.run_task("oom", frames, {"model": "large", "max_size": 200, "embed_cache_mb": 1024,
+                                              "prompts": [{"frame": 1, "points": [[100, 50, 1]]}]})
+        self.assertEqual(r["outputs"]["matte"]["frames"], frames)
+        with open(os.path.join(jd, "log.txt")) as fh:
+            log = fh.read()
+        self.assertIn("128 MB feature cache", log)
+        self.assertIn("on the CPU", log)
+        # anything else isn't swallowed
+        self.fake.propagate_in_video = lambda *a, **kw: (_ for _ in ()).throw(ValueError("bad"))
+        with self.assertRaises(ValueError):
+            self.run_task("oom2", frames, {"model": "large", "max_size": 200,
+                                           "prompts": [{"frame": 1, "points": [[100, 50, 1]]}]})
+
     def test_box_and_preview(self):
         frames = [1001, 1002, 1003]
         jd, r = self.run_task("b", frames, {"max_size": 400, "preview": True, "needed": {"1": [1002]},

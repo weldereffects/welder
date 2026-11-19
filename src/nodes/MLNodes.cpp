@@ -6,11 +6,13 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <list>
 #include <map>
 #include <mutex>
 
 #include "../core/Comp.h"
 #include "MatteToSpline.h"
+#include "../io/ExrIO.h"
 #include "../color/Color.h"
 #include "../ml/ML.h"
 #include "CamSolve.h"
@@ -1015,16 +1017,9 @@ public:
         return (int)std::ceil(p * es) + 2;
     }
 
-    void render(RenderArgs& a, Image& out) override {
-        copyInput(a, out, input(0));
-        const int A = out.ch("A"), R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
-        const int pad = passPad(a.frame, a.engine.scale());
-        const Box P = a.region.pad(pad, pad);
-        const bool inv = params.flag("invert", false), matteOnly = params.str("output", "alpha") == "matte";
-        const bool premult = params.flag("premultiply", false);
-        const int W = P.width();
-        std::array<std::vector<float>, 4> comb;
-        bool any[4];
+    // The finished mattes of a frame over P (at the engine's scale), temporal smoothing included: what the
+    // output channels are made from, and what a bake keeps.
+    bool finalMattes(RenderArgs& a, const Box& P, std::array<std::vector<float>, 4>& comb, bool any[4]) {
         bool have = mattesAt(a, a.frame, P, comb, any);
         // temporal edge smoothing: the same pixel on the frames either side, blended by how alike they are
         const int tk = std::clamp((int)params.num("temporal_frames", a.frame, 0), 0, 4);
@@ -1047,6 +1042,25 @@ public:
                 comb[c].swap(o);
             }
         }
+        return have;
+    }
+
+    void render(RenderArgs& a, Image& out) override {
+        copyInput(a, out, input(0));
+        const int A = out.ch("A"), R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
+        const bool inv = params.flag("invert", false), matteOnly = params.str("output", "alpha") == "matte";
+        const bool premult = params.flag("premultiply", false);
+        std::array<std::vector<float>, 4> comb;
+        bool any[4];
+        // from the bake when it was made from what this frame is made from now; else worked out
+        Box P = a.region;
+        bool have = false;
+        if (!bakedMattes(a, P, comb, any, &have)) {
+            const int pad = passPad(a.frame, a.engine.scale());
+            P = a.region.pad(pad, pad);
+            have = finalMattes(a, P, comb, any);
+        }
+        const int W = P.width();
         if (!have) {  // nothing tracked here (yet): no matte
             if (A >= 0)
                 for (int y = a.region.y1; y < a.region.y2; ++y)
@@ -1072,6 +1086,222 @@ public:
                 }
                 if (A >= 0) px[A] = v[3];
             }
+    }
+
+    // ---- Bake Masks to Disk: each frame's finished mattes as a half-float EXR (Y: the matte as grey, A: alpha,
+    // R / G / B: the mattes routed there), with a manifest of the hash each was made from. A frame is baked again
+    // only when its hash changes: its anchors either side (per object), its refined edge, the settings, the inputs.
+    bool isExecutable() const override { return true; }
+    bool rendersWithWrites() const override { return false; }  // only Bake Masks to Disk bakes
+    std::string bakeDir() const {
+        const std::string p = params.str("bake_path", "");
+        if (!p.empty()) return p;
+        return (std::filesystem::path(ml::home()) / "trackmask_bakes" / name).string();
+    }
+    std::string bakeFile(int f) const {
+        char b[32];
+        std::snprintf(b, sizeof b, "matte.%05d.exr", f);
+        return (std::filesystem::path(bakeDir()) / b).string();
+    }
+    // What frame f's finished matte depends on.
+    std::string frameHash(Engine& e, int f) {
+        uint64_t h = hashCombine(hashString("tmbake1"), (uint64_t)(int64_t)f);
+        json p = params.data.is_object() ? params.data : json::object();
+        for (const char* k : {"scene", "prompts", "ml", "tracks", "refines", "preview_frame", "retrack_all", "bake_path", "use_baked",
+                              "direction", "text_query", "text_threshold"})
+            p.erase(k);
+        for (auto it = p.begin(); it != p.end();)  // the Convert to Splines settings don't change the matte
+            it = it.key().rfind("spline_", 0) == 0 ? p.erase(it) : std::next(it);
+        h = hashString(p.dump(), h);
+        h = hashCombine(h, (uint64_t)std::llround(e.scale() * 1e6));
+        const int tk = std::clamp((int)params.num("temporal_frames", f, 0), 0, 4);
+        const auto sc = scene();
+        const bool nn = neural();
+        for (int g = f - tk; g <= f + tk; ++g) {
+            for (int i = 0; i < 2; ++i)
+                if (input(i)) h = hashCombine(h, e.hash(input(i), g));
+            if (direct() && nn) {
+                const Refined rf = refinedFor(nullptr, 0, g);
+                h = hashString(rf.key + refineTag(nullptr, g), h);
+            }
+            for (auto& o : sc->objects) {
+                if (o.anchors.empty()) continue;
+                const Source src = sourceFor(o, g);
+                h = hashString(std::to_string(o.id) + "|" + (o.visibleAt(g) ? "v" : "h") + o.channels + "|" + objectTag(o, g) + "|" + src.key +
+                                   (src.current ? "c" : "o"),
+                               h);
+                if (nn) h = hashString(refinedFor(&o, o.id, g).key + refineTag(&o, g), h);
+            }
+        }
+        return tmHex(h);
+    }
+    struct Manifest {
+        json frames = json::object();  // "f": {"hash": "...", "any": [r, g, b, a]}
+    };
+    // The manifest of a bake folder, read again when the file changes (shared by every TrackMask that bakes there).
+    static std::shared_ptr<Manifest> manifestOf(const std::string& dir, bool reload = false) {
+        static std::mutex m;
+        static std::map<std::string, std::pair<std::filesystem::file_time_type, std::shared_ptr<Manifest>>> cache;
+        const auto path = std::filesystem::path(dir) / "manifest.json";
+        std::error_code ec;
+        const auto t = std::filesystem::last_write_time(path, ec);
+        std::lock_guard<std::mutex> l(m);
+        auto it = cache.find(dir);
+        if (!reload && it != cache.end() && !ec && it->second.first == t) return it->second.second;
+        auto mf = std::make_shared<Manifest>();
+        if (!ec) {
+            std::ifstream in(path);
+            json j = json::parse(in, nullptr, false);  // a damaged manifest: nothing baked
+            if (j.is_object() && j.contains("frames") && j["frames"].is_object()) mf->frames = j["frames"];
+        }
+        cache[dir] = {ec ? std::filesystem::file_time_type() : t, mf};
+        return mf;
+    }
+    static bool saveManifest(const std::string& dir, const json& frames) {
+        const auto path = std::filesystem::path(dir) / "manifest.json";
+        const auto tmp = std::filesystem::path(dir) / ".manifest.json.writing";
+        {
+            std::ofstream o(tmp);
+            if (!o) return false;
+            o << json{{"version", 1}, {"frames", frames}}.dump(1);
+            if (!o) return false;
+        }
+        std::error_code ec;
+        std::filesystem::rename(tmp, path, ec);
+        if (!ec) manifestOf(dir, true);
+        return !ec;
+    }
+
+    std::mutex bakeM_;
+    json bakeFrames_;      // the manifest while baking (written after every frame, so a cancel keeps what's done)
+    int bakeWritten_ = 0, bakeSkipped_ = 0;
+    void beginExecute(Engine&, double, double) override {
+        std::lock_guard<std::mutex> l(bakeM_);
+        std::error_code ec;
+        std::filesystem::create_directories(bakeDir(), ec);
+        bakeFrames_ = manifestOf(bakeDir(), true)->frames;
+        bakeWritten_ = bakeSkipped_ = 0;
+    }
+    void execute(Engine& e, double frame) override {
+        const int f = (int)std::lround(frame);
+        const std::string h = frameHash(e, f), file = bakeFile(f), fs = std::to_string(f);
+        {
+            std::lock_guard<std::mutex> l(bakeM_);
+            if (bakeFrames_.contains(fs) && bakeFrames_[fs].value("hash", std::string()) == h && readableBake(file)) {
+                ++bakeSkipped_;
+                return;
+            }
+        }
+        const Format fmt = format(e, frame);
+        const Box P(0, 0, (int)std::lround(fmt.width * e.scale()), (int)std::lround(fmt.height * e.scale()));
+        RenderArgs a{e, frame, P};
+        std::array<std::vector<float>, 4> comb;
+        bool any[4] = {false, false, false, false};
+        const bool have = finalMattes(a, P, comb, any);
+        ChannelSet cs;
+        const char* names[4] = {"R", "G", "B", "A"};
+        for (int c = 0; c < 3; ++c)
+            if (have && any[c]) cs.push_back(names[c]);
+        cs.push_back("A");
+        cs.push_back("Y");
+        Image img(P, cs);
+        const int Y = img.ch("Y"), Ai = img.ch("A");
+        for (int y = P.y1; y < P.y2; ++y)
+            for (int x = P.x1; x < P.x2; ++x) {
+                const size_t i = (size_t)(y - P.y1) * P.width() + (x - P.x1);
+                float* px = img.px(x, y);
+                float v[4] = {0, 0, 0, 0};
+                for (int c = 0; c < 4; ++c)
+                    if (have && !comb[c].empty()) v[c] = std::clamp(comb[c][i], 0.0f, 1.0f);
+                for (int c = 0; c < 3; ++c)
+                    if (have && any[c]) px[img.ch(names[c])] = v[c];
+                px[Ai] = v[3];
+                // grey: the alpha matte, or (with objects only in R / G / B) their luminance
+                px[Y] = have && any[3] ? v[3] : 0.2126f * v[0] + 0.7152f * v[1] + 0.0722f * v[2];
+            }
+        ExrWriteOptions o;
+        o.type = ExrPixelType::Half;
+        o.compression = "zip";
+        const std::filesystem::path pp(file);
+        const auto tmp = pp.parent_path() / ("." + pp.filename().string() + ".writing");
+        writeExr(tmp.string(), img, Format{P.width(), P.height()}, o);
+        std::error_code ec;
+        std::filesystem::rename(tmp, pp, ec);
+        if (ec) throw RenderError(name + ": can't write " + file + ": " + ec.message());
+        std::lock_guard<std::mutex> l(bakeM_);
+        bakeFrames_[fs] = {{"hash", h}, {"any", {have && any[0], have && any[1], have && any[2], have && any[3]}}, {"matte", have}};
+        ++bakeWritten_;
+        if (!saveManifest(bakeDir(), bakeFrames_)) throw RenderError(name + ": can't write the bake's manifest in " + bakeDir());
+    }
+    void finishExecute(bool) override {}
+    std::pair<int, int> bakeCounts() {
+        std::lock_guard<std::mutex> l(bakeM_);
+        return {bakeWritten_, bakeSkipped_};
+    }
+    static bool readableBake(const std::string& file) {
+        try {
+            auto ex = readExr(file);
+            return ex.image && ex.image->ch("A") >= 0;
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    // A few decoded baked frames, so tiles of the same frame don't decode it again.
+    static std::shared_ptr<const Image> bakedImage(const std::string& file) {
+        static std::mutex m;
+        static std::list<std::pair<std::string, std::shared_ptr<const Image>>> lru;
+        std::error_code ec;
+        const auto t = std::filesystem::last_write_time(file, ec);
+        if (ec) return nullptr;
+        const std::string key = file + "|" + std::to_string(t.time_since_epoch().count());
+        {
+            std::lock_guard<std::mutex> l(m);
+            for (auto it = lru.begin(); it != lru.end(); ++it)
+                if (it->first == key) {
+                    lru.splice(lru.begin(), lru, it);
+                    return it->second;
+                }
+        }
+        std::shared_ptr<const Image> img;
+        try {
+            img = readExr(file).image;
+        } catch (const std::exception&) {
+            return nullptr;  // damaged: worked out again instead
+        }
+        if (!img || img->ch("A") < 0) return nullptr;
+        std::lock_guard<std::mutex> l(m);
+        lru.push_front({key, img});
+        while (lru.size() > 6) lru.pop_back();
+        return img;
+    }
+    // Frame a.frame from the bake over P (= the region), when it was made from what this frame is made from now.
+    bool bakedMattes(RenderArgs& a, const Box& P, std::array<std::vector<float>, 4>& comb, bool any[4], bool* have) {
+        if (!params.flag("use_baked", true)) return false;
+        const int f = (int)std::lround(a.frame);
+        if (std::fabs(a.frame - f) > 1e-6) return false;
+        const auto mf = manifestOf(bakeDir());
+        const std::string fs = std::to_string(f);
+        if (!mf->frames.contains(fs)) return false;
+        const json& ent = mf->frames[fs];
+        if (ent.value("hash", std::string()) != frameHash(a.engine, f)) return false;
+        auto img = bakedImage(bakeFile(f));
+        if (!img) return false;
+        const json an = ent.value("any", json::array());
+        for (int c = 0; c < 4; ++c) any[c] = an.size() == 4 && an[c].get<bool>();
+        *have = ent.value("matte", false);
+        const int W = P.width(), H = P.height();
+        const char* names[4] = {"R", "G", "B", "A"};
+        for (int c = 0; c < 4; ++c) {
+            const int ic = img->ch(names[c]);
+            if (!*have || ic < 0) {
+                comb[c].clear();
+                continue;
+            }
+            comb[c].assign((size_t)W * H, 0.0f);
+            for (int y = P.y1; y < P.y2; ++y)
+                for (int x = P.x1; x < P.x2; ++x) comb[c][(size_t)(y - P.y1) * W + (x - P.x1)] = img->at(x, y, ic);
+        }
+        return true;
     }
 
     // Per object with anchors: the frames Track would run (in the node's range, the direction asked, not

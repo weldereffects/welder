@@ -6034,6 +6034,137 @@ Connections:  {
         CHECK(mlnodes::trackMaskSplines(n, e, {id2}, 1, 5, opt, &why).empty() && !why.empty());
         ml::setHome("");
     });
+    test("TrackMask Bake Masks to Disk: half EXR + hash manifest; a correction keyframe re-bakes only its frames (c); damaged files re-made", [] {
+        namespace fs = std::filesystem;
+        auto home = fs::temp_directory_path() / "strata_mlhome_tm7";
+        fs::remove_all(home);
+        ml::setHome(home.string());
+        const auto bake = home / "bake";
+        const int W = 32, H = 24;
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K"}},
+                                    {"params", {{"mask_output", "RAW Mask"}, {"bake_path", bake.string()}}}}}),
+                     W, H);
+        c->firstFrame = 1;
+        c->lastFrame = 40;
+        Node* n = c->find("TM");
+        auto* m = dynamic_cast<mlnodes::MLNode*>(n);
+        CHECK(n->isExecutable() && !n->rendersWithWrites());
+        tmscene::Scene s;
+        tmscene::Object* car = s.add("car");
+        car->anchorFor(10).points.push_back({5, 5, 1});
+        car->anchorFor(30).points.push_back({8, 5, 1});
+        tmscene::Object* dog = s.add("dog");
+        dog->anchorFor(5).box = {1, 1, 9, 9};
+        dog->channels = "R";
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        Engine e;
+        auto s1 = m->spec("main", e);
+        auto d = home / "jobs" / "seg7";
+        fs::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}}.dump();
+        json fr = json::array();
+        for (int f = 1; f <= 40; ++f) {
+            fr.push_back(f);
+            std::vector<float> mt(W * H * 2);
+            for (int i = 0; i < W * H; ++i) mt[i * 2] = (i % W) < 8 + f % 8, mt[i * 2 + 1] = (i / W) < 6;
+            CHECK(ml::writeNpy((d / "out" / ("matte." + std::to_string(f) + ".npy")).string(), mt.data(), W, H, 2, true));
+        }
+        std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", fr}, {"width", W}, {"height", H}}}}},
+                                                 {"objects", {1, 2}}, {"object_tags", s1.params["object_tags"]}}.dump();
+        n->params.data["ml"] = {{"main", {{"result", "seg7"}}}};
+        n->params.data["use_baked"] = false;
+        n->paramsChanged();
+        auto live12 = render(*c, "TM", 12);
+        auto bakeAll = [&] {
+            Engine be;
+            n->beginExecute(be, 1, 40);
+            for (int f = 1; f <= 40; ++f) n->execute(be, f);
+            n->finishExecute(true);
+        };
+        auto stamps = [&] {
+            std::map<int, fs::file_time_type> t;
+            for (int f = 1; f <= 40; ++f) {
+                char b[32];
+                std::snprintf(b, sizeof b, "matte.%05d.exr", f);
+                std::error_code ec;
+                t[f] = fs::last_write_time(bake / b, ec);
+            }
+            return t;
+        };
+        bakeAll();
+        auto t0 = stamps();
+        CHECK(fs::exists(bake / "manifest.json") && fs::exists(bake / "matte.00040.exr"));
+        // the files: half floats, Y (grey) + A, and R for the dog
+        auto ex = readExr((bake / "matte.00012.exr").string());
+        CHECK(ex.image && ex.image->ch("A") >= 0 && ex.image->ch("Y") >= 0 && ex.image->ch("R") >= 0 && ex.image->ch("G") < 0);
+        // shown from the bake: the same as worked out
+        n->params.data["use_baked"] = true;
+        n->paramsChanged();
+        auto baked12 = render(*c, "TM", 12);
+        double diff = 0;
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x)
+                for (const char* ch : {"A", "R"}) diff = std::max(diff, (double)std::fabs(px(baked12, x, y, ch) - px(live12, x, y, ch)));
+        CHECK(diff < 1e-3);
+        // baking again: nothing changed, nothing written
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        bakeAll();
+        int same = 0;
+        for (auto& [f, t] : stamps()) same += t == t0[f];
+        CHECK(same == 40);
+        // (c) a correction keyframe for the car on frame 20: only frames 11-29 bake again
+        s = tmscene::parse(n->params);
+        tmscene::Anchor& k = s.find(1)->anchorFor(20);
+        k.keyframe = true;
+        std::vector<float> mk(W * H, 1.0f);
+        k.mask = tmscene::encodeRle(mk, W, H);
+        tmscene::store(n->params, s);
+        n->paramsChanged();
+        bakeAll();
+        auto t1 = stamps();
+        std::vector<int> rebaked;
+        for (int f = 1; f <= 40; ++f)
+            if (t1[f] != t0[f]) rebaked.push_back(f);
+        std::vector<int> want;
+        for (int f = 11; f <= 29; ++f) want.push_back(f);
+        std::printf("  after a keyframe on 20: %zu of 40 frames baked again (%d-%d)\n", rebaked.size(), rebaked.empty() ? 0 : rebaked.front(),
+                    rebaked.empty() ? 0 : rebaked.back());
+        CHECK(rebaked == want);
+        // the render reads the bake: a file swapped for one of the same frame shows
+        {
+            Image fake(Box(0, 0, W, H), {"A", "Y"});
+            for (auto& v : fake.data) v = 0.25f;
+            ExrWriteOptions o;
+            writeExr((bake / "matte.00005.exr").string(), fake, Format{W, H}, o);
+            CHECK_NEAR(px(render(*c, "TM", 5), 3, 3, "A"), 0.25, 1e-3);
+        }
+        // a damaged file: worked out instead (no crash), and the next bake makes it again
+        std::ofstream(bake / "matte.00007.exr", std::ios::trunc) << "not an exr";
+        auto r7 = render(*c, "TM", 7);
+        CHECK_NEAR(px(r7, 2, 20, "A"), 1, 1e-3);  // the car's matte: x < 8 + 7
+        CHECK_NEAR(px(r7, 20, 20, "A"), 0, 1e-3);
+        bakeAll();
+        CHECK(readExr((bake / "matte.00007.exr").string()).image != nullptr);
+        // a damaged frame from the worker: renders (from what was read before, or no matte), no crash
+        std::ofstream(d / "out" / "matte.3.npy", std::ios::trunc) << "garbage";
+        n->params.data["use_baked"] = false;
+        n->paramsChanged();
+        CHECK(render(*c, "TM", 3) != nullptr);
+        n->params.data["use_baked"] = true;
+        n->paramsChanged();
+        // a damaged manifest: everything bakes again, nothing breaks
+        std::ofstream(bake / "manifest.json", std::ios::trunc) << "{ broken";
+        auto t2 = stamps();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        bakeAll();
+        int remade = 0;
+        for (auto& [f, t] : stamps()) remade += t != t2[f];
+        CHECK(remade == 40);
+        ml::setHome("");
+    });
     test("Lens distortion: model, LensDistortion / STMap nodes, solving it in the camera tracker", [] {
         lens::Lens L;
         L.k1 = -0.12;

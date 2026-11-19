@@ -77,6 +77,41 @@ class FrameSeq:
 
 
 # ---------------------------------------------------------------- where models live
+# ---------------------------------------------------------------- GPU memory
+def is_oom(e):
+    """Whether an exception is the GPU running out of memory (torch's OutOfMemoryError, or a CUDA / cuDNN /
+    cuBLAS allocation failure reported as a RuntimeError)."""
+    if type(e).__name__ == "OutOfMemoryError":
+        return True
+    s = str(e).lower()
+    return isinstance(e, (RuntimeError, MemoryError)) and ("out of memory" in s or "cudnn_status_alloc_failed" in s
+                                                            or "cublas_status_alloc_failed" in s)
+
+
+def free_gpu():
+    """Let go of the GPU memory torch keeps cached (after an out-of-memory, before trying again)."""
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def gpu_free_mb():
+    """Free GPU memory in MB (None: no CUDA)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free, _ = torch.cuda.mem_get_info()
+            return free / (1024 * 1024)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def model_dirs(home):
     """<home>/models (downloads), then the folders Welder lists in <home>/model_dirs.json (the Welder
     folder's models/, for models installed by hand) and STRATA_ML_MODEL_DIRS."""

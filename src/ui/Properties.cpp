@@ -2887,6 +2887,19 @@ void buttonAction(Ctx& c, const std::string& action) {
         });
         return;
     }
+    if (action == "trackmask_bake") {
+        if (c.app.batchStatus().running) {
+            c.app.message("a render is running: bake when it's done");
+            return;
+        }
+        RenderRequest r;
+        for (int f = c.app.comp->firstFrame; f <= c.app.comp->lastFrame; ++f) r.frames.push_back(f);
+        r.writes = {c.node->name};
+        c.app.renderWrites(r);
+        c.app.message(c.node->name + ": baking frames " + std::to_string(c.app.comp->firstFrame) + "-" +
+                      std::to_string(c.app.comp->lastFrame) + " (frames already baked from the same anchors are skipped)");
+        return;
+    }
     if (action == "trackmask_to_splines") {
         trackMaskToSplines(c.app, c.node);
         return;

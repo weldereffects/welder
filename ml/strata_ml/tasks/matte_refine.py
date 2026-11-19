@@ -123,10 +123,10 @@ def missing_message(model):
             f"folder's models/{model} (install by hand in the ML section)")
 
 
-def load_vitmatte(ctx, model):
+def load_vitmatte(ctx, model, device=None):
     import torch
     from transformers import VitMatteForImageMatting, VitMatteImageProcessor
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
     key = (model, dev)
     if key not in _LOADED:
         d = ctx.require_model(model)
@@ -148,14 +148,14 @@ def load_vitmatte(ctx, model):
     return run
 
 
-def load_mematte(ctx):
+def load_mematte(ctx, device=None):
     """MEMatte (MIT) from its own code and checkpoint, put by hand in models/mematte (the repository with a
     .pth checkpoint inside); it needs detectron2 in the worker's Python."""
     import glob
     import sys
     import torch
     d = ctx.require_model("mematte")
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
     key = ("mematte", dev)
     if key not in _LOADED:
         if d not in sys.path:
@@ -187,13 +187,13 @@ def load_mematte(ctx):
     return run
 
 
-def load_model(ctx, model):
+def load_model(ctx, model, device=None):
     if model not in MODELS:
         raise RuntimeError(f"unknown refiner '{model}'")
     from ..util import find_model
     if find_model(ctx.home, model) is None:
         raise RuntimeError(missing_message(model))
-    return load_mematte(ctx) if model == "mematte" else load_vitmatte(ctx, model)
+    return load_mematte(ctx, device) if model == "mematte" else load_vitmatte(ctx, model, device)
 
 
 # ---------------------------------------------------------------- the task
@@ -206,6 +206,28 @@ def coarse_matte(entry, frame, W, H, mask_input=None):
     if a.ndim == 3:
         a = a[..., int(ch)]
     return np.clip(resize(a, W, H), 0, 1)
+
+
+def refine_with_fallback(fn, u8, tri, size, ctx, model, fake=False):
+    """tiled(), and when the GPU runs out of memory: smaller tiles (down to 256 px), then the model on the CPU.
+    Returns (alpha, the model as finally used, the tile size), so the later frames start from there."""
+    from ..util import free_gpu, is_oom
+    while True:
+        try:
+            return tiled(fn, u8, tri, size=size), fn, size
+        except Exception as e:  # noqa: BLE001
+            if not is_oom(e):
+                raise
+            free_gpu()
+            if size > 256:
+                size = max(256, size // 2)
+                ctx.log(f"GPU out of memory: refining in {size} px tiles")
+                continue
+            if fake or getattr(fn, "on_cpu", False):
+                raise
+            ctx.log("GPU out of memory at 256 px tiles: refining on the CPU (slower)")
+            fn = load_model(ctx, model, device="cpu")
+            fn.on_cpu = True
 
 
 def run(ctx, p, model_fn=None):
@@ -244,7 +266,7 @@ def run(ctx, p, model_fn=None):
         rgb = np.asarray(src.rgb(f), np.float32)[y:y + h, x:x + w]
         u8 = (np.clip(srgb_encode(rgb), 0, 1) * 255 + 0.5).astype(np.uint8)
         tri = trimap(m[y:y + h, x:x + w], erode, dilate)
-        a = tiled(fn, u8, tri, size=size)
+        a, fn, size = refine_with_fallback(fn, u8, tri, size, ctx, model, model_fn is not None)
         a = np.where(tri == 1.0, 1.0, np.where(tri == 0.0, 0.0, a)).astype(np.float32)  # the sure parts stay sure
         name = f"refined_{oid}"
         ctx.write_frame(name, f, a, channels=["A"], dtype=np.float16)
