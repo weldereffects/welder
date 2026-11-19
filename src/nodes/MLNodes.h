@@ -63,6 +63,9 @@ public:
     // ... and a finished job became the slot's result.
     virtual void resultAttached(const std::string& slot, const std::string& key) { (void)slot; (void)key; }
 
+    // A slot to start by itself once `slot`'s job finishes ("" = none; TrackMask: Refine edges after Track),
+    // when it can run (no error, models installed).
+    virtual std::string followUp(const std::string& slot) const { (void)slot; return ""; }
     virtual std::vector<std::string> slots() const { return {"main"}; }
     virtual std::string slotLabel(const std::string& slot) const { return slot == "main" ? "Run" : slot; }
     // What running `slot` needs. Called with the comp read-locked.
@@ -92,6 +95,13 @@ bool isML(const Node* n);
 std::string trackMaskSource(Node* n, double f, bool* current);
 // TrackMask: object `objectId`'s matte on frame f as it shows now (rows top first, at the worker's size w x h),
 // for a correction keyframe. False when there's none.
+// TrackMask's neural refiner on frame f, for the panel: Off (Mask Output isn't ViTMatte / MEMatte), Missing
+// (its weights aren't installed: Guided Smooth is shown), NotYet (Guided Smooth until Refine edges runs), Refined.
+struct TrackMaskRefinerStatus {
+    enum State { Off, Missing, NotYet, Refined } state = Off;
+    std::string text;
+};
+TrackMaskRefinerStatus trackMaskRefinerStatus(Node* n, double f);
 bool trackMaskMatte(Node* n, int objectId, double f, std::vector<float>& out, int& w, int& h);
 
 // Cameras (refined / estimated) a job wrote as out/cameras.json, as a camera at `frame`.

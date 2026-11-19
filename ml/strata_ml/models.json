@@ -383,6 +383,45 @@
    "license": "Corridor Key Licence 2.0 (CC BY-NC-SA 4.0 + additional terms): free to use on commercial projects, your output is yours; no reselling or paid inference. Foundation models: NVIDIA Open Model License (C-RADIOv4), MIT (MoGe-2), CC-BY 4.0 (RVM)",
    "license_url": "https://github.com/nikopueringer/CorridorKey2.0/blob/master/LICENSE",
    "install_note": "CorridorKey isn't a single Hugging Face download. By hand: download https://github.com/nikopueringer/CorridorKey2.0/archive/485f5e9ab759ead6138cc990776184b59d6ea971.zip, unzip it so this folder holds its corridorkey/, scripts/ and third_party/ folders, then run (with the ML environment's python):\n  python scripts/download_weights.py --package_root \"<this folder>\"\nIt fetches the CorridorKey weights and the C-RADIOv4, MoGe-2 and RVM foundation models (about 5 GB) into weights/ and vfms/. The layout matters: keep its folders."
+  },
+  "vitmatte-small": {
+   "label": "ViTMatte small (TrackMask: refine edges)",
+   "repo": "hustvl/vitmatte-small-composition-1k",
+   "files": [
+    "config.json",
+    "preprocessor_config.json",
+    "model.safetensors"
+   ],
+   "size_gb": 0.1,
+   "gated": false,
+   "manual": true,
+   "license": "Apache 2.0 (code); check the weights' terms on the model page before use",
+   "license_url": "https://huggingface.co/hustvl/vitmatte-small-composition-1k"
+  },
+  "vitmatte-base": {
+   "label": "ViTMatte base (TrackMask: refine edges)",
+   "repo": "hustvl/vitmatte-base-composition-1k",
+   "files": [
+    "config.json",
+    "preprocessor_config.json",
+    "model.safetensors"
+   ],
+   "size_gb": 0.4,
+   "gated": false,
+   "manual": true,
+   "license": "Apache 2.0 (code); check the weights' terms on the model page before use",
+   "license_url": "https://huggingface.co/hustvl/vitmatte-base-composition-1k"
+  },
+  "mematte": {
+   "label": "MEMatte (TrackMask: refine edges, large plates)",
+   "repo": "linyiheng123/MEMatte",
+   "files": [],
+   "size_gb": 0.3,
+   "gated": false,
+   "manual": true,
+   "license": "MIT (code); check the checkpoint's terms before use",
+   "license_url": "https://github.com/linyiheng123/MEMatte",
+   "install_note": "MEMatte isn't a Hugging Face download. By hand: clone https://github.com/linyiheng123/MEMatte into this folder (so it holds its configs/ folder), put its released .pth checkpoint anywhere inside it, install detectron2 into the ML environment's Python, then create an empty file named .complete here. TrackMask shows Guided Smooth until then."
   }
  },
  "ic_loras": {

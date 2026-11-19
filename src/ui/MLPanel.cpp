@@ -222,16 +222,22 @@ void modelRow(App& app, const std::string& id) {
             if (ImGui::SmallButton("cancel")) ml::cancelJob(key);
             name();
         } else {
-            char b[64];
-            std::snprintf(b, sizeof(b), "Download (%.1f GB)", gb);
-            if (ImGui::SmallButton(b)) {
-                ml::submitSimple("download", {{"model", id}}, key);
-                ensureWorker(app);
+            // "manual": weights whose licence we haven't confirmed for redistribution: installed by hand only
+            if (info.value("manual", false)) {
+                ImGui::TextColored(kBad, "missing  ");
+                ImGui::SameLine();
+            } else {
+                char b[64];
+                std::snprintf(b, sizeof(b), "Download (%.1f GB)", gb);
+                if (ImGui::SmallButton(b)) {
+                    ml::submitSimple("download", {{"model", id}}, key);
+                    ensureWorker(app);
+                }
+                if (info.value("gated", false) && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Gated: accept the licence at %s and set your HF token first.",
+                                      info.value("license_url", std::string()).c_str());
+                ImGui::SameLine();
             }
-            if (info.value("gated", false) && ImGui::IsItemHovered())
-                ImGui::SetTooltip("Gated: accept the licence at %s and set your HF token first.",
-                                  info.value("license_url", std::string()).c_str());
-            ImGui::SameLine();
             if (ImGui::SmallButton("install by hand")) {
                 std::string d = ml::prepareInstallFolder(id);
                 if (d.empty()) app.message("couldn't make the folder in " + ml::installDir());

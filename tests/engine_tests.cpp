@@ -29,6 +29,7 @@
 #include "nodes/Roto.h"
 #include "nodes/TrackMaskScene.h"
 #include "nodes/MaskCombine.h"
+#include "nodes/MatteOps.h"
 #include "nodes/PowerRoto.h"
 #include "nodes/Markup.h"
 #include "nodes/Track.h"
@@ -5577,6 +5578,7 @@ Connections:  {
         tmscene::Object* o3 = s.add();
         o3->anchorFor(2).box = {0, 0, 4, 4};
         tmscene::store(n->params, s);
+        n->params.data["mask_output"] = "RAW Mask";  // (the default smooths the edges)
         Engine e;
         auto sp = m->spec("main", e);
         CHECK(sp.inputs.size() == 2 && sp.inputs[1].name == "mask" && sp.inputs[1].frames == std::vector<int>{2});
@@ -5677,6 +5679,176 @@ Connections:  {
         for (size_t i = 0; i < N; ++i) worst = std::max(worst, (double)std::fabs(cpu[i] - gpu[i]));
         std::printf("  %s: largest difference from the CPU %.2g\n", onGpu ? "GPU" : "no GPU (CPU both times)", worst);
         CHECK(worst < 1e-6);
+    });
+    test("TrackMask matte passes: guided filter keeps the plate's edges and smooths flats, trimap bands, temporal smoothing; GPU = CPU", [] {
+        using namespace matteops;
+        // a plate split at x = 32 (dark | bright) and a coarse matte that's blocky and noisy round the edge
+        const int W = 64, H = 32;
+        std::vector<float> guide(W * H * 3), p(W * H);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) {
+                const float v = x < 32 ? 0.1f : 0.9f;
+                for (int c = 0; c < 3; ++c) guide[(y * W + x) * 3 + c] = v;
+                const float base = x < 28 ? 0.1f : x < 36 ? 0.5f : 0.85f;  // the edge 8 px wide, not on the plate's
+                p[y * W + x] = std::clamp(base + (((x * 7 + y * 13) % 5) - 2) * 0.05f, 0.0f, 1.0f);
+            }
+        std::vector<float> q(W * H);
+        guidedFilter(p.data(), guide.data(), q.data(), W, H, 4, 1e-4f, false);
+        // the edge moves to the plate's: steeper across x = 32 than the coarse matte's (0.5 | 0.5 there)
+        CHECK(q[10 * W + 30] < 0.45f && q[10 * W + 33] > 0.55f);
+        // flats: the noise is smoothed away (spread round the mean, well inside the flat part)
+        auto spread = [&](const std::vector<float>& v) {
+            double mu = 0, var = 0;
+            for (int y = 8; y < 24; ++y)
+                for (int x = 44; x < 60; ++x) mu += v[y * W + x];
+            mu /= 256;
+            for (int y = 8; y < 24; ++y)
+                for (int x = 44; x < 60; ++x) var += (v[y * W + x] - mu) * (v[y * W + x] - mu);
+            return std::sqrt(var / 256);
+        };
+        const double vin = spread(p), vout = spread(q);
+        std::printf("  guided filter: edge %.2f | %.2f, flat noise %.3f -> %.3f\n", q[10 * W + 30], q[10 * W + 33], vin, vout);
+        CHECK(vout < vin * 0.5);
+        // trimap: 1 inside the core, 0.5 within the band, 0 outside
+        std::vector<float> m(W * H);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) m[y * W + x] = x >= 20 && x < 44 ? 1.0f : 0.0f;
+        auto t = trimap(m, W, H, 3, 5);
+        CHECK(t[10 * W + 22] == 0.5f && t[10 * W + 23] == 1.0f && t[10 * W + 40] == 1.0f && t[10 * W + 41] == 0.5f);
+        CHECK(t[10 * W + 15] == 0.5f && t[10 * W + 14] == 0.0f && t[10 * W + 48] == 0.5f && t[10 * W + 49] == 0.0f);
+        // edge offset by half a pixel: between the grow by 0 and by 1
+        std::vector<float> eo = m;
+        edgeOffset(eo, W, H, 0.5, false);
+        CHECK_NEAR(eo[10 * W + 19], 0.5, 1e-6);
+        CHECK_NEAR(eo[10 * W + 25], 1.0, 1e-6);
+        // levels and binarize
+        std::vector<float> lv = {0.1f, 0.5f, 0.9f};
+        levels(lv, 0.1f, 0.9f, 1.0f);
+        CHECK_NEAR(lv[0], 0, 1e-6);
+        CHECK_NEAR(lv[1], 0.5, 1e-6);
+        CHECK_NEAR(lv[2], 1, 1e-6);
+        // temporal smoothing: an edge that flickers settles, a real change is kept
+        std::vector<float> f0 = {0.50f, 0.0f}, f1 = {0.56f, 1.0f}, f2 = {0.50f, 1.0f};
+        std::vector<const float*> fr = {f0.data(), f1.data(), f2.data()};
+        float out[2];
+        temporalSmooth(fr, 1, 2, out, 1.0, 0.15);
+        std::printf("  temporal: flicker 0.56 -> %.3f, a real change 1 -> %.3f\n", out[0], out[1]);
+        CHECK(std::fabs(out[0] - 0.52f) < 0.01f && out[1] > 0.95f);
+        // the GPU (when there is one) gives the CPU's answer on a big buffer
+        const int GW = 640, GH = 480;
+        std::vector<float> gg(GW * GH * 3), gp(GW * GH);
+        for (int i = 0; i < GW * GH; ++i) {
+            gp[i] = (float)((i * 37) % 101) / 100.0f;
+            for (int c = 0; c < 3; ++c) gg[i * 3 + c] = (float)(((i + c * 11) * 13) % 97) / 96.0f;
+        }
+        std::vector<float> qc(GW * GH), qg(GW * GH);
+        guidedFilter(gp.data(), gg.data(), qc.data(), GW, GH, 6, 0.01f, false);
+        const bool onGpu = guidedFilter(gp.data(), gg.data(), qg.data(), GW, GH, 6, 0.01f, true);
+        std::vector<float> mc = gp, mg = gp;
+        growShrink(mc, GW, GH, -3, false);
+        const bool morphGpu = growShrink(mg, GW, GH, -3, true);
+        double worst = 0, worstM = 0;
+        for (int i = 0; i < GW * GH; ++i) {
+            worst = std::max(worst, (double)std::fabs(qc[i] - qg[i]));
+            worstM = std::max(worstM, (double)std::fabs(mc[i] - mg[i]));
+        }
+        std::printf("  guided filter %s: largest difference %.2g; shrink %s: %.2g\n", onGpu ? "GPU" : "no GPU (CPU both times)", worst,
+                    morphGpu ? "GPU" : "CPU", worstM);
+        CHECK(worst < 1e-3 && worstM == 0);
+    });
+    test("TrackMask Mask Output: RAW / Hard / Guided Smooth, refined crops, Refine edges job; missing refiner weights fall back to Guided Smooth (d)", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm5";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 64, H = 32;
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K"}}}}),
+                     W, H);
+        c->firstFrame = 1;
+        c->lastFrame = 2;
+        Node* n = c->find("TM");
+        auto* m = dynamic_cast<mlnodes::MLNode*>(n);
+        tmscene::Scene s;
+        s.add()->anchorFor(1).points.push_back({30, 16, 1});
+        tmscene::store(n->params, s);
+        Engine e;
+        auto sp = m->spec("main", e);
+        // a track: a soft ramp across x 24..40 on frames 1 and 2
+        auto d = home / "jobs" / "seg5";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}}.dump();
+        std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", {1, 2}}, {"width", W}, {"height", H}}}}},
+                                                 {"objects", {1}}, {"object_tags", sp.params["object_tags"]}}.dump();
+        std::vector<float> mt(W * H);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < W; ++x) mt[y * W + x] = std::clamp((x - 24) / 16.0f, 0.0f, 1.0f);
+        for (int f : {1, 2}) CHECK(ml::writeNpy((d / "out" / ("matte." + std::to_string(f) + ".npy")).string(), mt.data(), W, H, 1, true));
+        n->params.data["ml"] = {{"main", {{"result", "seg5"}}}};
+        auto setMode = [&](const char* mode) {
+            n->params.data["mask_output"] = mode;
+            n->paramsChanged();
+        };
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::Off);
+        setMode("RAW Mask");
+        CHECK_NEAR(px(render(*c, "TM", 1), 28, 10, "A"), 0.25, 1e-3);
+        setMode("Hard Mask");
+        CHECK_NEAR(px(render(*c, "TM", 1), 28, 10, "A"), 0, 1e-6);
+        CHECK_NEAR(px(render(*c, "TM", 1), 33, 10, "A"), 1, 1e-6);
+        setMode("Guided Smooth Mask");
+        auto smooth = render(*c, "TM", 1);
+        // (d) MEMatte with no weights installed: the status says so, and the matte is Guided Smooth's
+        setMode("MEMatte");
+        auto st = mlnodes::trackMaskRefinerStatus(n, 1);
+        std::printf("  %s\n", st.text.c_str());
+        CHECK(st.state == mlnodes::TrackMaskRefinerStatus::Missing && st.text.find("Guided Smooth") != std::string::npos);
+        auto fb = render(*c, "TM", 1);
+        double diff = 0;
+        for (int x = 0; x < W; ++x) diff = std::max(diff, (double)std::fabs(px(fb, x, 10, "A") - px(smooth, x, 10, "A")));
+        CHECK(diff < 1e-6);
+        auto rs = m->spec("refine", e);
+        CHECK(!m->models(rs).empty());  // Refine edges waits for the weights
+        CHECK(m->followUp("main").empty());
+        // ViTMatte small installed by hand: Refine edges takes the frames tracked from the current anchors
+        std::filesystem::create_directories(home / "models" / "vitmatte-small");
+        std::ofstream(home / "models" / "vitmatte-small" / ".complete") << "";
+        setMode("ViTMatte");
+        n->params.data["crop_padding"] = 10;
+        rs = m->spec("refine", e);
+        CHECK(rs.error.empty() && rs.task == "matte_refine" && m->models(rs).empty());
+        CHECK(rs.params["objects"].size() == 1 && rs.params["objects"][0]["coarse"].size() == 2);
+        CHECK(rs.params["objects"][0]["coarse"]["1"][0].get<std::string>() == ml::jobDir("seg5"));
+        CHECK(m->followUp("main") == "refine");
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::NotYet);
+        // its result: frame 1 refined to a hard edge at x 30 inside the crop x 16..48
+        auto rd = home / "jobs" / "ref5";
+        std::filesystem::create_directories(rd / "out");
+        std::ofstream(rd / "job.json") << "{}";
+        std::ofstream(rd / "status.json") << json{{"state", "done"}}.dump();
+        json tags = rs.params["object_tags"];
+        tags["1"].erase("2");
+        std::ofstream(rd / "result.json") << json{{"outputs", {{"refined_1", {{"frames", {1}}, {"width", 32}, {"height", H}}}}},
+                                                  {"crops", {{"1", {{"1", {16, 0, 32, H}}}}}}, {"plate", {W, H}}, {"object_tags", tags}}.dump();
+        std::vector<float> rf(32 * H);
+        for (int y = 0; y < H; ++y)
+            for (int x = 0; x < 32; ++x) rf[y * 32 + x] = x + 16 >= 30 ? 1.0f : 0.0f;
+        CHECK(ml::writeNpy((rd / "out" / "refined_1.1.npy").string(), rf.data(), 32, H, 1, true));
+        n->params.data["ml"]["refine"] = {{"result", "ref5"}};
+        n->paramsChanged();
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::Refined);
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 2).state == mlnodes::TrackMaskRefinerStatus::NotYet);
+        auto ref = render(*c, "TM", 1);
+        CHECK_NEAR(px(ref, 29, 10, "A"), 0, 1e-3);
+        CHECK_NEAR(px(ref, 30, 10, "A"), 1, 1e-3);
+        CHECK_NEAR(px(ref, 10, 10, "A"), 0, 1e-6);  // outside the crop: nothing
+        // frame 2 isn't refined: Guided Smooth there; and the next Refine edges only asks for frame 2
+        rs = m->spec("refine", e);
+        CHECK(rs.params["objects"][0]["coarse"].size() == 1 && rs.params["objects"][0]["coarse"].contains("2"));
+        // the trimap settings are part of a refined frame's tag: changing them makes frame 1 stale
+        n->params.data["trimap_erode"] = 12;
+        n->paramsChanged();
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::NotYet);
+        ml::setHome("");
     });
     test("Lens distortion: model, LensDistortion / STMap nodes, solving it in the camera tracker", [] {
         lens::Lens L;

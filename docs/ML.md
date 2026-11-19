@@ -383,8 +383,28 @@ the model folders Welder uses from `<ml home>\model_dirs.json`.
   object. **Re-find Text Objects** looks for them again every few frames while tracking and
   picks up an object again where its track lost it, matched by position and look.
 * **model:** large (best), base_plus, small, tiny (quickest) - all SAM 2.1, Apache 2.0.
-* **matte:** grow / shrink (px), softness (px), invert; **output** alpha (the plate with
-  the matte in alpha, optionally premultiplied) or matte (white on black).
+* **mask output:** how the tracked matte is shown.
+  * **RAW Mask**: the model's matte as it comes (older saves keep this look).
+  * **Hard Mask**: cut at a threshold.
+  * **Guided Smooth Mask** (the default): smoothed along the plate's own edges with a guided
+    filter (radius, edge detail). On the GPU for large frames.
+  * **ViTMatte** / **MEMatte**: a matting model works out the edges. **Refine edges** (also
+    started by itself after Track) crops each object's box plus **crop padding** %, makes a
+    trimap (sure inside / the band between **trimap inside** and **trimap outside** px / sure
+    outside) and runs the model on the crop, in overlapping tiles on big plates. Only frames
+    tracked from the current anchors whose refined edge is out of date run. **Direct Refiner**
+    refines the mask input's alpha instead (a roto or key from upstream).
+  * The weights are installed by hand (no download button until their licences are
+    confirmed): ViTMatte (hustvl, through transformers) in the Welder folder's
+    models/vitmatte-small or vitmatte-base; MEMatte (its code, a .pth checkpoint and
+    detectron2) in models/mematte. Until they're there, or on frames not refined yet,
+    Guided Smooth is shown and the panel says why.
+* **matte:** binarize (threshold), grow / shrink (px), edge offset (fractions of a px),
+  softness (px), levels (black, white, gamma), **temporal smoothing** (blends each pixel with
+  the same pixel up to 4 frames either side, weighted by how far and how different, so edge
+  flicker settles and real motion is kept), invert; **output** alpha (the plate with the
+  matte in alpha, optionally premultiplied) or matte (white on black). Grow, edge offset
+  and the guided filter run on the GPU for large frames, with the CPU as the fallback.
 * The panel says when the clicks have changed since the last Track.
 
 ### NeRF

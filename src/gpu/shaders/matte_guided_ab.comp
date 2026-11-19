@@ -1,0 +1,38 @@
+// The guided filter's per-pixel linear model (nodes/MatteOps.cpp): from the window means of
+// [I r g b, p, I*p (3), I*I (rr rg rb gg gb bb)] to a (3) and b, with a = (Sigma + eps)^-1 cov(I, p).
+#version 450
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer M { float m[]; };   // 13 per pixel
+layout(std430, set = 0, binding = 1) writeonly buffer AB { float ab[]; }; // 4 per pixel
+
+layout(push_constant) uniform P {
+    uint n, width;
+    float eps;
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.y * p.width + gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    uint b = i * 13u;
+    float mr = m[b], mg = m[b + 1], mb = m[b + 2], mp = m[b + 3];
+    float cr = m[b + 4] - mr * mp, cg = m[b + 5] - mg * mp, cb = m[b + 6] - mb * mp;
+    float srr = m[b + 7] - mr * mr + p.eps, srg = m[b + 8] - mr * mg, srb = m[b + 9] - mr * mb;
+    float sgg = m[b + 10] - mg * mg + p.eps, sgb = m[b + 11] - mg * mb, sbb = m[b + 12] - mb * mb + p.eps;
+    // the inverse of the symmetric 3 x 3 (cofactors over the determinant)
+    float i00 = sgg * sbb - sgb * sgb, i01 = srb * sgb - srg * sbb, i02 = srg * sgb - srb * sgg;
+    float i11 = srr * sbb - srb * srb, i12 = srb * srg - srr * sgb, i22 = srr * sgg - srg * srg;
+    float det = srr * i00 + srg * i01 + srb * i02;
+    float ar = 0.0, ag = 0.0, ab3 = 0.0;
+    if (abs(det) > 1e-20) {
+        float id = 1.0 / det;
+        ar = (i00 * cr + i01 * cg + i02 * cb) * id;
+        ag = (i01 * cr + i11 * cg + i12 * cb) * id;
+        ab3 = (i02 * cr + i12 * cg + i22 * cb) * id;
+    }
+    uint o = i * 4u;
+    ab[o] = ar;
+    ab[o + 1] = ag;
+    ab[o + 2] = ab3;
+    ab[o + 3] = mp - ar * mr - ag * mg - ab3 * mb;
+}

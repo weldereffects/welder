@@ -1,0 +1,24 @@
+// Grow (max, mode 1) or shrink (min, mode 0) over 2r + 1 pixels along one axis, the edge repeated:
+// one pass of nodes/MatteOps.cpp's growShrink.
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { float dst[]; };
+
+layout(push_constant) uniform P {
+    int w, h, r, axis, mode;
+} p;
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
+    if (x >= p.w || y >= p.h) return;
+    float best = p.mode == 1 ? -1e30 : 1e30;
+    for (int k = -p.r; k <= p.r; ++k) {
+        int sx = p.axis == 0 ? clamp(x + k, 0, p.w - 1) : x;
+        int sy = p.axis == 1 ? clamp(y + k, 0, p.h - 1) : y;
+        float v = src[sy * p.w + sx];
+        best = p.mode == 1 ? max(best, v) : min(best, v);
+    }
+    dst[y * p.w + x] = best;
+}

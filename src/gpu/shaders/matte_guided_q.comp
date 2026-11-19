@@ -1,0 +1,17 @@
+// The guided filter's output (nodes/MatteOps.cpp): q = mean(a) . I + mean(b).
+#version 450
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer G { float g[]; };   // 3 per pixel
+layout(std430, set = 0, binding = 1) readonly buffer AB { float ab[]; }; // 4 per pixel (window means)
+layout(std430, set = 0, binding = 2) writeonly buffer Q { float q[]; };
+
+layout(push_constant) uniform P {
+    uint n, width;
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.y * p.width + gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    q[i] = ab[i * 4u] * g[i * 3u] + ab[i * 4u + 1u] * g[i * 3u + 1u] + ab[i * 4u + 2u] * g[i * 3u + 2u] + ab[i * 4u + 3u];
+}

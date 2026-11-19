@@ -2634,6 +2634,15 @@ void infoKnob(Ctx& c, const KnobDef& k) {
             else if (!current) ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "This frame is from older anchors: press Track (only the changed frames run).");
             else ImGui::TextDisabled(src == "preview" ? "Preview of this frame." : "Tracked from the current anchors.");
         }
+        const mlnodes::TrackMaskRefinerStatus rs = mlnodes::trackMaskRefinerStatus(c.node, c.app.frame);
+        if (rs.state != mlnodes::TrackMaskRefinerStatus::Off) {
+            ImGui::PushTextWrapPos(0);
+            const ImVec4 col = rs.state == mlnodes::TrackMaskRefinerStatus::Missing ? ImVec4(1, .5f, .45f, 1)
+                               : rs.state == mlnodes::TrackMaskRefinerStatus::NotYet ? ImVec4(1, .8f, .4f, 1)
+                                                                                     : ImVec4(0.55f, 0.85f, 0.5f, 1);
+            ImGui::TextColored(col, "%s", rs.text.c_str());
+            ImGui::PopTextWrapPos();
+        }
         ImGui::PushTextWrapPos(0);
         ImGui::TextDisabled("Viewer: click the object, Shift+click not it, drag a box, Ctrl+click removes; M shows the matte. "
                             "Double-click an object to rename it.");
@@ -3271,7 +3280,7 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
     if (n->type == "WarpStabilize") shown.insert({"motion", "motion_id"});    // the analysis (data, not knobs)
     if (n->type == "FlowField") shown.insert("strokes");
     if (n->type == "EditMesh") shown.insert({"mesh", "mesh_id"});  // the mesh itself (data, edited with the buttons / viewer)
-    if (n->type == "TrackMask") shown.insert({"prompts", "scene", "tracks", "preview_frame", "retrack_all"});  // the objects and clicks (viewer and panel)
+    if (n->type == "TrackMask") shown.insert({"prompts", "scene", "tracks", "preview_frame", "retrack_all", "refines"});  // the objects and clicks (viewer and panel)
     if (n->type == "Precomp") shown.insert({"use_cache", "version"});  // set by Precomp / Clear
     if (n->type == "PointsToMesh") shown.insert("tracks");  // the chosen points (set from the CameraTracker)                       // painted in the viewer
     std::vector<OfxParamInfo> ofx = n->type == "OFX" ? ofxNodeParams(n) : std::vector<OfxParamInfo>{};

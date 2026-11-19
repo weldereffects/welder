@@ -249,6 +249,8 @@ json toJson(const Scene& s) {
 }
 
 void store(Params& p, const Scene& s) {
+    // an older TrackMask showed the model's matte as it came: it keeps that look (new ones smooth it)
+    if (p.has("prompts") && !p.has("mask_output")) p.data["mask_output"] = "RAW Mask";
     p.data["scene"] = toJson(s);
     if (p.data.is_object()) p.data.erase("prompts");
 }

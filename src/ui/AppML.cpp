@@ -259,6 +259,7 @@ void App::pollML() {
     double t = nowS();
     if (t - mlPollTime_ < 0.4 || !comp) return;
     mlPollTime_ = t;
+    std::vector<std::pair<std::string, std::string>> follow;  // (node, slot) to start once this pass is done
     for (auto& up : comp->nodes) {
         auto* m = dynamic_cast<mlnodes::MLNode*>(up.get());
         if (!m) continue;
@@ -286,11 +287,20 @@ void App::pollML() {
                 });
                 message(m->name + ": " + (st.message.empty() ? "done" : st.message));
                 requestView();
+                if (std::string fu = m->followUp(slot); !fu.empty()) follow.push_back({m->name, fu});
             } else if ((st.state == "error" || st.state == "cancelled") && !mlReported_.count(k)) {
                 mlReported_.insert(k);
                 message(m->name + ": " + (st.state == "error" ? st.message : "cancelled"));
             }
         }
+    }
+    for (auto& [n, s] : follow) {
+        auto* m = dynamic_cast<mlnodes::MLNode*>(comp->find(n));
+        if (!m) continue;
+        const std::vector<std::string> sl = m->slots();
+        if (std::find(sl.begin(), sl.end(), s) == sl.end()) continue;
+        const mlnodes::JobSpec sp = m->spec(s, uiEngine());
+        if (sp.error.empty() && m->models(sp).empty()) startMLJob(n, s);
     }
 }
 

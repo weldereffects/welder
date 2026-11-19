@@ -18,6 +18,7 @@
 #include "NodeUtils.h"
 #include "Splat.h"
 #include "MaskCombine.h"
+#include "MatteOps.h"
 #include "TrackMaskScene.h"
 
 namespace strata::mlnodes {
@@ -636,14 +637,24 @@ public:
     int maxInputs() const override { return 2; }
     std::string inputLabel(int i) const override { return i == 0 ? "src" : "mask"; }
     bool timeDependent() const override { return true; }
-    std::vector<std::string> slots() const override { return {"main", "preview", "find"}; }
+    std::vector<std::string> slots() const override {
+        if (neural()) return {"main", "preview", "find", "refine"};
+        return {"main", "preview", "find"};
+    }
     std::string slotLabel(const std::string& s) const override {
-        return s == "main" ? "Track" : s == "find" ? "Find text objects" : "Preview this frame";
+        return s == "main" ? "Track" : s == "find" ? "Find text objects" : s == "refine" ? "Refine edges" : "Preview this frame";
     }
     ChannelSet channels(Engine& e, double f) override { return inputChannels(e, input(0), f, {}); }
     Box roi(Engine&, int, const Box& req, double) override { return req; }
 
     std::shared_ptr<const tmscene::Scene> scene() const { return sceneOf(this); }
+    std::string followUp(const std::string& slot) const override {
+        return (slot == "main" || slot == "preview") && neural() && ml::modelReady(refinerModel()) ? "refine" : "";
+    }
+    // an older TrackMask showed the model's matte as it came: it keeps that look (new ones smooth it)
+    void init() override {
+        if (params.has("prompts") && !params.has("mask_output")) params.data["mask_output"] = "RAW Mask";
+    }
 
     // What the worker's tracking of an object on frame f depends on: model, size, and the anchors either side
     // of f (an object Re-find picks up again: all its anchors).
@@ -748,6 +759,12 @@ public:
                 for (auto& k : params.data["tracks"])
                     if (k.is_string() && k.get<std::string>() != key && t.size() < 12) t.push_back(k);
             params.data["tracks"] = t;
+        } else if (slot == "refine") {
+            json t = json::array({key});
+            if (params.has("refines") && params.data["refines"].is_array())
+                for (auto& k : params.data["refines"])
+                    if (k.is_string() && k.get<std::string>() != key && t.size() < 12) t.push_back(k);
+            params.data["refines"] = t;
         } else if (slot == "find" && r && r->contains("detections")) {
             // each box found becomes an object, anchored by it on that frame
             tmscene::Scene s = tmscene::parse(params);
@@ -773,48 +790,180 @@ public:
         paramsChanged();
     }
 
-    void render(RenderArgs& a, Image& out) override {
-        copyInput(a, out, input(0));
-        const int A = out.ch("A"), R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
-        const auto sc = scene();
-        const int f = (int)std::lround(a.frame);
-        const double es = a.engine.scale();
-        const int grow = (int)std::lround(params.num("grow", a.frame, 0) * es);
-        const double soft = std::max(0.0, params.num("softness", a.frame, 0) * es);
-        const int pad = std::abs(grow) + (int)std::ceil(soft * 1.8) + 1;
-        const Box P = a.region.pad(pad, pad);
-        const bool inv = params.flag("invert", false), matteOnly = params.str("output", "alpha") == "matte";
-        const bool premult = params.flag("premultiply", false);
-        const int W = P.width(), Hh = P.height();
-        // each shown object's matte from where it is on this frame, into the channels it goes to (the most of them)
-        const char* letters = "RGBA";
-        bool any[4] = {false, false, false, false};
-        std::array<std::vector<float>, 4> comb;
-        bool have = false;
-        std::vector<float> om;
-        for (auto& o : sc->objects) {
-            if (!o.visibleAt(a.frame)) continue;
-            bool used = false;
-            for (int c = 0; c < 4; ++c)
-                if (o.channels.find(letters[c]) != std::string::npos) any[c] = used = true;
-            if (!used || (o.anchors.empty())) continue;
-            const Source src = sourceFor(o, f);
-            if (src.key.empty()) continue;
-            Image m(P, {"m"});
-            RenderArgs pa{a.engine, a.frame, P};
-            if (!fillFromKey(pa, m, src.key, "matte", {{0, src.channel}})) continue;
-            have = true;
-            for (int c = 0; c < 4; ++c) {
-                if (o.channels.find(letters[c]) == std::string::npos) continue;
-                if (comb[c].empty()) comb[c].assign((size_t)W * Hh, 0.0f);
-                for (size_t i = 0; i < comb[c].size(); ++i) comb[c][i] = std::max(comb[c][i], m.data[i]);
+    // ---- Mask Output and post-processing
+    std::string maskOutput() const { return params.str("mask_output", params.has("prompts") ? "RAW Mask" : "Guided Smooth Mask"); }
+    bool neural() const {
+        const std::string m = maskOutput();
+        return m == "ViTMatte" || m == "MEMatte";
+    }
+    bool direct() const { return params.flag("direct_refiner", false); }
+    std::string refinerModel() const {
+        if (maskOutput() == "MEMatte") return "mematte";
+        return params.str("vitmatte_size", "small") == "base" ? "vitmatte-base" : "vitmatte-small";
+    }
+    // The refine settings a refined frame depends on.
+    uint64_t refineBase() const {
+        return hashString(refinerModel() + "|" + std::to_string((int)params.num("trimap_erode", 0, 8)) + "|" +
+                          std::to_string((int)params.num("trimap_dilate", 0, 8)) + "|" + std::to_string(params.num("crop_padding", 0, 15)));
+    }
+    std::string refineTag(const tmscene::Object* o, int f) const {
+        if (!o) return tmHex(hashString("direct", refineBase()));  // the mask input, as it is
+        return tmHex(hashString(objectTag(*o, f), refineBase()));
+    }
+    std::vector<std::string> refineKeys() const {
+        std::vector<std::string> v;
+        auto add = [&](const std::string& k) {
+            if (!k.empty() && std::find(v.begin(), v.end(), k) == v.end()) v.push_back(k);
+        };
+        add(result("refine"));
+        if (params.has("refines") && params.data["refines"].is_array())
+            for (auto& k : params.data["refines"])
+                if (k.is_string()) add(k.get<std::string>());
+        return v;
+    }
+    struct Refined {
+        std::string key;
+        json crop;  // [x, y, w, h], plate pixels, top row 0
+        int plateW = 0, plateH = 0;
+    };
+    // A refined matte of the object (id 0: the direct refiner's) on frame f from its current track and settings.
+    Refined refinedFor(const tmscene::Object* o, int id, int f) const {
+        const std::string tag = refineTag(o, f), os = std::to_string(id), fs = std::to_string(f);
+        for (auto& k : refineKeys())
+            if (auto r = ml::jobResult(k)) {
+                if (tagIn(*r, id, f) != tag) continue;
+                if (!r->contains("crops") || !(*r)["crops"].contains(os) || !(*r)["crops"][os].contains(fs)) continue;
+                const json pl = r->value("plate", json::array());
+                if (pl.size() != 2) continue;
+                return {k, (*r)["crops"][os][fs], pl[0].get<int>(), pl[1].get<int>()};
             }
+        return {};
+    }
+    // Fill channel 0 of m (region at the engine's scale) from a refined crop; 0 outside it.
+    bool fillCrop(RenderArgs& a, Image& m, const Refined& rf, int id, int f) {
+        auto img = ml::outputFrame(rf.key, "refined_" + std::to_string(id), f);
+        if (!img || img->w <= 0 || img->h <= 0 || rf.crop.size() != 4) return false;
+        const Format fmt = format(a.engine, a.frame);
+        const double k = (double)rf.plateW / std::max(1, fmt.width), kh = (double)rf.plateH / std::max(1, fmt.height);
+        const double cx = rf.crop[0].get<double>(), cy = rf.crop[1].get<double>();
+        const double sx = img->w / std::max(1.0, rf.crop[2].get<double>()), sy = img->h / std::max(1.0, rf.crop[3].get<double>());
+        const Box& b = m.bounds;
+        for (int y = b.y1; y < b.y2; ++y) {
+            const double py = ((fmt.height - (y + 0.5)) * kh - cy) * sy - 0.5;
+            const int y0 = (int)std::floor(py);
+            const double ty = py - y0;
+            for (int x = b.x1; x < b.x2; ++x) {
+                const double pxx = ((x + 0.5) * k - cx) * sx - 0.5;
+                const int x0 = (int)std::floor(pxx);
+                const double tx = pxx - x0;
+                auto at = [&](int xx, int yy) -> double { return xx < 0 || yy < 0 || xx >= img->w || yy >= img->h ? 0.0 : img->at(xx, yy, 0); };
+                m.px(x, y)[0] = (float)((1 - ty) * ((1 - tx) * at(x0, y0) + tx * at(x0 + 1, y0)) + ty * ((1 - tx) * at(x0, y0 + 1) + tx * at(x0 + 1, y0 + 1)));
+            }
+        }
+        return true;
+    }
+
+    // The mattes of frame f in the four output channels over box P (at the engine's scale), through Mask
+    // Output, the mask input combiner and the post passes up to (not including) temporal smoothing.
+    // any[c]: something goes into channel c. False when there's no matte on this frame.
+    bool mattesAt(RenderArgs& a0, double frame, const Box& P, std::array<std::vector<float>, 4>& comb, bool any[4], bool* refinedAll = nullptr) {
+        RenderArgs a{a0.engine, frame, P};
+        const auto sc = scene();
+        const int f = (int)std::lround(frame);
+        const double es = a.engine.scale();
+        const int W = P.width(), Hh = P.height();
+        const char* letters = "RGBA";
+        std::array<std::vector<float>, 4> raw, done;  // done: refined by a neural refiner (no smoothing after)
+        for (int c = 0; c < 4; ++c) any[c] = false;
+        bool have = false, allRefined = true, anyObj = false;
+        const std::string mode = maskOutput();
+        const bool nn = neural();
+        auto addTo = [&](std::array<std::vector<float>, 4>& acc, const std::string& chs, const float* v) {
+            for (int c = 0; c < 4; ++c) {
+                if (chs.find(letters[c]) == std::string::npos) continue;
+                if (acc[c].empty()) acc[c].assign((size_t)W * Hh, 0.0f);
+                for (size_t i = 0; i < acc[c].size(); ++i) acc[c][i] = std::max(acc[c][i], v[i]);
+            }
+        };
+        if (direct()) {  // the mask input's alpha straight into the refiner (or smoothing), into A
+            any[3] = true;
+            if (!input(1)) return false;
+            Image m(P, {"m"});
+            Refined rf = nn ? refinedFor(nullptr, 0, f) : Refined{};
+            if (!rf.key.empty() && fillCrop(a, m, rf, 0, f)) {
+                addTo(done, "A", m.data.data());
+            } else {
+                auto mk = a.fetch(input(1), P);
+                const int ci = mk->ch("A");
+                for (int y = 0; y < Hh; ++y)
+                    for (int x = 0; x < W; ++x) m.data[(size_t)y * W + x] = std::clamp(mk->at(P.x1 + x, P.y1 + y, ci), 0.0f, 1.0f);
+                addTo(raw, "A", m.data.data());
+                allRefined = false;
+            }
+            have = anyObj = true;
+        } else {
+            for (auto& o : sc->objects) {
+                if (!o.visibleAt(frame)) continue;
+                bool used = false;
+                for (int c = 0; c < 4; ++c)
+                    if (o.channels.find(letters[c]) != std::string::npos) any[c] = used = true;
+                if (!used || o.anchors.empty()) continue;
+                Image m(P, {"m"});
+                if (nn) {
+                    Refined rf = refinedFor(&o, o.id, f);
+                    if (!rf.key.empty() && fillCrop(a, m, rf, o.id, f)) {
+                        addTo(done, o.channels, m.data.data());
+                        have = anyObj = true;
+                        continue;
+                    }
+                }
+                const Source src = sourceFor(o, f);
+                if (src.key.empty()) continue;
+                if (!fillFromKey(a, m, src.key, "matte", {{0, src.channel}})) continue;
+                addTo(raw, o.channels, m.data.data());
+                have = anyObj = true;
+                allRefined = false;
+            }
+        }
+        if (refinedAll) *refinedAll = anyObj && allRefined;
+        // Mask Output on what wasn't refined: hard, or smoothed along the plate's edges (also the refiners'
+        // stand-in where they haven't run, or have no weights)
+        const bool smooth = mode == "Guided Smooth Mask" || nn;
+        std::vector<float> guide;
+        for (int c = 0; c < 4; ++c) {
+            if (raw[c].empty()) continue;
+            if (mode == "Hard Mask") {
+                matteops::binarize(raw[c], (float)params.num("hard_threshold", frame, 0.5));
+            } else if (smooth) {
+                const int r = std::max(1, (int)std::lround(params.num("smooth_radius", frame, 8) * es));
+                if (guide.empty()) {
+                    guide.assign((size_t)W * Hh * 3, 0.0f);
+                    if (input(0)) {
+                        auto g = a.fetch(input(0), P);
+                        const int gc[3] = {g->ch("R"), g->ch("G"), g->ch("B")};
+                        for (int y = 0; y < Hh; ++y)
+                            for (int x = 0; x < W; ++x)
+                                for (int k = 0; k < 3; ++k)  // about perceptual: edges in shadows count too
+                                    guide[((size_t)y * W + x) * 3 + k] = std::pow(std::clamp(g->at(P.x1 + x, P.y1 + y, gc[k]), 0.0f, 1.0f), 1.0f / 2.2f);
+                    }
+                }
+                std::vector<float> q(raw[c].size());
+                matteops::guidedFilter(raw[c].data(), guide.data(), q.data(), W, Hh, r, (float)params.num("smooth_eps", frame, 0.01));
+                for (auto& v : q) v = std::clamp(v, 0.0f, 1.0f);
+                raw[c].swap(q);
+            }
+        }
+        for (int c = 0; c < 4; ++c) {
+            comb[c].clear();
+            if (raw[c].empty() && done[c].empty()) continue;
+            comb[c].assign((size_t)W * Hh, 0.0f);
+            for (size_t i = 0; i < comb[c].size(); ++i)
+                comb[c][i] = std::max(raw[c].empty() ? 0.0f : raw[c][i], done[c].empty() ? 0.0f : done[c][i]);
         }
         // the mask input's Main (alpha), R, G, B blended on, in that order, into alpha and the channels objects go to
         const int ops[4] = {maskops::opFromName(params.str("mask_main", "Off")), maskops::opFromName(params.str("mask_r", "Off")),
                             maskops::opFromName(params.str("mask_g", "Off")), maskops::opFromName(params.str("mask_b", "Off"))};
-        const bool combining = input(1) && (ops[0] || ops[1] || ops[2] || ops[3]);
-        if (combining) {
+        if (!direct() && input(1) && (ops[0] || ops[1] || ops[2] || ops[3])) {
             auto mk = a.fetch(input(1), P);
             const char* names[4] = {"A", "R", "G", "B"};
             std::array<std::vector<float>, 4> chv;
@@ -836,14 +985,73 @@ public:
             }
             have = true;
         }
+        if (!have) return false;
+        // post: binarize, grow / shrink, edge offset, feather, levels
+        const bool bin = params.flag("binarize", false);
+        const float bt = (float)params.num("binarize_threshold", frame, 0.5);
+        const int grow = (int)std::lround(params.num("grow", frame, 0) * es);
+        const double off = params.num("edge_offset", frame, 0) * es;
+        const double soft = std::max(0.0, params.num("softness", frame, 0) * es);
+        const float lb = (float)params.num("levels_black", frame, 0), lw = (float)params.num("levels_white", frame, 1),
+                    lg = (float)params.num("levels_gamma", frame, 1);
+        for (int c = 0; c < 4; ++c) {
+            if (comb[c].empty()) continue;
+            if (bin) matteops::binarize(comb[c], bt);
+            matteops::growShrink(comb[c], W, Hh, grow);
+            matteops::edgeOffset(comb[c], W, Hh, off);
+            matteops::feather(comb[c], W, Hh, soft);
+            if (lb != 0 || lw != 1 || lg != 1) matteops::levels(comb[c], lb, lw, lg);
+        }
+        return true;
+    }
+
+    // The padding the passes need round a region (at the engine's scale).
+    int passPad(double frame, double es) const {
+        double p = std::abs(params.num("grow", frame, 0)) + std::abs(params.num("edge_offset", frame, 0)) + 1 +
+                   std::max(0.0, params.num("softness", frame, 0)) * 3.2;
+        const std::string mode = maskOutput();
+        if (mode == "Guided Smooth Mask" || neural()) p += 2 * params.num("smooth_radius", frame, 8);
+        return (int)std::ceil(p * es) + 2;
+    }
+
+    void render(RenderArgs& a, Image& out) override {
+        copyInput(a, out, input(0));
+        const int A = out.ch("A"), R = out.ch("R"), G = out.ch("G"), B = out.ch("B");
+        const int pad = passPad(a.frame, a.engine.scale());
+        const Box P = a.region.pad(pad, pad);
+        const bool inv = params.flag("invert", false), matteOnly = params.str("output", "alpha") == "matte";
+        const bool premult = params.flag("premultiply", false);
+        const int W = P.width();
+        std::array<std::vector<float>, 4> comb;
+        bool any[4];
+        bool have = mattesAt(a, a.frame, P, comb, any);
+        // temporal edge smoothing: the same pixel on the frames either side, blended by how alike they are
+        const int tk = std::clamp((int)params.num("temporal_frames", a.frame, 0), 0, 4);
+        if (have && tk > 0) {
+            std::vector<std::array<std::vector<float>, 4>> nb(2 * tk + 1);
+            std::vector<bool> ok(2 * tk + 1, false);
+            for (int k = -tk; k <= tk; ++k) {
+                if (k == 0) continue;
+                bool any2[4];
+                ok[k + tk] = mattesAt(a, a.frame + k, P, nb[k + tk], any2);
+            }
+            const double sv = std::max(0.01, params.num("temporal_strength", a.frame, 0.15));
+            for (int c = 0; c < 4; ++c) {
+                if (comb[c].empty()) continue;
+                std::vector<const float*> fr(2 * tk + 1, nullptr);
+                for (int k = -tk; k <= tk; ++k)
+                    fr[k + tk] = k == 0 ? comb[c].data() : ok[k + tk] && nb[k + tk][c].size() == comb[c].size() ? nb[k + tk][c].data() : nullptr;
+                std::vector<float> o(comb[c].size());
+                matteops::temporalSmooth(fr, tk, o.size(), o.data(), tk * 0.75, sv);
+                comb[c].swap(o);
+            }
+        }
         if (!have) {  // nothing tracked here (yet): no matte
             if (A >= 0)
                 for (int y = a.region.y1; y < a.region.y2; ++y)
                     for (int x = a.region.x1; x < a.region.x2; ++x) out.px(x, y)[A] = inv ? 1.0f : 0.0f;
             return;
         }
-        for (int c = 0; c < 4; ++c)
-            if (!comb[c].empty()) growSoften(comb[c], W, Hh, grow, soft);
         const int outCh[4] = {R, G, B, A};
         for (int y = a.region.y1; y < a.region.y2; ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
@@ -863,45 +1071,6 @@ public:
                 }
                 if (A >= 0) px[A] = v[3];
             }
-    }
-
-    // grow (max) / shrink (min) by |grow| px: separable square; then soften: three box passes (about a
-    // gaussian of `soft` px)
-    static void growSoften(std::vector<float>& v, int W, int H, int grow, double soft) {
-        std::vector<float> t(v.size());
-        if (grow != 0) {
-            const int r = std::abs(grow);
-            const bool mx = grow > 0;
-            for (int pass = 0; pass < 2; ++pass) {
-                for (int y = 0; y < H; ++y)
-                    for (int x = 0; x < W; ++x) {
-                        float best = mx ? 0.0f : 1.0f;
-                        for (int k = -r; k <= r; ++k) {
-                            const int xx = pass == 0 ? std::clamp(x + k, 0, W - 1) : x, yy = pass == 1 ? std::clamp(y + k, 0, H - 1) : y;
-                            const float q = v[(size_t)yy * W + xx];
-                            best = mx ? std::max(best, q) : std::min(best, q);
-                        }
-                        t[(size_t)y * W + x] = best;
-                    }
-                v.swap(t);
-            }
-        }
-        if (soft >= 0.5) {
-            const int r = std::max(1, (int)std::lround(soft * 0.6));
-            for (int it = 0; it < 3; ++it)
-                for (int pass = 0; pass < 2; ++pass) {
-                    for (int y = 0; y < H; ++y)
-                        for (int x = 0; x < W; ++x) {
-                            double sum = 0;
-                            for (int k = -r; k <= r; ++k) {
-                                const int xx = pass == 0 ? std::clamp(x + k, 0, W - 1) : x, yy = pass == 1 ? std::clamp(y + k, 0, H - 1) : y;
-                                sum += v[(size_t)yy * W + xx];
-                            }
-                            t[(size_t)y * W + x] = (float)(sum / (2 * r + 1));
-                        }
-                    v.swap(t);
-                }
-        }
     }
 
     // Per object with anchors: the frames Track would run (in the node's range, the direction asked, not
@@ -937,6 +1106,60 @@ public:
         return out;
     }
 
+    // The refiner's job: every frame whose coarse matte is current but whose refined matte isn't (Direct
+    // Refiner: the mask input's frames), cropped, trimapped and refined in the worker.
+    JobSpec refineSpec(Engine& e, int a, int b) {
+        JobSpec s;
+        s.task = "matte_refine";
+        const auto sc = scene();
+        json objs = json::array(), tags = json::object();
+        int lo = INT_MAX, hi = INT_MIN;
+        auto span = [&](int f) { lo = std::min(lo, f), hi = std::max(hi, f); };
+        if (direct()) {
+            json fr = json::array(), t = json::object();
+            for (int f = a; f <= b; ++f)
+                if (refinedFor(nullptr, 0, f).key.empty()) {
+                    fr.push_back(f), t[std::to_string(f)] = refineTag(nullptr, f), span(f);
+                }
+            if (!fr.empty()) objs.push_back({{"id", 0}, {"direct", true}, {"frames", fr}});
+            if (!fr.empty()) tags["0"] = t;
+        } else {
+            for (auto& o : sc->objects) {
+                if (o.anchors.empty()) continue;
+                json coarse = json::object(), t = json::object();
+                for (int f = a; f <= b; ++f) {
+                    if (!o.visibleAt(f) || !refinedFor(&o, o.id, f).key.empty()) continue;
+                    const Source src = sourceFor(o, f);
+                    if (src.key.empty() || !src.current) continue;
+                    coarse[std::to_string(f)] = {ml::jobDir(src.key), src.channel};
+                    t[std::to_string(f)] = refineTag(&o, f);
+                    span(f);
+                }
+                if (coarse.empty()) continue;
+                objs.push_back({{"id", o.id}, {"coarse", coarse}});
+                tags[std::to_string(o.id)] = t;
+            }
+        }
+        s.first = objs.empty() ? a : lo;
+        s.last = objs.empty() ? a : hi;
+        s.inputs = {{"src", 0, true}};
+        if (direct() && input(1)) s.inputs.push_back({"mask", 1, true});
+        s.params = {{"model", refinerModel()},
+                    {"objects", objs},
+                    {"object_tags", tags},
+                    {"trimap_erode", (int)params.num("trimap_erode", 0, 8)},
+                    {"trimap_dilate", (int)params.num("trimap_dilate", 0, 8)},
+                    {"crop_padding", params.num("crop_padding", 0, 15)},
+                    {"tile", (int)params.num("refine_tile", 0, 1024)}};
+        s.models = {refinerModel()};
+        if (!input(0)) s.error = "connect the src input";
+        else if (!neural()) s.error = "set Mask Output to ViTMatte or MEMatte to refine";
+        else if (direct() && !input(1)) s.error = "Direct Refiner refines the mask input: connect it";
+        else if (objs.empty()) s.error = direct() ? "every frame is already refined" : "nothing to refine: Track first (or every tracked frame is refined)";
+        (void)e;
+        return s;
+    }
+
     JobSpec spec(const std::string& slot, Engine& e) override {
         JobSpec s;
         auto [a, b] = range(e);
@@ -954,6 +1177,7 @@ public:
             else if ((int)scene()->objects.size() >= tmscene::kMaxObjects) s.error = "16 objects already: delete one first";
             return s;
         }
+        if (slot == "refine") return refineSpec(e, a, b);
         s.task = "segment";
         const auto sc = scene();
         const std::string model = params.str("model", "large");
@@ -1131,6 +1355,35 @@ std::string trackMaskSource(Node* n, double f, bool* current) {
     const auto [s, all] = t->frameSource(f);
     if (current) *current = all;
     return s.key.empty() ? std::string() : s.preview ? std::string("preview") : std::string("main");
+}
+
+TrackMaskRefinerStatus trackMaskRefinerStatus(Node* n, double fr) {
+    TrackMaskRefinerStatus st;
+    auto* t = dynamic_cast<TrackMaskNode*>(n);
+    if (!t || !t->neural()) return st;
+    const std::string model = t->refinerModel();
+    const std::string name = model == "mematte" ? "MEMatte" : model == "vitmatte-base" ? "ViTMatte base" : "ViTMatte small";
+    if (!ml::modelReady(model)) {
+        st.state = TrackMaskRefinerStatus::Missing;
+        st.text = name + " weights are not installed: showing Guided Smooth (install them by hand in the ML section)";
+        return st;
+    }
+    const int f = (int)std::lround(fr);
+    const auto sc = t->scene();
+    bool any = false, all = true;
+    if (t->direct()) {
+        any = true;
+        all = !t->refinedFor(nullptr, 0, f).key.empty();
+    } else
+        for (auto& o : sc->objects) {
+            if (o.anchors.empty() || !o.visibleAt(f)) continue;
+            any = true;
+            all = all && !t->refinedFor(&o, o.id, f).key.empty();
+        }
+    st.state = any && all ? TrackMaskRefinerStatus::Refined : TrackMaskRefinerStatus::NotYet;
+    st.text = st.state == TrackMaskRefinerStatus::Refined ? name + ": edges refined on this frame"
+                                                          : name + ": not refined here yet (Guided Smooth shown): press Refine edges";
+    return st;
 }
 
 bool trackMaskMatte(Node* n, int objectId, double f, std::vector<float>& out, int& w, int& h) {
