@@ -184,6 +184,18 @@ public:
     std::function<void()> onResult;
     // Time of the last finished full-quality pass, for the status line.
     double lastRenderMs() const { return lastMs_; }
+    double viewScale() {
+        std::lock_guard<std::mutex> l(reqM_);
+        return viewScale_;
+    }
+    // A mouse gesture (a handle or knob drag, a pan) is under way: the viewer renders at the scale
+    // that keeps up (from what a full pass cost last time), with no refining pass to be thrown away
+    // at the next step. Letting go renders full quality. Set once per UI frame.
+    void setGesture(bool on);
+    bool gesture() const { return gesture_; }
+    // The scale a pass during a gesture renders at: the finest power-of-two step of `target` whose
+    // cost, scaled from `targetMs` by pixel count, fits `budgetMs` (1/16 at the coarsest).
+    static double gestureScale(double target, double targetMs, double budgetMs = 40);
     // The Performance panel: while on, the viewer's renders are timed per node.
     struct PerfSnapshot {
         std::string node;                    // what was rendered
@@ -503,6 +515,8 @@ private:
     std::atomic<bool> busy_{false};
     std::atomic<bool> passIsRefine_{false};
     std::atomic<bool> passIsPreview_{false};
+    std::atomic<bool> gesture_{false};
+    std::atomic<double> shownScale_{0};  // the scale of the last image handed to the viewer
     std::atomic<bool> editsWaiting_{false};
     // A render thread's read lock on the comp. While edits are waiting it first gives way (up to a
     // quarter second), so a stream of renders (playback's read-ahead) can't keep an edit out:

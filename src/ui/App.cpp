@@ -954,6 +954,25 @@ void App::requestView(bool force) {
     aheadCv_.notify_all();
 }
 
+double App::gestureScale(double target, double targetMs, double budgetMs) {
+    double s = target;
+    while (s > 1.0 / 16 && targetMs * (s / target) * (s / target) > budgetMs) s *= 0.5;
+    return std::max(s, std::min(target, 1.0 / 16));
+}
+
+void App::setGesture(bool on) {
+    static const bool off = std::getenv("WELDER_NO_DRAG_SCALE") != nullptr;  // (for comparisons: the old previews)
+    if (off) on = false;
+    if (gesture_.exchange(on) == on || on) return;
+    // let go: the last image was a drag-time one, so render it properly
+    double target;
+    {
+        std::lock_guard<std::mutex> l(reqM_);
+        target = viewScale_;
+    }
+    if (shownScale_ < target) requestView();
+}
+
 ViewResult App::result() {
     std::lock_guard<std::mutex> l(resM_);
     return result_;
@@ -1096,13 +1115,20 @@ void App::workerLoop() {
                 continue;
             }
         }
-        // Passes: a quick preview first when this node was slow last time.
+        // Passes: a quick preview first when this node was slow last time. During a gesture (a handle
+        // being dragged), only a pass that keeps up: a refining pass would be cancelled by the next
+        // step anyway, after holding the comp and the cores away from that step. Letting go renders
+        // the full one (setGesture).
         std::vector<double> passes;
         auto known = passMs_.find({nodeName, target});
-        if (coarseAllowed && target > 1.0 / 16 && known != passMs_.end() && known->second > 45 &&
-            !diskHasView(nodeName, f, target, region))  // on disk: no preview needed
-            passes.push_back(std::max(target / 4, 1.0 / 16));
-        passes.push_back(target);
+        const bool slow = known != passMs_.end() && known->second > 45;
+        if (coarseAllowed && gesture_ && slow) {
+            passes.push_back(gestureScale(target, known->second));
+        } else {
+            if (coarseAllowed && target > 1.0 / 16 && slow && !diskHasView(nodeName, f, target, region))  // on disk: no preview needed
+                passes.push_back(std::max(target / 4, 1.0 / 16));
+            passes.push_back(target);
+        }
 
         bool superseded = false;
         for (size_t pi = 0; pi < passes.size(); ++pi) {
@@ -1158,6 +1184,7 @@ void App::workerLoop() {
             {
                 std::lock_guard<std::mutex> l(resM_);
                 r.serial = ++resultSerial_;
+                shownScale_ = sc;
                 result_ = std::move(r);
             }
             if (onResult) onResult();
@@ -1219,6 +1246,7 @@ bool App::takeCached(const std::string& node, double f) {
     if (c.gen != editGen_ || c.scale != scale || c.region != region || c.compare != compare) return false;
     result_ = c.r;
     result_.serial = ++resultSerial_;
+    shownScale_ = scale;
     {
         std::lock_guard<std::mutex> rl(reqM_);  // nothing to render for this request
         ++reqGen_;

@@ -198,6 +198,32 @@ inline void sample(const Image& src, double x, double y, const Filter& f, float*
         out[3] = a3;
         return;
     }
+    // The same for RGB (most scans and plates have no alpha), one or two channels.
+    if (inside && !doClamp && n == (size_t)sn && n <= 3) {
+        bool ident = true;
+        for (size_t c = 0; c < n; ++c) ident = ident && map[c] == (int)c;
+        if (ident) {
+            float a[3] = {0, 0, 0};
+            for (int j = y0; j <= y1; ++j) {
+                const float* s = src.row(j) + (size_t)(x0 - sb.x1) * n;
+                float r[3] = {0, 0, 0};
+                if (n == 3)
+                    for (int i = 0; i <= x1 - x0; ++i, s += 3) {
+                        const float w = wx[i];
+                        r[0] += w * s[0];
+                        r[1] += w * s[1];
+                        r[2] += w * s[2];
+                    }
+                else
+                    for (int i = 0; i <= x1 - x0; ++i, s += n)
+                        for (size_t c = 0; c < n; ++c) r[c] += wx[i] * s[c];
+                const float w = wy[j - y0];
+                for (size_t c = 0; c < n; ++c) a[c] += w * r[c];
+            }
+            for (size_t c = 0; c < n; ++c) out[c] = a[c];
+            return;
+        }
+    }
     for (int j = y0; j <= y1; ++j) {
         int sy2 = j;
         if (sy2 < sb.y1 || sy2 >= sb.y2) {

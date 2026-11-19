@@ -7422,6 +7422,44 @@ Connections:  {
         std::printf("  fast vs sample(): worst %.2g\n", worst);
         CHECK(worst < 1e-5);
     });
+    test("Sampling: the RGB / one- and two-channel fast path matches the general one (all filters)", [] {
+        double worst = 0;
+        for (int nc : {1, 2, 3}) {
+            ChannelSet chs;
+            for (int c = 0; c < nc; ++c) chs.push_back(std::string(1, "RGB"[c]));
+            Image im(Box(-3, 5, 37, 29), chs);
+            uint32_t st = 11 + nc;
+            for (auto& v : im.data) {
+                st = st * 1664525u + 1013904223u;
+                v = (float)((st >> 8) & 0xffff) / 65535.0f * 2 - 0.5f;
+            }
+            // the same pixels with a spare channel in front: the general path, the same taps
+            Image wide(im.bounds, [&] { ChannelSet w = {"X"}; for (auto& c : chs) w.push_back(c); return w; }());
+            for (int y = im.bounds.y1; y < im.bounds.y2; ++y)
+                for (int x = im.bounds.x1; x < im.bounds.x2; ++x)
+                    for (int c = 0; c < nc; ++c) wide.px(x, y)[c + 1] = im.px(x, y)[c];
+            std::vector<int> ident(nc), shifted(nc);
+            for (int c = 0; c < nc; ++c) ident[c] = c, shifted[c] = c + 1;
+            for (const char* fn : {"cubic", "keys", "bilinear", "lanczos6", "impulse"})
+                for (float foot : {1.0f, 2.5f}) {
+                    const Filter fl = parseFilter(fn);
+                    SampleOpts so;
+                    so.footX = so.footY = foot;
+                    for (int i = 0; i < 2000; ++i) {
+                        st = st * 1664525u + 1013904223u;
+                        const double x = -8 + (st >> 8) % 52000 / 1000.0;
+                        st = st * 1664525u + 1013904223u;
+                        const double y = 0 + (st >> 8) % 36000 / 1000.0;
+                        float a[3], b[3];
+                        sample(im, x, y, fl, a, ident, so);
+                        sample(wide, x, y, fl, b, shifted, so);
+                        for (int k = 0; k < nc; ++k) worst = std::max(worst, (double)std::fabs(a[k] - b[k]));
+                    }
+                }
+        }
+        std::printf("  fast vs general: worst %.2g\n", worst);
+        CHECK(worst < 1e-5);
+    });
     test("Write: a new Write's file defaults to the comp's name, and stays editable", [] {
         auto c = comp(json::array(), 64, 64);
         CHECK(c->defaultWriteFile().empty());  // unsaved: no name to take

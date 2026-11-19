@@ -777,6 +777,64 @@ int main(int argc, char** argv) {
                                     n->params.data[tk].dump().c_str(), n->params.data.value("translate", json()).dump().c_str(),
                                     (int)typingInText(), ui.picker.active ? ui.picker.node.c_str() : "off");
         }
+        // STRATA_TEST_VIEWERDRAG=<seconds>: drag the open Transform's centre handle steadily for that long
+        // (a step every 16 ms, as a hand would), then let go; print how often the viewer got a new
+        // image while dragging, at what scale, how stale each was, and how long the final one took.
+        bool vdragTest = false;
+        if (const char* td = std::getenv("STRATA_TEST_VIEWERDRAG"); td && *td && !opt.screenshot.empty()) {
+            ImGuiIO& tio = ImGui::GetIO();
+            static int phase = 0;  // 0 settle, 1 dragging, 2 released, 3 done
+            static double t0 = 0, tUp = 0, lastMove = 0;
+            static ImVec2 c0(-1, -1);
+            static uint64_t lastSerial = 0;
+            static int results = 0, fine = 0, steps = 0, frames = 0;
+            static double lastResultT = 0, gapMax = 0, uiMax = 0, prevT = 0, minScale = 1;
+            const double secs = std::max(0.5, std::atof(td)), now = glfwGetTime();
+            vdragTest = phase < 3;
+            ViewResult r = app.result();
+            if (phase == 0 && frameCount > 20 && !app.rendering() && gTestXformCentre.x >= 0) {
+                c0 = gTestXformCentre;
+                tio.AddMousePosEvent(c0.x, c0.y);
+                tio.AddMouseButtonEvent(0, true);
+                phase = 1;
+                t0 = lastMove = lastResultT = prevT = now;
+                lastSerial = r.serial;
+            } else if (phase == 1) {
+                ++frames;
+                uiMax = std::max(uiMax, now - prevT);
+                if (now - lastMove >= 0.016) {
+                    const float k = (float)((now - t0) / secs);
+                    tio.AddMousePosEvent(c0.x + 160 * std::sin(k * 6.2832f), c0.y + 60 * std::sin(k * 12.566f));
+                    lastMove = now;
+                    ++steps;
+                }
+                if (now - t0 >= secs) {
+                    tio.AddMouseButtonEvent(0, false);
+                    phase = 2;
+                    tUp = now;
+                }
+            } else if (phase == 2 && !app.rendering() && !app.editsPending() && now - tUp > 0.1) {
+                std::printf("VIEWERDRAG %.1f s drag: %d steps, %d UI frames (longest %.0f ms), %d new images (%.1f / s, %d at full "
+                            "viewer scale 1/%.0f, coarsest 1/%.0f), longest wait for a new image %.0f ms, last render %.0f ms, settled %.0f ms after "
+                            "release\n",
+                            secs, steps, frames, uiMax * 1000, results, results / secs, fine, 1 / app.viewScale(), 1 / minScale, gapMax * 1000,
+                            app.lastRenderMs(),
+                            (lastResultT - tUp) * 1000);
+                std::fflush(stdout);
+                phase = 3;
+            }
+            if (phase >= 1 && phase < 3 && r.serial != lastSerial) {
+                lastSerial = r.serial;
+                if (phase == 1) {
+                    ++results;
+                    gapMax = std::max(gapMax, now - lastResultT);
+                    if (r.scale >= app.viewScale()) ++fine;
+                    minScale = std::min(minScale, r.scale);
+                }
+                lastResultT = now;
+            }
+            prevT = now;
+        }
         // STRATA_TEST_SCENE3D=<Scene3D node>: in the 3D viewer through its camera, box-select every point
         // with the Points tool, drag a card in the middle with the Card tool, print the cards
         // (STRATA_TEST_SCENE3D_QUAD: then show the quad view)
@@ -1652,6 +1710,9 @@ int main(int argc, char** argv) {
         app.pollTracking();
         app.pollML();
         mark("tracking and AI results");
+        // a mouse button held (a handle, a knob or a pan being dragged): the viewer keeps up at a lower
+        // resolution if it must; letting go renders full quality
+        app.setGesture(ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle));
         app.applyEdits();
         mark("applying edits");
 
@@ -1719,7 +1780,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !sc3Test && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

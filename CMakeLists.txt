@@ -480,3 +480,5 @@ target_link_libraries(camtrack_bench PRIVATE strata_core)
 
 add_executable(playback_bench tests/playback_bench.cpp)
 target_link_libraries(playback_bench PRIVATE strata_core)
+add_executable(viewer_drag_bench tests/viewer_drag_bench.cpp)
+target_link_libraries(viewer_drag_bench PRIVATE strata_core)
