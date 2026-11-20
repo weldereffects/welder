@@ -1554,17 +1554,17 @@ void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool intera
             // or nearly along it go this far out in their direction instead of failing the drag
             double extent = cam3d::norm(v.C - pl.c);
             for (auto& p : sel) extent = std::max(extent, cam3d::norm(p - pl.c));
-            const double far = 10 * std::max(1e-6, extent);
+            const double reachOut = 10 * std::max(1e-6, extent);
             const ImVec2 sc[4] = {ImVec2(a.x, b.y), ImVec2(b.x, b.y), ImVec2(b.x, a.y), ImVec2(a.x, a.y)};
             double u0 = 1e300, u1 = -1e300, w0 = 1e300, w1 = -1e300;
             for (auto& q : sc) {
                 V3 o, r, hit;
                 v.ray(q, p0, o, r);
-                if (!scene3d::rayPlane(o, r, pl.c, pl.n, hit) || cam3d::norm(hit - pl.c) > far) {
+                if (!scene3d::rayPlane(o, r, pl.c, pl.n, hit) || cam3d::norm(hit - pl.c) > reachOut) {
                     V3 along = r - pl.n * cam3d::dot(r, pl.n);
                     if (cam3d::norm(along) < 1e-9) along = R.col(1);
                     const V3 foot = o - pl.n * cam3d::dot(o - pl.c, pl.n);  // the eye dropped onto the plane
-                    hit = foot + cam3d::normalize(along) * far;
+                    hit = foot + cam3d::normalize(along) * reachOut;
                 }
                 const double u = cam3d::dot(hit - pl.c, R.col(0)), w = cam3d::dot(hit - pl.c, R.col(1));
                 u0 = std::min(u0, u), u1 = std::max(u1, u), w0 = std::min(w0, w), w1 = std::max(w1, w);
