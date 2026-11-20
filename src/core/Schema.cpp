@@ -576,7 +576,10 @@ std::vector<NodeDef> build() {
                  "removed (a clean plate for CADGrain's degrain input, or a grain sample)."});
     d.push_back({"VectorGenerator", "Time",
                  {F("vector_detail", "vector detail", 0.3, 0.05, 1, "Resolution of the flow (1 = every pixel; lower is faster and smoother)"),
-                  F("smoothness", "smoothness", 0.5, 0, 1), Tip(B("flicker", "flicker / lighting changes", false), "Match on gradients, not brightness: for flickering or changing light")},
+                  F("smoothness", "smoothness", 0.5, 0, 1), Tip(B("flicker", "flicker / lighting changes", false), "Match on gradients, not brightness: for flickering or changing light"),
+                  Tip(C("directions", "directions", "auto", {"auto", "both", "forward", "backward"}),
+                      "Which vectors to solve (each direction is a full optical flow).\nauto: only backward when everything it feeds "
+                      "reads only backward (FlowBreath's vectors), else both")},
                  "Motion vectors from optical flow, like the classic VectorGenerator: forward.u / .v (where each pixel goes on the next frame) and "
                  "backward.u / .v (the previous frame), in pixels per frame. For VectorBlur, IDistort, FlowMap (advect) or export in an EXR."});
     d.push_back({"FlowField", "Draw",

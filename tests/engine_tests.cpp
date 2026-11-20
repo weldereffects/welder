@@ -8500,6 +8500,38 @@ Connections:  {
         CHECK(d1 == 0);
     });
     // ---------------------------------------------------------------- Psychic Rendering: FlowBreath, FractalFold
+    test("VectorGenerator: auto solves only backward when FlowBreath alone reads it, same picture as both", [] {
+        const int W = 96, H = 64;
+        auto mk = [&](const char* dirs, bool alsoViewed) {
+            json nodes = json::array({
+                {{"name", "P"}, {"type", "Plasma"}, {"params", {{"size", 30}, {"complexity", 6}, {"cycles", 3}, {"speed", 0}}}},
+                {{"name", "M"}, {"type", "Transform"}, {"inputs", {"P"}}, {"params", {{"translate", {json{{"expr", "frame * 3"}}, json{{"expr", "frame * -2"}}}}}}},
+                {{"name", "VG"}, {"type", "VectorGenerator"}, {"inputs", {"M"}}, {"params", {{"directions", dirs}}}},
+                {{"name", "FB"}, {"type", "FlowBreath"}, {"inputs", {"M", "VG"}}, {"params", {{"strength", 8}, {"flow_scale", 40}, {"reference", 1}}}},
+            });
+            if (alsoViewed) nodes.push_back({{"name", "G"}, {"type", "Grade"}, {"inputs", {"VG"}}});
+            auto c = comp(nodes, W, H);
+            c->firstFrame = 1;
+            c->lastFrame = 6;
+            return c;
+        };
+        auto cAuto = mk("auto", false), cBoth = mk("both", false), cAutoViewed = mk("auto", true);
+        Engine e;
+        auto has = [&](Comp& c, const char* ch) {
+            auto cs = e.channels(c.find("VG"), 3);
+            return std::find(cs.begin(), cs.end(), ch) != cs.end();
+        };
+        CHECK(!has(*cAuto, "forward.u") && has(*cAuto, "backward.u"));
+        CHECK(has(*cAutoViewed, "forward.u") && has(*cAutoViewed, "backward.u"));  // something else reads it: both
+        CHECK(has(*cBoth, "forward.u"));
+        double d = 0;
+        for (int f = 1; f <= 4; ++f) {
+            auto a = render(*cAuto, "FB", f), b = render(*cBoth, "FB", f);
+            for (size_t i = 0; i < a->data.size() && i < b->data.size(); ++i) d = std::max(d, (double)std::fabs(a->data[i] - b->data[i]));
+        }
+        std::printf("  auto vs both: worst %.2g\n", d);
+        CHECK(d < 1e-5);
+    });
     test("Psychic: FlowBreath pushes by about `strength`, more on texture, tiles agree, sticks to moving surfaces, scrubs cleanly", [] {
         const int W = 160, H = 96;
         auto c = comp(json::array({

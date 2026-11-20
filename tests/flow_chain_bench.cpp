@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
     c->lastFrame = 1001 + frames;
     Node* rd = c->addNode("Read", "Read1", json{{"file", (dir / "scan.####.exr").string()}, {"first", 1001}, {"last", 1001 + frames}});
     Node* tf = c->addNode("Transform", "Transform1", json{{"translate", json::array({1.5, 0.5})}});
-    Node* vg = c->addNode("VectorGenerator", "VectorGenerator1");
+    Node* vg = c->addNode("VectorGenerator", "VectorGenerator1", json{{"directions", std::getenv("VG_DIRS") ? std::getenv("VG_DIRS") : "auto"}});
     Node* fb = c->addNode("FlowBreath", "FlowBreath1");
     c->setInput(tf, 0, rd);
     c->setInput(vg, 0, tf);

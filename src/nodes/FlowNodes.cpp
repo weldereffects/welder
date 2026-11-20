@@ -136,9 +136,31 @@ public:
     Box dod(Engine& e, double f) override { return input(0) ? e.dod(input(0), f) : Box(); }
     ChannelSet channels(Engine& e, double f) override {
         ChannelSet c = input(0) ? e.channels(input(0), f) : rgbaChannels();
-        return unionChannels(c, {"forward.u", "forward.v", "backward.u", "backward.v"});
+        const int d = directions();  // only the vectors it solves (a reader then knows which it has)
+        ChannelSet v;
+        if (d & 1) v.insert(v.end(), {"forward.u", "forward.v"});
+        if (d & 2) v.insert(v.end(), {"backward.u", "backward.v"});
+        return unionChannels(c, v);
     }
     double inputTime(int, double f) override { return f; }
+    // The directions solved: 1 forward, 2 backward. "auto" solves only backward when every node reading
+    // this one reads only backward vectors (FlowBreath on its vectors input): half the optical flow.
+    int directions() const {
+        const std::string d = params.str("directions", "auto");
+        if (d == "forward") return 1;
+        if (d == "backward") return 2;
+        if (d == "both" || !comp) return 3;
+        bool any = false;
+        for (auto& n : comp->nodes)
+            for (size_t i = 0; i < n->inputs.size(); ++i)
+                if (n->inputs[i] == this) {
+                    any = true;
+                    if (!(n->type == "FlowBreath" && i == 1)) return 3;
+                }
+        return any ? 2 : 3;
+    }
+    // (what "auto" solves depends on what reads it: part of what it is)
+    uint64_t localHash(double f) const override { return hashCombine(Node::localHash(f), (uint64_t)directions()); }
 
     void render(RenderArgs& a, Image& out) override {
         Engine& e = a.engine;
@@ -148,8 +170,9 @@ public:
         const Box D = e.dod(input(0), f);
         if (D.empty()) return;
         const Range r = inputRange(this);
-        const bool hasNext = !r.valid || f + 1 <= r.last, hasPrev = !r.valid || f - 1 >= r.first;
-        uint64_t key = hashCombine(boxKey(paramsKey(params), D), e.hash(input(0), f));
+        const int dirs = directions();
+        const bool hasNext = (dirs & 1) && (!r.valid || f + 1 <= r.last), hasPrev = (dirs & 2) && (!r.valid || f - 1 >= r.first);
+        uint64_t key = hashCombine(hashCombine(boxKey(paramsKey(params), D), e.hash(input(0), f)), (uint64_t)dirs);
         if (hasNext) key = hashCombine(key, e.hash(input(0), f + 1) ^ 0x51);
         if (hasPrev) key = hashCombine(key, e.hash(input(0), f - 1) ^ 0x73);
         auto res = results_.get(key, [&] {
@@ -171,19 +194,17 @@ public:
             Flow fwd, bwd;
             if (hasNext) fwd = estimateFlow(L, lum(f + 1), fo);
             if (hasPrev) bwd = estimateFlow(L, lum(f - 1), fo);
-            const int c[4] = {img->ch("forward.u"), img->ch("forward.v"), img->ch("backward.u"), img->ch("backward.v")};
+            const int c[4] = {img->ch("forward.u"), img->ch("forward.v"), img->ch("backward.u"), img->ch("backward.v")};  // (-1: not solved)
             parallelFor(D.height(), [&](int b, int e2) {
                 for (int y = b; y < e2; ++y)
                     for (int x = 0; x < D.width(); ++x) {
                         float* p = img->px(D.x1 + x, D.y1 + y);
                         float u = 0, v = 0;
                         if (hasNext) fwd.at((float)x, (float)y, u, v);
-                        p[c[0]] = u;
-                        p[c[1]] = v;
+                        if (c[0] >= 0) p[c[0]] = u, p[c[1]] = v;
                         u = v = 0;
                         if (hasPrev) bwd.at((float)x, (float)y, u, v);
-                        p[c[2]] = u;
-                        p[c[3]] = v;
+                        if (c[2] >= 0) p[c[2]] = u, p[c[3]] = v;
                     }
             });
             return std::shared_ptr<const Image>(img);
