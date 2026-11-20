@@ -270,11 +270,16 @@ def main(argv=None):
     if a.log:
         f = open(a.log, "a", buffering=1, encoding="utf-8")
         sys.stdout = sys.stderr = f
-    # Hugging Face downloads (MapAnything's own code) land in the ML home too.
-    os.environ.setdefault("HF_HOME", os.path.join(a.home, "hf"))
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # Hugging Face and torch.hub caches live in the ML home too (a copied ML home brings them along);
+    # offline mode (airgapped machines) keeps everything off the network.
+    from .util import apply_vram_limit, setup_environment
+    off = setup_environment(a.home)
     load_tasks()
     w = Worker(a.home)
+    w.packages["offline"] = off
+    cap = apply_vram_limit()
+    if cap:
+        w.packages["vram_limit_gb"] = cap
     if a.once:
         while w.next_job():
             w.run_job(w.next_job())

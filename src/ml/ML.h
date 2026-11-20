@@ -40,6 +40,13 @@ void setHome(const std::string& dir);      // override (empty = default)
 void setAppDir(const std::string& exeDir); // where to look for ml/ next to the executable
 std::string packageDir();                  // the directory with strata_ml_worker.py ("" if not found)
 std::string pythonPath();                  // the venv's python ("" when setup hasn't run)
+// An ML home copied from another machine or folder: point its environments at the Python in
+// <ml home>/python (Set up ML puts it there). Runs at most once a minute; returns how many it fixed.
+int repairEnvironments();
+// Offline mode (airgapped machines): the worker uses nothing from the network. <ml home>/offline, or
+// STRATA_ML_OFFLINE=1 (WELDER_ML_OFFLINE). The worker reads it when it starts.
+bool offline();
+void setOffline(bool on);
 
 // ------------------------------------------------------------ registry and models
 const json& registry();                    // models.json (empty object if missing)

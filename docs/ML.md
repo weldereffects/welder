@@ -35,7 +35,9 @@ Two 3D nodes work without the worker:
      CorridorKey, which needs older numpy and transformers than the others.
 
    It installs [uv](https://astral.sh/uv) to do this if you don't have it. Run
-   it again any time: finished steps are kept.
+   it again any time: finished steps are kept. Python itself goes in the ML
+   home too (`ml\python`), so the whole folder can be copied to another machine
+   (see [Machines without internet access](#machines-without-internet-access)).
 3. **Gated models (LTX):** sign in at huggingface.co, open each model's page
    (hover a model in the panel to see its link) and accept the licence. Then
    paste a *Read* token from huggingface.co/settings/tokens into **HF token**.
@@ -72,6 +74,33 @@ folder's `models\`, then any folders in `WELDER_ML_MODELS` (separated by `;`),
 for example a big drive shared between installs. When you update Welder, unzip
 the new version over the old folder so `models\` stays put, or keep the models
 elsewhere with `WELDER_ML_MODELS`.
+
+### Machines without internet access
+
+Welder's AI nodes run without a network connection once the Python
+environments and the models are in place. Set up one machine that has internet
+access, then copy what it made to the others:
+
+1. On the connected machine, run **Set up ML** and download (or install by hand)
+   the models you need. Run each node you use once: a few models fetch a small
+   extra file the first time (the DINOv2 code MapAnything builds on, the Qwen3
+   tokenizer for single-file FLUX checkpoints). Those land in the ML home too.
+2. Copy the ML home (`%LOCALAPPDATA%\Welder\ml`, or the folder set with
+   `WELDER_ML_HOME`) to each offline machine, to the same place or another
+   (set `WELDER_ML_HOME` there). Welder points the copied environments at the
+   copy's own Python when it starts. The job cache isn't in the ML home, so it
+   isn't copied. Leave out `hf_token` if you don't want your Hugging Face token
+   on the other machines.
+3. Copy the models too: they're in the ML home's `models\` (downloads) and the
+   Welder folder's `models\` (installed by hand). A shared drive works as well:
+   point `WELDER_ML_MODELS` at it on every machine.
+4. On each offline machine, tick **offline** in any AI node's ML section (or set
+   `WELDER_ML_OFFLINE=1`). The worker then never goes to the network, so nothing
+   waits on a connection timing out, and **Download** is turned off.
+
+An ML home set up by an older Welder has its Python in your user profile
+instead. Run **Set up ML** once more with this version before copying: it moves
+the environments onto a Python inside the ML home and keeps their packages.
 
 ### The Gaussian splat environment
 
@@ -138,6 +167,26 @@ These nodes are built for a 24 GB card such as an RTX 3090 or 4090.
 
 Without CUDA, everything still runs on the CPU, but only small tests are practical.
 
+### Smaller cards (12–16 GB)
+
+Most nodes also run on 12–16 GB cards such as an RTX 4070 or 4080, with
+smaller settings. Where a node runs out of memory, turn down:
+
+* **LTX / AlphaGen:** keep **weights: cpu** (or **disk**) and fp8; lower
+  **max size** (960 px on the long side, say) and **frames per pass**. The
+  64 GB of system RAM for **weights: cpu** still applies.
+* **ImageGen:** **offload: auto** moves one component onto the GPU at a time
+  when they don't all fit. FLUX 3 [klein] in fp8 suits these cards best.
+* **Depth:** Small, or Large at a lower **detail**.
+* **CorridorKey:** turn on **low VRAM**, or set **max size**.
+* **TrackMask:** sizes itself to the GPU's free memory.
+* **Reconstruct:** fewer **max frames**. **GaussianSplat:** a lower **max size**.
+  **NeRF:** fewer **rays per step**.
+
+To try settings for a smaller card on a bigger one, set `WELDER_ML_VRAM_GB`
+(for example `12`) before starting Welder. The worker then won't use more than
+that much GPU memory, and the ML section shows the limit.
+
 ## How a job runs
 
 **Run** renders the node's inputs over its frame range, writes them to
@@ -157,8 +206,10 @@ start the worker yourself, for example on another machine sharing the folder:
 
 Set `WELDER_ML_HOME` to use another folder. `WELDER_ML_PYTHON` and
 `WELDER_ML_SPLAT_PYTHON` point Welder at other Python environments.
-`WELDER_ML_MODELS` adds folders with models. A worker started by hand reads
-the model folders Welder uses from `<ml home>\model_dirs.json`.
+`WELDER_ML_MODELS` adds folders with models. `WELDER_ML_OFFLINE=1` turns on
+offline mode and `WELDER_ML_VRAM_GB` limits the GPU memory the worker uses. A
+worker started by hand reads the model folders Welder uses from
+`<ml home>\model_dirs.json`, and offline mode from the ML home.
 
 ## The nodes
 

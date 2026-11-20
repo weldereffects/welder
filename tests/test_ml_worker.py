@@ -282,6 +282,85 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(calls, [None, "1"])
         self.assertIn("downloaded", res["message"])
 
+    def test_offline_mode(self):
+        from strata_ml import models, util
+        from strata_ml.util import JobContext
+        saved = {k: os.environ.get(k) for k in ("STRATA_ML_OFFLINE", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE",
+                                                "HF_DATASETS_OFFLINE", "HF_HOME", "TORCH_HOME")}
+        try:
+            for k in saved:
+                os.environ.pop(k, None)
+            self.assertFalse(util.offline(self.home))
+            self.assertFalse(util.setup_environment(self.home))
+            self.assertNotIn("HF_HUB_OFFLINE", os.environ)
+            self.assertEqual(os.environ["TORCH_HOME"], os.path.join(self.home, "torch"))
+            self.assertEqual(os.environ["HF_HOME"], os.path.join(self.home, "hf"))
+            open(os.path.join(self.home, "offline"), "w").close()  # what Welder's ML panel writes
+            self.assertTrue(util.setup_environment(self.home))
+            self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
+            self.assertEqual(os.environ["TRANSFORMERS_OFFLINE"], "1")
+            jd = os.path.join(self.home, "jobs", "dl-off")
+            os.makedirs(jd)
+            ctx = JobContext(self.home, jd)
+            real = models._run_download
+            models._run_download = lambda *a: self.fail("offline mode must not download")
+            try:
+                with self.assertRaisesRegex(RuntimeError, "offline mode"):
+                    models.download(ctx, {"model": "ltx-ic-alpha-gen"})
+            finally:
+                models._run_download = real
+                ctx.close()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_torch_hub_cache_moves_into_the_ml_home(self):
+        from strata_ml.util import _adopt_torch_hub_cache
+        old = os.path.join(self.home, "usercache")
+        os.makedirs(os.path.join(old, "torch", "hub", "facebookresearch_dinov2_main", "dinov2"))
+        open(os.path.join(old, "torch", "hub", "facebookresearch_dinov2_main", "hubconf.py"), "w").close()
+        os.makedirs(os.path.join(old, "torch", "hub", "checkpoints"))
+        open(os.path.join(old, "torch", "hub", "checkpoints", "dinov2_vitl14_reg4_pretrain.pth"), "w").close()
+        open(os.path.join(old, "torch", "hub", "checkpoints", "something_else.pth"), "w").close()
+        saved = os.environ.get("XDG_CACHE_HOME")
+        os.environ["XDG_CACHE_HOME"] = old
+        try:
+            th = os.path.join(self.home, "torch")
+            _adopt_torch_hub_cache(th)
+        finally:
+            if saved is None:
+                os.environ.pop("XDG_CACHE_HOME", None)
+            else:
+                os.environ["XDG_CACHE_HOME"] = saved
+        hub = os.path.join(th, "hub")
+        self.assertTrue(os.path.exists(os.path.join(hub, "facebookresearch_dinov2_main", "hubconf.py")))
+        self.assertTrue(os.path.exists(os.path.join(hub, "checkpoints", "dinov2_vitl14_reg4_pretrain.pth")))
+        self.assertFalse(os.path.exists(os.path.join(hub, "checkpoints", "something_else.pth")))
+
+    def test_vram_limit(self):
+        from strata_ml import util
+        saved = os.environ.get("STRATA_ML_VRAM_GB")
+        try:
+            os.environ.pop("STRATA_ML_VRAM_GB", None)
+            self.assertIsNone(util.vram_limit_bytes())
+            os.environ["STRATA_ML_VRAM_GB"] = "12"
+            self.assertEqual(util.vram_limit_bytes(), 12 * 2 ** 30)
+            if torch.cuda.is_available():
+                self.assertLessEqual(util.gpu_total_bytes(), 12 * 2 ** 30)
+            else:
+                self.assertIsNone(util.apply_vram_limit())
+                self.assertIsNone(util.gpu_total_bytes())
+            os.environ["STRATA_ML_VRAM_GB"] = "lots"
+            self.assertIsNone(util.vram_limit_bytes())
+        finally:
+            if saved is None:
+                os.environ.pop("STRATA_ML_VRAM_GB", None)
+            else:
+                os.environ["STRATA_ML_VRAM_GB"] = saved
+
     def test_splat_training_refines_cameras(self):
         means, cols, cams, imgs = synthetic_scene()
         noisy = perturb(cams)

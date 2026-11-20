@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -915,6 +916,56 @@ int main(int argc, char** argv) {
         CHECK(j["dirs"].size() >= 1 && std::filesystem::path(j["dirs"][0].get<std::string>()) == std::filesystem::path(ml::installDir()));
         ml::setHome("");
         ml::setAppDir("");
+    });
+
+    test("ML: a copied ML home's environments are pointed at its own Python", [&] {
+        namespace fs = std::filesystem;
+        auto h = tmp / "mlcopied";
+        fs::remove_all(h);
+#ifdef _WIN32
+        auto inst = h / "python" / "cpython-3.12.13-windows-x86_64-none";
+        fs::create_directories(inst);
+        std::ofstream(inst / "python.exe") << "x";
+        fs::create_directories(h / "venv" / "Scripts");
+        std::ofstream(h / "venv" / "Scripts" / "python.exe") << "x";
+        const std::string oldHome = "C:\\Users\\someone\\AppData\\Local\\Welder\\ml\\python\\cpython-3.12-windows-x86_64-none";
+        const fs::path want = inst;
+#else
+        auto inst = h / "python" / "cpython-3.12.13-linux-x86_64-gnu";
+        fs::create_directories(inst / "bin");
+        std::ofstream(inst / "bin" / "python3.12") << "x";
+        fs::create_directories(h / "venv" / "bin");
+        const std::string oldHome = "/home/someone/.local/share/welder/ml/python/cpython-3.12-linux-x86_64-gnu/bin";
+        fs::create_symlink(oldHome + "/python3.12", h / "venv" / "bin" / "python");
+        const fs::path want = inst / "bin";
+#endif
+        // (another version's install must not be picked)
+        fs::create_directories(h / "python" / "cpython-3.10.19-x");
+        std::ofstream(h / "venv" / "pyvenv.cfg") << "home = " << oldHome << "\nimplementation = CPython\nuv = 0.11.32\n"
+                                                 << "version_info = 3.12.13\ninclude-system-site-packages = false\n";
+        ml::setHome(h.string());
+        CHECK(ml::repairEnvironments() == 1);
+        std::ifstream f(h / "venv" / "pyvenv.cfg");
+        std::string cfg((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        CHECK(cfg.find("home = " + want.string() + "\n") != std::string::npos);
+        CHECK(cfg.find("version_info = 3.12.13") != std::string::npos);
+#ifndef _WIN32
+        CHECK(fs::read_symlink(h / "venv" / "bin" / "python") == inst / "bin" / "python3.12");
+#endif
+        CHECK(!ml::pythonPath().empty());
+        ml::setHome("");
+    });
+
+    test("ML: offline mode is a file in the ML home", [&] {
+        auto h = tmp / "mloffline";
+        std::filesystem::remove_all(h);
+        ml::setHome(h.string());
+        CHECK(!ml::offline());
+        ml::setOffline(true);
+        CHECK(ml::offline() && std::filesystem::exists(h / "offline"));
+        ml::setOffline(false);
+        CHECK(!ml::offline());
+        ml::setHome("");
     });
 
     test("ImageGen: checkpoint and LoRA folders are scanned", [&] {

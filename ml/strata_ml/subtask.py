@@ -146,7 +146,8 @@ def main():
     from .winfix import fix_torch_openmp
     fix_torch_openmp()  # before anything imports torch
     from .tasks import core_tasks
-    from .util import Cancelled, JobContext, atomic_write_json
+    from .util import Cancelled, JobContext, apply_vram_limit, atomic_write_json
+    apply_vram_limit()  # (the environment, offline mode included, comes from the worker)
     ctx = JobContext(home, jobdir)
     try:
         with open(os.path.join(jobdir, "_params.json"), encoding="utf-8") as f:

@@ -100,16 +100,111 @@ def free_gpu():
         pass
 
 
-def gpu_free_mb():
-    """Free GPU memory in MB (None: no CUDA)."""
+def vram_limit_bytes():
+    """STRATA_ML_VRAM_GB (WELDER_ML_VRAM_GB in Welder): pretend the GPU has only this much memory, to try
+    settings for a smaller card on a bigger one. None when it isn't set."""
+    try:
+        gb = float(os.environ.get("STRATA_ML_VRAM_GB") or os.environ.get("WELDER_ML_VRAM_GB") or 0)
+    except ValueError:
+        return None
+    return int(gb * 2 ** 30) if gb > 0 else None
+
+
+def apply_vram_limit():
+    """Cap PyTorch's allocations at the VRAM limit (if one is set): past it, allocations fail with
+    out-of-memory just as they would on the smaller card. Returns the cap in GB, or None."""
+    cap = vram_limit_bytes()
+    if cap is None:
+        return None
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        total = torch.cuda.get_device_properties(0).total_memory
+        if cap >= total:
+            return None
+        torch.cuda.set_per_process_memory_fraction(cap / total, 0)
+        return round(cap / 2 ** 30, 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def gpu_total_bytes():
+    """The GPU's memory (or the VRAM limit, when it's smaller). None: no CUDA."""
     try:
         import torch
         if torch.cuda.is_available():
-            free, _ = torch.cuda.mem_get_info()
+            total = torch.cuda.get_device_properties(0).total_memory
+            cap = vram_limit_bytes()
+            return min(total, cap) if cap else total
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def gpu_free_mb():
+    """Free GPU memory in MB (None: no CUDA). Under a VRAM limit: what's left below the limit."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            free, total = torch.cuda.mem_get_info()
+            cap = vram_limit_bytes()
+            if cap and cap < total:
+                free = min(free, max(0, cap - torch.cuda.memory_reserved()))
             return free / (1024 * 1024)
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+def offline(home=None):
+    """Offline (airgapped) mode: STRATA_ML_OFFLINE=1 (WELDER_ML_OFFLINE in Welder), or a file named
+    `offline` in the ML home (Welder's ML panel makes it). Nothing then goes to the network."""
+    v = os.environ.get("STRATA_ML_OFFLINE") or os.environ.get("WELDER_ML_OFFLINE") or ""
+    if v.strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    return bool(home) and os.path.exists(os.path.join(home, "offline"))
+
+
+def setup_environment(home):
+    """Environment for the worker and everything it starts, so caches stay in the ML home (a copied ML
+    home brings them along) and offline mode stops Hugging Face and torch.hub going to the network."""
+    os.environ.setdefault("HF_HOME", os.path.join(home, "hf"))
+    os.environ.setdefault("TORCH_HOME", os.path.join(home, "torch"))
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    _adopt_torch_hub_cache(os.environ["TORCH_HOME"])
+    if offline(home):
+        os.environ["STRATA_ML_OFFLINE"] = "1"
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+        return True
+    return False
+
+
+def _adopt_torch_hub_cache(torch_home):
+    """torch.hub code that MapAnything loads (DINOv2's) used to be cached in ~/.cache/torch: copy it into
+    the ML home once, so it needn't be fetched from GitHub again and travels with a copied ML home."""
+    import shutil
+    hub = os.path.join(torch_home, "hub")
+    old = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache"), "torch", "hub")
+    if os.path.isdir(hub) or not os.path.isdir(old) or os.path.abspath(old) == os.path.abspath(hub):
+        return
+    try:
+        os.makedirs(hub, exist_ok=True)
+        for n in os.listdir(old):
+            src, dst = os.path.join(old, n), os.path.join(hub, n)
+            if n == "checkpoints":  # weights torch.hub downloaded (DINOv2's, a few hundred MB at most)
+                os.makedirs(dst, exist_ok=True)
+                for f in os.listdir(src):
+                    if f.startswith("dinov2") and not os.path.exists(os.path.join(dst, f)):
+                        shutil.copy2(os.path.join(src, f), os.path.join(dst, f))
+            elif n.startswith("facebookresearch_") and os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            elif n == "trusted_list" and os.path.isfile(src):
+                shutil.copy2(src, dst)
+    except OSError:
+        pass
 
 
 def model_dirs(home):

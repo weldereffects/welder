@@ -107,6 +107,10 @@ def download(ctx, params):
     from .util import find_model
     if find_model(ctx.home, model_id):
         return {"message": f"already installed in {find_model(ctx.home, model_id)}"}
+    from .util import offline
+    if offline(ctx.home):
+        raise RuntimeError(f"Welder's ML is in offline mode, so it can't download {m['label']}. Copy the model in "
+                           "by hand (install by hand), or turn offline mode off in the ML panel.")
     total = float(m.get("size_gb", 1.0)) * 1e9
     token = hf_token(ctx.home)
     if m.get("installer") == "corridorkey":  # its code from GitHub, then its own download script

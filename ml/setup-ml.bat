@@ -42,16 +42,15 @@ if errorlevel 1 goto :fail
 :uvpath
 set "PATH=%USERPROFILE%\.local\bin;%PATH%"
 :haveuv
+rem Python itself goes in the ML home too (python\), not in your user profile: then the whole ML home can be
+rem copied to another machine, for example an offline one, and Welder points the environments at it there.
+set "UV_PYTHON_INSTALL_DIR=%MLHOME%\python"
+set "UV_PYTHON_PREFERENCE=only-managed"
 
 echo.
 echo [1/6] Python 3.12 environment
-rem an environment that's there is kept: re-creating it replaces python.exe, which a running worker holds
-if exist "%MLHOME%\venv\Scripts\python.exe" (
-  echo already there: kept
-) else (
-  call uv venv --python 3.12 "%MLHOME%\venv"
-  if errorlevel 1 goto :fail
-)
+call :venv venv 3.12
+if errorlevel 1 goto :fail
 set "PY=%MLHOME%\venv\Scripts\python.exe"
 
 echo.
@@ -68,12 +67,8 @@ copy /y "%HERE%requirements.txt" "%MLHOME%\requirements-installed.txt" >nul
 
 echo.
 echo [4/6] Gaussian splat environment: Python 3.10 + PyTorch 2.4 (CUDA 12.4)
-if exist "%MLHOME%\venv-splat\Scripts\python.exe" (
-  echo already there: kept
-) else (
-  call uv venv --python 3.10 "%MLHOME%\venv-splat"
-  if errorlevel 1 goto :splatfail
-)
+call :venv venv-splat 3.10
+if errorlevel 1 goto :splatfail
 set "SPY=%MLHOME%\venv-splat\Scripts\python.exe"
 rem 2.4.1: 2.4.0's fbgemm.dll needs libomp140.x86_64.dll, which Windows doesn't have
 call uv pip install --python "%SPY%" torch==2.4.1 --index-url https://download.pytorch.org/whl/cu124
@@ -100,12 +95,8 @@ echo  with a much slower PyTorch rasteriser. Everything else is ready.
 :corridorkey
 echo.
 echo [6/6] CorridorKey environment: Python 3.12 + PyTorch 2.9.1 (CUDA 12.8)
-if exist "%MLHOME%\venv-corridorkey\Scripts\python.exe" (
-  echo already there: kept
-) else (
-  call uv venv --python 3.12 "%MLHOME%\venv-corridorkey"
-  if errorlevel 1 goto :ckfail
-)
+call :venv venv-corridorkey 3.12
+if errorlevel 1 goto :ckfail
 set "CPY=%MLHOME%\venv-corridorkey\Scripts\python.exe"
 call uv pip install --python "%CPY%" torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
 if errorlevel 1 goto :ckfail
@@ -126,6 +117,28 @@ echo  For gated models (LTX), accept the licence on Hugging Face and paste a Rea
 echo  into the HF token field of a node's ML panel.
 echo.
 pause
+exit /b 0
+
+:venv
+rem %1 = the environment's folder, %2 = its Python version. One that's there is kept (packages and all).
+rem One from before Python lived in the ML home is moved onto the ML home's Python in place: its packages stay.
+if not exist "%MLHOME%\%~1\Scripts\python.exe" goto :venvnew
+if exist "%MLHOME%\%~1\.welder-portable" (
+  echo already there: kept
+  exit /b 0
+)
+echo already there: moving it onto the ML home's own Python, so the ML home can be copied
+call uv venv --allow-existing --python %~2 "%MLHOME%\%~1"
+if errorlevel 1 (
+  echo couldn't move it: kept as it is
+  exit /b 0
+)
+echo portable> "%MLHOME%\%~1\.welder-portable"
+exit /b 0
+:venvnew
+call uv venv --python %~2 "%MLHOME%\%~1"
+if errorlevel 1 exit /b 1
+echo portable> "%MLHOME%\%~1\.welder-portable"
 exit /b 0
 
 :fail

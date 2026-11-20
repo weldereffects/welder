@@ -21,8 +21,15 @@ if ! command -v uv >/dev/null 2>&1; then
         PATH="$HOME/.local/bin:$PATH"
     fi
 fi
+# Python itself goes in the ML home (python/), so the whole ML home can be copied to another machine
+# (an offline one, say): Welder points the environments at it there.
+export UV_PYTHON_INSTALL_DIR="$MLHOME/python"
+export UV_PYTHON_PREFERENCE=only-managed
+mkvenv() {  # $1 folder, $2 Python version; packages already there are kept
+    uv venv --python "$2" --allow-existing "$MLHOME/$1" && echo portable > "$MLHOME/$1/.welder-portable"
+}
 echo "[1/6] Python 3.12 environment"
-uv venv --python 3.12 --allow-existing "$MLHOME/venv"
+mkvenv venv 3.12
 PY="$MLHOME/venv/bin/python"
 echo "[2/6] PyTorch 2.8 (CUDA 12.8)"
 uv pip install --python "$PY" torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
@@ -30,7 +37,7 @@ echo "[3/6] LTX-2.5 pipelines, MapAnything and the rest"
 uv pip install --python "$PY" --no-sources -r "$HERE/requirements.txt"
 cp "$HERE/requirements.txt" "$MLHOME/requirements-installed.txt"   # Welder offers "Update ML" when a newer one differs
 echo "[4/6] Gaussian splat environment (Python 3.10, PyTorch 2.4, CUDA 12.4)"
-if uv venv --python 3.10 --allow-existing "$MLHOME/venv-splat" &&
+if mkvenv venv-splat 3.10 &&
    uv pip install --python "$MLHOME/venv-splat/bin/python" torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124 &&
    uv pip install --python "$MLHOME/venv-splat/bin/python" "numpy<2" opencv-python-headless pillow ninja jaxtyping rich packaging setuptools &&
    echo "[5/6] gsplat" &&
@@ -40,7 +47,7 @@ else
     echo "The Gaussian splat environment could not be set up: GaussianSplat will use the slower PyTorch rasteriser."
 fi
 echo "[6/6] CorridorKey environment (Python 3.12, PyTorch 2.9.1, CUDA 12.8)"
-if uv venv --python 3.12 --allow-existing "$MLHOME/venv-corridorkey" &&
+if mkvenv venv-corridorkey 3.12 &&
    uv pip install --python "$MLHOME/venv-corridorkey/bin/python" torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128 &&
    uv pip install --python "$MLHOME/venv-corridorkey/bin/python" -r "$HERE/requirements-corridorkey.txt"
 then :

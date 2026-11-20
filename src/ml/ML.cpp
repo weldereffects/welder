@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -236,8 +237,130 @@ std::string packageDir() {
     return "";
 }
 
+// ------------------------------------------------------------ copied ML homes
+// Set up ML puts Python itself in <ml home>/python, so an ML home can be copied to another machine (an
+// offline one, say) or another folder. The environments' pyvenv.cfg (and on Linux their bin/python link)
+// still name where Python was on the first machine: point them at <ml home>/python's copy instead.
+namespace {
+
+// The Python install in <ml home>/python for version "3.12" (the real folder, not uv's minor-version link).
+fs::path homePython(const fs::path& pyRoot, const std::string& mm) {
+    std::error_code ec;
+    std::vector<fs::path> c;
+    for (auto& e : fs::directory_iterator(pyRoot, ec)) {
+        const std::string n = S(e.path().filename());
+        if (n.rfind("cpython-" + mm + ".", 0) != 0 || e.is_symlink(ec) || !e.is_directory(ec)) continue;
+#ifdef _WIN32
+        if (fs::exists(e.path() / "python.exe", ec)) c.push_back(e.path());
+#else
+        if (fs::exists(e.path() / "bin" / ("python" + mm), ec)) c.push_back(e.path());
+#endif
+    }
+    if (c.empty()) return {};
+    std::sort(c.begin(), c.end());
+    return c.back();
+}
+
+bool repairVenv(const fs::path& venv, const fs::path& pyRoot) {
+    std::error_code ec;
+    const fs::path cfgPath = venv / "pyvenv.cfg";
+    std::string cfg;
+    if (!readFile(S(cfgPath), cfg)) return false;
+    std::string oldHome, mm;
+    std::stringstream in(cfg);
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq), v = line.substr(eq + 1);
+        auto trim = [](std::string& t) {
+            while (!t.empty() && (t.back() == ' ' || t.back() == '\t')) t.pop_back();
+            while (!t.empty() && (t.front() == ' ' || t.front() == '\t')) t.erase(t.begin());
+        };
+        trim(k);
+        trim(v);
+        if (k == "home") oldHome = v;
+        if (k == "version_info" || (k == "version" && mm.empty())) {
+            auto d1 = v.find('.');
+            auto d2 = d1 == std::string::npos ? d1 : v.find('.', d1 + 1);
+            mm = v.substr(0, d2);
+        }
+    }
+    if (oldHome.empty() || mm.empty()) return false;
+#ifdef _WIN32
+    const bool ok = fs::exists(P(oldHome) / "python.exe", ec);
+#else
+    const bool ok = fs::exists(P(oldHome) / ("python" + mm), ec) && fs::exists(venv / "bin" / "python", ec);
+#endif
+    if (ok) return false;
+    const fs::path inst = homePython(pyRoot, mm);
+    if (inst.empty()) return false;
+#ifdef _WIN32
+    const std::string newHome = S(inst);
+#else
+    const std::string newHome = S(inst / "bin");
+#endif
+    // every line naming the old Python (home, and executable / command when a tool wrote them)
+    std::string out;
+    std::stringstream in2(cfg);
+    for (std::string line; std::getline(in2, line);) {
+        std::string::size_type at;
+        while (!oldHome.empty() && (at = line.find(oldHome)) != std::string::npos) line.replace(at, oldHome.size(), newHome);
+        out += line + "\n";
+    }
+    if (!writeFileAtomic(S(cfgPath), out)) return false;
+#ifndef _WIN32
+    // bin/python is a link to the old Python (python3, python3.12 link to it)
+    const fs::path link = venv / "bin" / "python";
+    fs::remove(link, ec);
+    fs::create_symlink(inst / "bin" / ("python" + mm), link, ec);
+#endif
+    std::fprintf(stderr, "[ml] %s now uses %s (the ML home was copied)\n", S(venv).c_str(), newHome.c_str());
+    return true;
+}
+
+}  // namespace
+
+int repairEnvironments() {
+    const fs::path h = P(home());
+    static std::mutex m;
+    static std::map<std::string, double> done;  // once a minute per ML home at most
+    {
+        std::lock_guard<std::mutex> l(m);
+        double& t = done[S(h)];
+        if (nowSeconds() - t < 60) return 0;
+        t = nowSeconds();
+    }
+    std::error_code ec;
+    if (!fs::is_directory(h / "python", ec)) return 0;
+    int n = 0;
+    for (const char* v : {"venv", "venv-splat", "venv-corridorkey"})
+        if (fs::exists(h / v / "pyvenv.cfg", ec) && repairVenv(h / v, h / "python")) ++n;
+    return n;
+}
+
+bool offline() {
+    if (const char* e = std::getenv("STRATA_ML_OFFLINE"); e && *e) {
+        std::string v = e;
+        std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        if (v == "1" || v == "true" || v == "yes" || v == "on") return true;
+    }
+    return exists(S(P(home()) / "offline"));
+}
+
+void setOffline(bool on) {
+    std::error_code ec;
+    const fs::path f = P(home()) / "offline";
+    if (on) {
+        fs::create_directories(P(home()), ec);
+        std::ofstream(f) << "Welder's ML worker doesn't use the network while this file is here (offline mode).\n";
+    } else
+        fs::remove(f, ec);
+}
+
 std::string pythonPath() {
     if (const char* e = std::getenv("STRATA_ML_PYTHON"); e && *e) return e;
+    repairEnvironments();
 #ifdef _WIN32
     std::string p = S(P(home()) / "venv" / "Scripts" / "python.exe");
 #else
@@ -248,6 +371,7 @@ std::string pythonPath() {
 
 std::string splatPythonPath() {
     if (const char* e = std::getenv("STRATA_ML_SPLAT_PYTHON"); e && *e) return e;
+    repairEnvironments();
 #ifdef _WIN32
     std::string p = S(P(home()) / "venv-splat" / "Scripts" / "python.exe");
 #else

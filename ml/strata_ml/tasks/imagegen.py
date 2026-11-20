@@ -434,7 +434,8 @@ def _finish_load(ctx, p, pipe, cls_name, ckpt, folder, offload, key):
     used = "none"
     if torch.cuda.is_available():
         sizes = component_bytes(pipe)
-        vram = torch.cuda.get_device_properties(0).total_memory
+        from ..util import gpu_total_bytes
+        vram = gpu_total_bytes()
         used = plan_offload(offload, sizes, vram)
         ctx.log("components (GB): " + ", ".join(f"{k} {v / 2 ** 30:.1f}" for k, v in sizes.items())
                 + f"; GPU {vram / 2 ** 30:.1f} GB; offload {offload} -> {used}")

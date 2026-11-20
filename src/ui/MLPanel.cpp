@@ -91,7 +91,9 @@ void workerSection(App& app, const std::string& needPkg) {
         std::string gpu = w.packages.is_object() ? w.packages.value("gpu", std::string()) : "";
         double vram = w.packages.is_object() ? w.packages.value("vram_gb", 0.0) : 0.0;
         bool cuda = w.packages.is_object() && w.packages.value("cuda", false);
-        if (cuda) ImGui::TextColored(kGood, "running on %s (%.0f GB)", gpu.c_str(), vram);
+        double cap = w.packages.is_object() ? w.packages.value("vram_limit_gb", 0.0) : 0.0;
+        if (cuda && cap > 0) ImGui::TextColored(kGood, "running on %s (%.0f GB, limited to %.0f GB)", gpu.c_str(), vram, cap);
+        else if (cuda) ImGui::TextColored(kGood, "running on %s (%.0f GB)", gpu.c_str(), vram);
         else ImGui::TextColored(kWarn, "running (no CUDA GPU: CPU only, slow)");
         ImGui::SameLine();
         if (ImGui::SmallButton("stop")) ml::stopWorker();
@@ -191,6 +193,20 @@ void workerSection(App& app, const std::string& needPkg) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("A Read token from huggingface.co/settings/tokens, for gated models (LTX).\n"
                           "Accept each model's licence on its Hugging Face page first.");
+    // offline mode: airgapped machines (models installed by hand, the ML home copied from a connected machine)
+    label("offline");
+    bool off = ml::offline();
+    if (ImGui::Checkbox("##mloffline", &off)) {
+        ml::setOffline(off);
+        if (worker().online) ml::stopWorker();  // the worker reads it when it starts: the next job starts a new one
+        app.message(off ? "ML offline mode on: nothing is downloaded (install models by hand)"
+                        : "ML offline mode off: models can be downloaded again");
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("For machines without internet access: the ML worker never goes to the network\n"
+                          "(Hugging Face, GitHub), and Download is turned off. Install models by hand, and\n"
+                          "copy the ML home (%s) from a machine where Set up ML has run.",
+                          ml::home().c_str());
 }
 
 void modelRow(App& app, const std::string& id) {
@@ -229,10 +245,15 @@ void modelRow(App& app, const std::string& id) {
             } else {
                 char b[64];
                 std::snprintf(b, sizeof(b), "Download (%.1f GB)", gb);
+                const bool off = ml::offline();
+                ImGui::BeginDisabled(off);
                 if (ImGui::SmallButton(b)) {
                     ml::submitSimple("download", {{"model", id}}, key);
                     ensureWorker(app);
                 }
+                ImGui::EndDisabled();
+                if (off && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Offline mode is on: install this model by hand.");
                 if (info.value("gated", false) && ImGui::IsItemHovered())
                     ImGui::SetTooltip("Gated: accept the licence at %s and set your HF token first.",
                                       info.value("license_url", std::string()).c_str());
