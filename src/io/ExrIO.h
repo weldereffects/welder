@@ -30,6 +30,15 @@ struct ExrFile {
 // Throws RenderError on failure.
 ExrFile readExr(const std::string& path);
 
+// What readExr would give, from the headers alone (no pixels read): the format, the bounds and
+// the channels. For questions such as a Read's format, which must not decode a whole frame.
+struct ExrHeader {
+    Format format;
+    Box bounds;
+    ChannelSet channels;
+};
+ExrHeader readExrHeader(const std::string& path);
+
 enum class ExrPixelType { Half, Float };
 
 struct ExrWriteOptions {

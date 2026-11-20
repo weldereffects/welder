@@ -1353,6 +1353,12 @@ std::vector<int> App::diskCachedFrames(int first, int last) {
 void App::diskScanLoop() {
     std::string done;
     double doneAt = 0;
+    // What part of each frame the viewer shows, by the frame's hash and the view: working it out
+    // asks the node for its format and bounding box, which for a Read means decoding the whole
+    // file. The scan comes round every 2 s, so without this a sequence was decoded over and over
+    // while Welder sat idle, pushing the viewed frame out of the Read's cache too (#83: constant
+    // CPU and network on big EXRs over the network). The hash is cheap and changes with the file.
+    std::map<std::tuple<uint64_t, double, int, int, int, int>, Box> shown;
     auto now = [] { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
     for (;;) {
         DiskScan w;
@@ -1380,9 +1386,16 @@ void App::diskScanLoop() {
             if (!n) { stale = true; break; }
             try {
                 diskEngine_->setScale(w.scale);
-                const Format fmt = n->format(*diskEngine_, f);
-                const Box show = viewBox(fmt, diskEngine_->dod(n, f), w.scale, w.region);
-                if (!show.empty() && disk_ && disk_->has(DiskCache::key(diskEngine_->hash(n, f), show))) v.push_back(f);
+                const uint64_t h = diskEngine_->hash(n, f);
+                const auto mk = std::make_tuple(h, w.scale, w.region.x1, w.region.y1, w.region.x2, w.region.y2);
+                auto it = shown.find(mk);
+                if (it == shown.end()) {
+                    const Format fmt = n->format(*diskEngine_, f);
+                    if (shown.size() > 50000) shown.clear();
+                    it = shown.emplace(mk, viewBox(fmt, diskEngine_->dod(n, f), w.scale, w.region)).first;
+                }
+                const Box show = it->second;
+                if (!show.empty() && disk_ && disk_->has(DiskCache::key(h, show))) v.push_back(f);
             } catch (...) {
             }
         }

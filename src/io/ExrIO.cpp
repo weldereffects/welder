@@ -210,84 +210,113 @@ void flattenDeep(Imf::MultiPartInputFile& in, int p, const std::vector<std::pair
     });
 }
 
+namespace {
+// What the headers say: the channels (and where each comes from), the data window union and
+// the format. Shared by readExr and readExrHeader so the two always agree.
+struct Src {
+    int part;
+    std::string fileName;
+    std::string name;
+};
+struct Layout {
+    ExrFile out;  // format, parts, compression, deep (no image)
+    std::vector<Src> srcs;
+    std::vector<int> imageParts, deepParts, order;
+    Imath::Box2i uni, disp;
+    ChannelSet cs, finalCs;
+    Box bounds;
+    bool lumaOnly = false;
+};
+
+Layout layoutOf(Imf::MultiPartInputFile& in, const std::string& path) {
+    Layout L;
+    const int nparts = in.parts();
+    if (nparts < 1) throw RenderError("EXR has no parts: " + path);
+    const Imf::Header& h0 = in.header(0);
+    const Imath::Box2i disp = L.disp = h0.displayWindow();
+
+    // Collect channels of every flat image part.
+    auto& srcs = L.srcs;
+    auto& imageParts = L.imageParts;
+    auto& deepParts = L.deepParts;  // deep parts: flattened (front to back) into ordinary channels
+    Imath::Box2i& uni = L.uni;  // union of data windows (EXR coordinates)
+    bool haveBox = false;
+    ExrFile& out = L.out;
+    for (int p = 0; p < nparts; ++p) {
+        const Imf::Header& h = in.header(p);
+        std::string pname = h.hasName() ? h.name() : "";
+        out.parts.push_back(pname);
+        const bool deep = h.hasType() && Imf::isDeepData(h.type());
+        (deep ? deepParts : imageParts).push_back(p);
+        const Imath::Box2i dw = h.dataWindow();
+        if (!haveBox) {
+            uni = dw;
+            haveBox = true;
+        } else {
+            uni.extendBy(dw);
+        }
+        for (auto it = h.channels().begin(); it != h.channels().end(); ++it) {
+            if (it.channel().xSampling != 1 || it.channel().ySampling != 1) continue;  // subsampled (YC) not supported
+            std::string ch = it.name();
+            if (deep && ch == "ZBack") continue;  // (the back of volume samples: flattening uses the front)
+            std::string name = ch;
+            bool mainPart = p == 0 || pname.empty() || pname == "rgba" || pname == "rgb";
+            if (!mainPart && ch.find('.') == std::string::npos) name = pname + "." + ch;
+            if (deep && ch == "Z") name = mainPart ? "depth.Z" : pname + ".depth.Z";  // the nearest sample's depth
+            bool dup = false;
+            for (auto& s : srcs) dup = dup || s.name == name;
+            if (dup) continue;  // a flat part already has it
+            srcs.push_back({p, ch, name});
+        }
+    }
+    if (imageParts.empty() && deepParts.empty()) throw RenderError("EXR has no image parts: " + path);
+    out.compression = compressionName(in.header(imageParts.empty() ? deepParts[0] : imageParts[0]).compression());
+    out.deep = !deepParts.empty();
+
+    // Channel order: R, G, B, A, then everything else as stored.
+    ChannelSet& cs = L.cs;
+    std::vector<int>& order = L.order;
+    for (const char* m : {"R", "G", "B", "A"})
+        for (size_t i = 0; i < srcs.size(); ++i)
+            if (srcs[i].name == m && channelIndex(cs, m) < 0) {
+                cs.push_back(m);
+                order.push_back((int)i);
+            }
+    for (size_t i = 0; i < srcs.size(); ++i)
+        if (channelIndex(cs, srcs[i].name) < 0) {
+            cs.push_back(srcs[i].name);
+            order.push_back((int)i);
+        }
+    const bool lumaOnly = L.lumaOnly = channelIndex(cs, "R") < 0 && channelIndex(cs, "Y") >= 0;
+
+    out.format.width = disp.max.x - disp.min.x + 1;
+    out.format.height = disp.max.y - disp.min.y + 1;
+    out.format.pixelAspect = h0.pixelAspectRatio() > 0 ? h0.pixelAspectRatio() : 1.0;
+
+    // Welder coordinates: x - disp.min.x, y = disp.max.y - y_exr.
+    L.bounds = Box(uni.min.x - disp.min.x, disp.max.y - uni.max.y, uni.max.x - disp.min.x + 1, disp.max.y - uni.min.y + 1);
+    L.finalCs = cs;
+    if (lumaOnly) L.finalCs.insert(L.finalCs.begin(), {"R", "G", "B"});
+    return L;
+}
+}  // namespace
+
 ExrFile readExr(const std::string& path) {
     initThreads();
     try {
         MemoryStream stream(path, slurp(path));
         Imf::MultiPartInputFile in(stream, Imf::globalThreadCount());
+        Layout L = layoutOf(in, path);
         const int nparts = in.parts();
-        if (nparts < 1) throw RenderError("EXR has no parts: " + path);
-
-        const Imf::Header& h0 = in.header(0);
-        const Imath::Box2i disp = h0.displayWindow();
-
-        // Collect channels of every flat image part.
-        struct Src {
-            int part;
-            std::string fileName;
-            std::string name;
-        };
-        std::vector<Src> srcs;
-        std::vector<int> imageParts;
-        std::vector<int> deepParts;  // deep parts: flattened (front to back) into ordinary channels
-        Imath::Box2i uni;  // union of data windows (EXR coordinates)
-        bool haveBox = false;
-        ExrFile out;
-        for (int p = 0; p < nparts; ++p) {
-            const Imf::Header& h = in.header(p);
-            std::string pname = h.hasName() ? h.name() : "";
-            out.parts.push_back(pname);
-            const bool deep = h.hasType() && Imf::isDeepData(h.type());
-            (deep ? deepParts : imageParts).push_back(p);
-            const Imath::Box2i dw = h.dataWindow();
-            if (!haveBox) {
-                uni = dw;
-                haveBox = true;
-            } else {
-                uni.extendBy(dw);
-            }
-            for (auto it = h.channels().begin(); it != h.channels().end(); ++it) {
-                if (it.channel().xSampling != 1 || it.channel().ySampling != 1) continue;  // subsampled (YC) not supported
-                std::string ch = it.name();
-                if (deep && ch == "ZBack") continue;  // (the back of volume samples: flattening uses the front)
-                std::string name = ch;
-                bool mainPart = p == 0 || pname.empty() || pname == "rgba" || pname == "rgb";
-                if (!mainPart && ch.find('.') == std::string::npos) name = pname + "." + ch;
-                if (deep && ch == "Z") name = mainPart ? "depth.Z" : pname + ".depth.Z";  // the nearest sample's depth
-                bool dup = false;
-                for (auto& s : srcs) dup = dup || s.name == name;
-                if (dup) continue;  // a flat part already has it
-                srcs.push_back({p, ch, name});
-            }
-        }
-        if (imageParts.empty() && deepParts.empty()) throw RenderError("EXR has no image parts: " + path);
-        out.compression = compressionName(in.header(imageParts.empty() ? deepParts[0] : imageParts[0]).compression());
-        out.deep = !deepParts.empty();
-
-        // Channel order: R, G, B, A, then everything else as stored.
-        ChannelSet cs;
-        std::vector<int> order;
-        for (const char* m : {"R", "G", "B", "A"})
-            for (size_t i = 0; i < srcs.size(); ++i)
-                if (srcs[i].name == m && channelIndex(cs, m) < 0) {
-                    cs.push_back(m);
-                    order.push_back((int)i);
-                }
-        for (size_t i = 0; i < srcs.size(); ++i)
-            if (channelIndex(cs, srcs[i].name) < 0) {
-                cs.push_back(srcs[i].name);
-                order.push_back((int)i);
-            }
-        bool lumaOnly = channelIndex(cs, "R") < 0 && channelIndex(cs, "Y") >= 0;
-
-        out.format.width = disp.max.x - disp.min.x + 1;
-        out.format.height = disp.max.y - disp.min.y + 1;
-        out.format.pixelAspect = h0.pixelAspectRatio() > 0 ? h0.pixelAspectRatio() : 1.0;
-
-        // Welder coordinates: x - disp.min.x, y = disp.max.y - y_exr.
-        Box bounds(uni.min.x - disp.min.x, disp.max.y - uni.max.y, uni.max.x - disp.min.x + 1, disp.max.y - uni.min.y + 1);
-        ChannelSet finalCs = cs;
-        if (lumaOnly) finalCs.insert(finalCs.begin(), {"R", "G", "B"});
+        ExrFile out = L.out;
+        auto& srcs = L.srcs;
+        auto& imageParts = L.imageParts;
+        auto& deepParts = L.deepParts;
+        auto& order = L.order;
+        const Imath::Box2i uni = L.uni;
+        const bool lumaOnly = L.lumaOnly;
+        const Box bounds = L.bounds;
+        const ChannelSet& finalCs = L.finalCs;
         auto img = std::make_shared<Image>(bounds, finalCs);
         const int n = img->nch();
         const int W = bounds.width();
@@ -329,6 +358,23 @@ ExrFile readExr(const std::string& path) {
             for (auto it = in.header(p).begin(); it != in.header(p).end(); ++it)
                 if (auto* sa = dynamic_cast<const Imf::StringAttribute*>(&it.attribute())) out.metadata[it.name()] = sa->value();
         return out;
+    } catch (const RenderError&) {
+        throw;
+    } catch (const std::exception& e) {
+        throw RenderError("cannot read EXR " + path + ": " + e.what());
+    }
+}
+
+ExrHeader readExrHeader(const std::string& path) {
+    initThreads();
+    try {
+        Imf::MultiPartInputFile in(path.c_str(), 1);  // the headers only: no pixels are read
+        Layout L = layoutOf(in, path);
+        ExrHeader h;
+        h.format = L.out.format;
+        h.bounds = L.bounds;
+        h.channels = L.finalCs;
+        return h;
     } catch (const RenderError&) {
         throw;
     } catch (const std::exception& e) {

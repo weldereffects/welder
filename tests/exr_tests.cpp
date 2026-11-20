@@ -101,6 +101,9 @@ int main() {
         CHECK(f.image->bounds == Box(-8, -4, 30, 20));  // overscan below/left of the format survives
         CHECK_NEAR(f.image->at(-5, -2, 0), 0.25, 1e-4);
         CHECK(f.format.width == W);
+        ExrHeader h = readExrHeader(p);  // the headers alone agree (#83)
+        CHECK(h.bounds == f.image->bounds && h.channels == f.image->channels && h.format.width == f.format.width &&
+              h.format.height == f.format.height);
     });
 
     test("multi-part file: second part becomes a layer", [&] {
@@ -138,6 +141,8 @@ int main() {
         CHECK(f.image->ch("diffuse.R") >= 0 && f.image->ch("diffuse.B") >= 0);
         CHECK_NEAR(f.image->at(3, 3, f.image->ch("diffuse.G")), 0.2, 1e-6);
         CHECK_NEAR(f.image->at(20, H - 1, f.image->ch("R")), 0.20, 0.01);  // EXR row 0 is the top
+        ExrHeader h = readExrHeader(p);
+        CHECK(h.bounds == f.image->bounds && h.channels == f.image->channels);
     });
 
     test("tiled file reads", [&] {

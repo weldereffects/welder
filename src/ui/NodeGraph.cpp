@@ -1685,6 +1685,10 @@ void graphVersion(App& app, int delta) {
     });
 }
 
+// How far the graph zooms out: far enough to see a few hundred nodes at once (an imported .nk
+// script, #83). Below the text threshold nodes draw as coloured boxes.
+constexpr float kGraphMinZoom = 0.02f;
+
 static void frameNodes(App& app, UiState& ui, ImVec2 winSize) {
     ImVec2 lo(1e9f, 1e9f), hi(-1e9f, -1e9f);
     bool any = false;
@@ -1702,7 +1706,7 @@ static void frameNodes(App& app, UiState& ui, ImVec2 winSize) {
         return;
     }
     float w = hi.x - lo.x + 120, h = hi.y - lo.y + 100;
-    ui.graph.zoom = std::clamp(std::min(winSize.x / w, winSize.y / h), 0.25f, 1.5f);
+    ui.graph.zoom = std::clamp(std::min(winSize.x / w, winSize.y / h), kGraphMinZoom, 1.5f);
     ImVec2 c((lo.x + hi.x) / 2, (lo.y + hi.y) / 2);
     ui.graph.pan = ImVec2(c.x - winSize.x / 2 / ui.graph.zoom, c.y - winSize.y / 2 / ui.graph.zoom);
 }
@@ -2414,7 +2418,7 @@ void drawNodeGraph(App& app, UiState& ui) {
     }
     if (hovered && io.MouseWheel != 0 && !popupOpen) {
         ImVec2 before = mouseG;
-        g.zoom = std::clamp(g.zoom * std::pow(1.12f, io.MouseWheel), 0.15f, 3.0f);
+        g.zoom = std::clamp(g.zoom * std::pow(1.12f, io.MouseWheel), kGraphMinZoom, 3.0f);
         ImVec2 after = G(io.MousePos);
         g.pan.x += before.x - after.x;
         g.pan.y += before.y - after.y;
@@ -2591,7 +2595,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         case GraphState::Drag::Zoom: {
             // right / up zooms in, left / down out, about where the drag started
             const ImVec2 before = G(g.zoomAnchor);
-            g.zoom = std::clamp(g.zoom * std::pow(1.006f, io.MouseDelta.x - io.MouseDelta.y), 0.15f, 3.0f);
+            g.zoom = std::clamp(g.zoom * std::pow(1.006f, io.MouseDelta.x - io.MouseDelta.y), kGraphMinZoom, 3.0f);
             const ImVec2 after = G(g.zoomAnchor);
             g.pan.x += before.x - after.x;
             g.pan.y += before.y - after.y;

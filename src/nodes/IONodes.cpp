@@ -11,6 +11,7 @@
 #include "../color/Color.h"
 #include "../core/Expr.h"
 #include "../core/Platform.h"
+#include "../io/ExrIO.h"
 #include "../io/ImageIO.h"
 #include "../io/MovieIO.h"
 #include "../io/RasterIO.h"
@@ -179,6 +180,54 @@ public:
         return f;
     }
 
+    // A frame's format, bounds and channels without decoding it, for an EXR on disk (the common
+    // case): from the decoded file when it is cached, else from the headers alone. Asking a big
+    // multi-layer EXR sequence for its formats (the timeline's disk cache scan, connecting a
+    // noodle, the info panel) decoded every frame and pushed the viewed one out of the cache:
+    // constant CPU and network use while idle (#83). Null: ask load() (movies, proxies, other
+    // formats, missing frames).
+    std::optional<ExrHeader> peek(double frame, double scale) {
+        auto ffo = fileFrame(frame);
+        if (!ffo) return std::nullopt;
+        if (scale < 1.0 && !params.str("proxy", "").empty()) return std::nullopt;
+        const std::string p = path(*ffo);
+        if (movie::isMoviePath(p)) return std::nullopt;
+        std::string e = std::filesystem::path(p).extension().string();
+        for (auto& c : e) c = (char)std::tolower((unsigned char)c);
+        if (e != ".exr") return std::nullopt;
+        const FileStat st = fileStat(p);
+        if (!st.exists) return std::nullopt;
+        const std::string hk = p + "@" + std::to_string(st.mtime);
+        ExrHeader h;
+        bool have = false;
+        {
+            std::lock_guard<std::mutex> l(m_);
+            auto it = headers_.find(hk);
+            if (it != headers_.end()) h = it->second, have = true;
+        }
+        if (!have) {
+            try {
+                h = readExrHeader(p);
+            } catch (...) {
+                return std::nullopt;  // load() reports it
+            }
+            std::lock_guard<std::mutex> l(m_);
+            if (headers_.size() > 20000) headers_.clear();
+            headers_[hk] = h;
+        }
+        if (params.flag("auto_alpha", false) && channelIndex(h.channels, "A") < 0) h.channels.push_back("A");
+        const int f = std::max(1, (int)std::lround(1.0 / scale));
+        if (scale != 1.0) {  // as load() + downsample() give
+            h.format = scaledFormat(h.format, scale);
+            if (f > 1 && !h.bounds.empty()) {
+                auto floorDiv = [](int a, int d) { return a >= 0 ? a / d : -((-a + d - 1) / d); };
+                const Box& b = h.bounds;
+                h.bounds = Box(floorDiv(b.x1, f), floorDiv(b.y1, f), floorDiv(b.x2 - 1, f) + 1, floorDiv(b.y2 - 1, f) + 1);
+            }
+        }
+        return h;
+    }
+
     // Decoded files (and their proxy-scale copies) are kept for a few frames;
     // the tile cache does the rest.
     std::shared_ptr<ExrFile> load(double frame, double scale = 1.0) {
@@ -245,6 +294,7 @@ public:
                 } catch (const std::exception&) {
                 }
             } else {
+                if (std::getenv("STRATA_DEBUG_READS")) std::fprintf(stderr, "read: decoding %s\n", p.c_str());
                 full = std::make_shared<ExrFile>(readImage(p, o));
                 if (!full->metadata.empty()) crypto::registerMetadata(full->metadata);  // Cryptomatte names
             }
@@ -390,14 +440,17 @@ public:
     }
 
     Box dod(Engine& e, double frame) override {
+        if (auto h = peek(frame, e.scale())) return h->bounds;
         auto f = load(frame, e.scale());
         return f ? f->image->bounds : Box();
     }
     ChannelSet channels(Engine& e, double frame) override {
+        if (auto h = peek(frame, e.scale())) return h->channels;
         auto f = load(frame, e.scale());
         return f ? f->image->channels : rgbaChannels();
     }
     Format format(Engine& e, double frame) override {
+        if (auto h = peek(frame, e.scale())) return h->format;
         auto f = load(frame, e.scale());
         return f ? f->format : scaledFormat(comp ? comp->format : Format(), e.scale());
     }
@@ -452,6 +505,7 @@ private:
     std::mutex m_;
     std::list<std::pair<std::string, std::shared_ptr<ExrFile>>> files_;
     std::map<std::string, std::shared_future<std::shared_ptr<ExrFile>>> inflight_;
+    std::map<std::string, ExrHeader> headers_;  // path@mtime -> what its headers say (peek)
 };
 
 // ------------------------------------------------------------------ Write

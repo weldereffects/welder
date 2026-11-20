@@ -780,6 +780,39 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(mb, 30, 20, "G"), 20, 1e-4);
     });
 
+    test("Read: format, bounds and channels come from the EXR headers and match the decoded frame (#83)", [&] {
+        auto dir = tmp / "readpeek";
+        std::filesystem::create_directories(dir);
+        Image src(Box(-8, -4, 30, 20), {"R", "G", "B", "spec.R"});
+        for (auto& v : src.data) v = 0.25f;
+        Format fm;
+        fm.width = 64, fm.height = 48;
+        ExrWriteOptions o;
+        o.dataWindowFromBbox = true;
+        writeExr((dir / "p.0001.exr").string(), src, fm, o);
+        for (double sc : {1.0, 0.5, 0.25}) {
+            auto c = comp(json::array({{{"name", "R"}, {"type", "Read"},
+                                         {"params", {{"file", (dir / "p.####.exr").string()}, {"first", 1}, {"last", 1}, {"auto_alpha", true}}}}}));
+            Node* r = c->find("R");
+            Engine e;
+            e.setScale(sc);
+            const Box dod = r->dod(e, 1);  // from the headers: nothing decoded yet
+            const Format f = r->format(e, 1);
+            const ChannelSet ch = r->channels(e, 1);
+            ImagePtr img = e.renderRegion(r, 1, dod);  // decodes
+            const int k = (int)std::lround(1 / sc);
+            auto fd = [](int a, int d) { return a >= 0 ? a / d : -((-a + d - 1) / d); };
+            CHECK(dod == Box(fd(-8, k), fd(-4, k), fd(29, k) + 1, fd(19, k) + 1));
+            CHECK(dod == downsample(*readExr((dir / "p.0001.exr").string()).image, sc)->bounds);  // as the decoded path gives
+            CHECK(f.width == scaledFormat(fm, sc).width && f.height == scaledFormat(fm, sc).height);
+            CHECK(ch == ChannelSet({"R", "G", "B", "spec.R", "A"}));
+            CHECK(img->ch("A") >= 0 && img->ch("spec.R") >= 0);
+            Engine e2;  // and the same after a decode, from the cache
+            e2.setScale(sc);
+            CHECK(r->dod(e2, 1) == dod && r->channels(e2, 1) == ch);
+        }
+    });
+
     test("Read: the classic frame modes, before/after, missing frames, auto alpha", [&] {
         auto dir = tmp / "readmodes";
         std::filesystem::remove_all(dir);
