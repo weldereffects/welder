@@ -1973,11 +1973,13 @@ std::vector<NodeDef> build() {
                   When(F("reference_frame", "reference frame", 1, -100000, 100000), "reference=frame"),
                   F("max_error", "max point error (px)", 0, 0, 50, "Leave out points the solve placed badly (0 = 3x the solve's error)"),
                   Div("clean-up"),
-                  F("depth_jump", "depth step (x local)", 4, 0, 20, "Cut where the depth changes this many times more than around it: keeps foreground and background apart (lower: more cuts; 0 = off)"),
+                  F("depth_jump", "depth step (x local)", 4, 0, 20, "Cut where a point is off the surface around its neighbour by this many times the solve's typical noise: keeps foreground and background apart, while a floor seen at a low angle stays whole (lower: more cuts; 0 = off)"),
                   F("max_edge", "max edge (x local)", 3, 0, 20, "Cut edges this many times longer than the spacing around them: slivers along the outline (0 = off)"),
-                  F("reach", "reach (x typical edge)", 3, 0, 20, "How far points connect: no edge longer (in 3D) than this many times the typical edge between neighbouring points. Lower: only close neighbours join (more gaps); higher: bridges wider gaps (0 = no limit). Triangles never overlap - they're laid out without crossing as seen from the reference view"),
+                  F("reach", "reach (x typical edge)", 3, 0, 20, "How far points connect: no edge longer (as seen from the reference view) than this many times the typical edge between neighbouring points. Lower: only close neighbours join (more gaps); higher: bridges wider gaps (0 = no limit). Triangles never overlap - they're laid out without crossing as seen from the reference view"),
                   F("max_angle", "max angle", 88, 0, 90, "No triangle seen closer than this to edge-on, degrees (0 = off)"),
-                  Tip(I("smooth", "smooth", 0, 0, 20), "Even out the solve's noise (points move along their view ray, so the projection still lines up)"),
+                  F("outliers", "outliers (x noise)", 4, 0, 20, "Leave out stray points: a depth that none of the points around it share, this many times beyond the solve's local noise (they make spikes; 0 = keep them)"),
+                  Tip(I("smooth", "smooth", 2, 0, 20), "Even out the solve's noise without rounding off corners or steps (points move along their view ray, so the projection still lines up)"),
+                  Tip(I("subdivide", "subdivide", 1, 0, 3), "Split every triangle in four this many times, rounding the surface off between the points (the solved points stay put; each level is 4x the triangles)"),
                   Div("transform")});
         d.push_back({"PointsToMesh", "3D", k,
                      "Rough geometry from a solved CameraTracker's points (tracker input): triangulated as seen from the reference view, "

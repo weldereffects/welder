@@ -786,21 +786,33 @@ int main(int argc, char** argv) {
             sc3Test = frameCount < 75;
             const ImVec2 o = gTest3DOrigin, sz = gTest3DSize;
             auto at = [&](float fx, float fy) { tio.AddMousePosEvent(o.x + sz.x * fx, o.y + sz.y * fy); };
+            // STRATA_TEST_SCENE3D_PTS / _CARD = "x0,y0,x1,y1": the points box and the card drag (fractions
+            // of the view); _CARD "click" clicks instead of dragging; _VIEW: the view (default: the scene's camera)
+            auto box = [](const char* env, std::array<float, 4> def) {
+                if (const char* e = std::getenv(env)) std::sscanf(e, "%f,%f,%f,%f", &def[0], &def[1], &def[2], &def[3]);
+                return def;
+            };
+            const auto pb = box("STRATA_TEST_SCENE3D_PTS", {0.03f, 0.08f, 0.97f, 0.98f});
+            auto cb = box("STRATA_TEST_SCENE3D_CARD", {0.38f, 0.38f, 0.62f, 0.62f});
+            if (const char* e = std::getenv("STRATA_TEST_SCENE3D_CARD"); e && std::string(e) == "click") cb = {0.5f, 0.5f, 0.5f, 0.5f};
             if (frameCount == 8) {
                 app.selection = {ts};
                 app.openPanel(ts);
                 ui.v3d.on = true;
                 ui.v3d.force2D = false;
-                ui.v3d.view = ts;
+                const char* tv = std::getenv("STRATA_TEST_SCENE3D_VIEW");
+                ui.v3d.view = tv && *tv ? tv : ts;
                 ui.v3d.tool = View3DState::Tool::Points;
-            } else if (frameCount == 16) at(0.03f, 0.08f);
+            } else if (frameCount == 16) at(pb[0], pb[1]);
             else if (frameCount == 18) tio.AddMouseButtonEvent(0, true);
-            else if (frameCount > 18 && frameCount <= 26) at(0.03f + 0.94f * (frameCount - 18) / 8, 0.08f + 0.9f * (frameCount - 18) / 8);
+            else if (frameCount > 18 && frameCount <= 26) at(pb[0] + (pb[2] - pb[0]) * (frameCount - 18) / 8, pb[1] + (pb[3] - pb[1]) * (frameCount - 18) / 8);
             else if (frameCount == 28) tio.AddMouseButtonEvent(0, false);
+            else if (frameCount == 31 && std::getenv("STRATA_TEST_SCENE3D_KEYS")) tio.AddKeyEvent(ImGuiKey_C, true);
+            else if (frameCount == 32 && std::getenv("STRATA_TEST_SCENE3D_KEYS")) tio.AddKeyEvent(ImGuiKey_C, false);
             else if (frameCount == 32) ui.v3d.tool = View3DState::Tool::Card;
-            else if (frameCount == 34) at(0.38f, 0.38f);
+            else if (frameCount == 34) at(cb[0], cb[1]);
             else if (frameCount == 36) tio.AddMouseButtonEvent(0, true);
-            else if (frameCount > 36 && frameCount <= 44) at(0.38f + 0.24f * (frameCount - 36) / 8, 0.38f + 0.24f * (frameCount - 36) / 8);
+            else if (frameCount > 36 && frameCount <= 44) at(cb[0] + (cb[2] - cb[0]) * (frameCount - 36) / 8, cb[1] + (cb[3] - cb[1]) * (frameCount - 36) / 8);
             else if (frameCount == 46) tio.AddMouseButtonEvent(0, false);
             else if (frameCount == 56) {
                 if (Node* n = app.node(ts)) {
@@ -809,7 +821,7 @@ int main(int argc, char** argv) {
                     for (auto& c : scene3d::cardNames(n->params))
                         std::printf(" %s t=%s r=%s size=%s", c.c_str(), n->params.data[c + "/translate"].dump().c_str(),
                                     n->params.data[c + "/rotate"].dump().c_str(), n->params.data[c + "/size"].dump().c_str());
-                    std::printf("\n");
+                    std::printf("\nSCENE3D status: %s\n", app.status.c_str());
                 }
                 if (std::getenv("STRATA_TEST_SCENE3D_QUAD")) ui.v3d.quad = true;
             }

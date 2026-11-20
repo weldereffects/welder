@@ -99,6 +99,10 @@ Plane fitPlane(const std::vector<V3>& pts, const V3* towards = nullptr);
 // Card axes on a plane: x along `right` (the camera's right) projected onto the plane (major
 // axis when that degenerates), y = n x x, z = n. Columns of the result.
 M3 planeAxes(const Plane& pl, const V3& right);
+// A card fitted to points (3 or more, not on a line): on their best-fit plane (normal towards
+// `eye`), x along `right` projected onto it, covering them with `margin` (a fraction of the size)
+// added round. False when they make no plane.
+bool cardOnPoints(const std::vector<V3>& pts, const V3& eye, const V3& right, Card& out, double margin = 0.1);
 // Where a ray meets a plane (false: parallel or behind the origin).
 bool rayPlane(const V3& o, const V3& d, const V3& p0, const V3& n, V3& hit);
 

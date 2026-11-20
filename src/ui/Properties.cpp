@@ -2466,10 +2466,33 @@ void infoKnob(Ctx& c, const KnobDef& k) {
                 ImGui::TextDisabled("fitted plane: normal %.3f %.3f %.3f, off-plane RMS %.4g", pl.n.x, pl.n.y, pl.n.z, pl.rms);
             else
                 ImGui::TextColored(ImVec4(1, .8f, .4f, 1), "the selected points are on a line: no plane");
+            // a card on them right away (as a click with the viewer's Card tool), x along the camera's right
+            scene3d::Card cd;
+            const cam3d::V3 eye = s.camera ? s.camera->C : pl.c + pl.n;
+            const cam3d::V3 right = s.camera ? s.camera->R.col(0) : pl.major;
+            ImGui::BeginDisabled(!pl.ok);
+            if (ImGui::Button("Card on selected points") && scene3d::cardOnPoints(sel, eye, right, cd)) {
+                const std::string nm = n->name, card = scene3d::nextCardName(n->params);
+                const cam3d::V3 eul = cam3d::matrixToEuler(cd.R, "ZXY"), ctr = cd.O;
+                const double cw = cd.w, ch = cd.h;
+                App& ap = c.app;
+                ap.checkpoint();
+                ap.edit([nm, card, ctr, eul, cw, ch](Comp& cc) {
+                    if (Node* x = cc.find(nm)) {
+                        scene3d::writeCard(x->params.data, card, ctr, eul, cw, ch);
+                        x->ui["card"] = card;
+                        x->paramsChanged();
+                    }
+                });
+                ap.message(nm + ": added " + card + " on the " + std::to_string(sel.size()) + " selected points");
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("A card on the plane of the selected points, covering them (the same as a click with the 3D viewer's Card tool)");
+            ImGui::EndDisabled();
         }
         const std::string cur = n->ui.value("card", std::string());
         ImGui::SeparatorText("Cards");
-        if (s.cards.empty()) ImGui::TextDisabled("none yet: in the 3D viewer select points (P), then drag a card (C)");
+        if (s.cards.empty()) ImGui::TextDisabled("none yet: in the 3D viewer select points (P), then press C and click (a card fitted to them) or drag one out");
         static std::string renaming, renameBuf;
         for (auto& cd : s.cards) {
             ImGui::PushID(cd.name.c_str());

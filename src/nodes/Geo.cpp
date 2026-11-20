@@ -496,15 +496,18 @@ public:
         o.maxEdge = params.num("max_edge", 0, 3);
         o.depthJump = params.num("depth_jump", 0, 4);
         o.maxAngle = params.num("max_angle", 0, 88);
-        o.smooth = (int)params.num("smooth", 0, 0);
-        o.reach = params.num("reach", 0, 0);
+        o.smooth = (int)params.num("smooth", 0, 2);
+        o.subdivide = (int)params.num("subdivide", 0, 1);
+        o.outliers = params.num("outliers", 0, 4);
+        o.reach = params.num("reach", 0, 3);
         pointmesh::Stats st;
         Mesh m = pointmesh::build(pts, *cam, sol->width, sol->height, o, &st);
         if (err) {
             *err = "";
             std::lock_guard<std::mutex> l(infoM_);
-            info_ = std::to_string(st.points) + " points -> " + std::to_string(st.kept) + " triangles (of " + std::to_string(st.triangulated) +
-                    "), seen from frame " + std::to_string(rf);
+            info_ = std::to_string(st.points) + " points -> " + std::to_string(st.kept) + " triangles (" + std::to_string(st.triangulated) +
+                    " before clean-up" + (o.subdivide > 0 ? " and subdivision" : "") + "), seen from frame " + std::to_string(rf) +
+                    (st.outliers ? ", " + std::to_string(st.outliers) + " stray points left out" : "");
             if (st.points < 3) *err = "too few solved points in view (" + std::to_string(st.points) + ")";
         }
         return m;

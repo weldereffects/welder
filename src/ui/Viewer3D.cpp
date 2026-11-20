@@ -1367,7 +1367,8 @@ void drawViewer3DToolbar(App& app, UiState& ui) {
         if (ImGui::Button(tools[i])) s.tool = (View3DState::Tool)i;
         if (on) ImGui::PopStyleColor();
         if (i == 4 && ImGui::IsItemHovered()) ImGui::SetTooltip("select the Scene3D's points (Shift adds, Ctrl removes): their plane shows");
-        if (i == 5 && ImGui::IsItemHovered()) ImGui::SetTooltip("drag a card on the plane of the selected points");
+        if (i == 5 && ImGui::IsItemHovered())
+            ImGui::SetTooltip("click: a card fitted to the selected points; drag: a card of that size on their plane");
         ImGui::SameLine();
     }
     if (scene3d && s.tool == View3DState::Tool::Points) {
@@ -1517,58 +1518,75 @@ void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool intera
         s.lassoPts = {mouse};
     }
     // the Card tool: the drag's corners cast onto the plane of the selected points (else the
-    // edited card's plane, else the ground); the card is that patch of the plane
+    // edited card's plane, else the ground); the card is that patch of the plane. A click (no drag)
+    // fits a card to the selected points.
     std::string cardPreview;
     if (s.cardDrag && interactive) {
         ImVec2 a(std::min(s.cardStart.x, mouse.x), std::min(s.cardStart.y, mouse.y));
         ImVec2 b(std::max(s.cardStart.x, mouse.x), std::max(s.cardStart.y, mouse.y));
-        dl->AddRect(a, b, IM_COL32(255, 200, 60, 200), 0, 0, 1.5f);
-        scene3d::Plane pl = st ? selectionPlane(st, stSnap, v.C) : scene3d::Plane();
-        const char* onWhat = "the selected points' plane";
-        if (!pl.ok && st && !editedCard(st).empty()) {
-            if (const scene3d::Card* cd = stSnap.card(editedCard(st))) {
-                pl.ok = true, pl.c = cd->O, pl.n = cd->normal(), pl.major = cd->ex(), pl.minor = cd->ey();
-                onWhat = "the card's plane";
+        const bool dragged = b.x - a.x > 4 || b.y - a.y > 4;
+        std::vector<V3> sel;
+        if (st)
+            for (int i : selectedPoints(st, stSnap.points.size())) sel.push_back(stSnap.points[i]);
+        scene3d::Card cd;
+        bool ok = false;
+        const char* onWhat = "the selected points";
+        if (!dragged) {
+            ok = st && sel.size() >= 3 && scene3d::cardOnPoints(sel, v.C, v.R.col(0), cd);
+            cardPreview = ok ? "click: a card on the selected points" : "select 3+ points (P) and click, or drag a card";
+        } else if (st) {
+            dl->AddRect(a, b, IM_COL32(255, 200, 60, 200), 0, 0, 1.5f);
+            scene3d::Plane pl = selectionPlane(st, stSnap, v.C);
+            onWhat = "the selected points' plane";
+            if (!pl.ok && !editedCard(st).empty()) {
+                if (const scene3d::Card* ec = stSnap.card(editedCard(st))) {
+                    pl.ok = true, pl.c = ec->O, pl.n = ec->normal(), pl.major = ec->ex(), pl.minor = ec->ey();
+                    onWhat = "the card's plane";
+                }
             }
-        }
-        if (!pl.ok) {
-            pl.ok = true, pl.c = V3(), pl.n = V3(0, 1, 0), pl.major = V3(1, 0, 0), pl.minor = V3(0, 0, -1);
-            onWhat = "the ground (select 3+ points for a surface)";
-        }
-        if (cam3d::dot(pl.n, v.C - pl.c) < 0) pl.n = -pl.n;
-        const M3 R = scene3d::planeAxes(pl, v.R.col(0));
-        const ImVec2 sc[4] = {ImVec2(a.x, b.y), ImVec2(b.x, b.y), ImVec2(b.x, a.y), ImVec2(a.x, a.y)};
-        double u0 = 1e300, u1 = -1e300, w0 = 1e300, w1 = -1e300;
-        bool ok = st != nullptr;
-        for (auto& q : sc) {
-            V3 o, r, hit;
-            v.ray(q, p0, o, r);
-            if (!scene3d::rayPlane(o, r, pl.c, pl.n, hit)) {
-                ok = false;
-                break;
+            if (!pl.ok) {
+                pl.ok = true, pl.c = V3(), pl.n = V3(0, 1, 0), pl.major = V3(1, 0, 0), pl.minor = V3(0, 0, -1);
+                onWhat = "the ground (select 3+ points for a surface)";
             }
-            const double u = cam3d::dot(hit - pl.c, R.col(0)), w = cam3d::dot(hit - pl.c, R.col(1));
-            u0 = std::min(u0, u), u1 = std::max(u1, u), w0 = std::min(w0, w), w1 = std::max(w1, w);
+            if (cam3d::dot(pl.n, v.C - pl.c) < 0) pl.n = -pl.n;
+            const M3 R = scene3d::planeAxes(pl, v.R.col(0));
+            // how far a corner may land: corners past the horizon (their ray never meets the plane)
+            // or nearly along it go this far out in their direction instead of failing the drag
+            double extent = cam3d::norm(v.C - pl.c);
+            for (auto& p : sel) extent = std::max(extent, cam3d::norm(p - pl.c));
+            const double far = 10 * std::max(1e-6, extent);
+            const ImVec2 sc[4] = {ImVec2(a.x, b.y), ImVec2(b.x, b.y), ImVec2(b.x, a.y), ImVec2(a.x, a.y)};
+            double u0 = 1e300, u1 = -1e300, w0 = 1e300, w1 = -1e300;
+            for (auto& q : sc) {
+                V3 o, r, hit;
+                v.ray(q, p0, o, r);
+                if (!scene3d::rayPlane(o, r, pl.c, pl.n, hit) || cam3d::norm(hit - pl.c) > far) {
+                    V3 along = r - pl.n * cam3d::dot(r, pl.n);
+                    if (cam3d::norm(along) < 1e-9) along = R.col(1);
+                    const V3 foot = o - pl.n * cam3d::dot(o - pl.c, pl.n);  // the eye dropped onto the plane
+                    hit = foot + cam3d::normalize(along) * far;
+                }
+                const double u = cam3d::dot(hit - pl.c, R.col(0)), w = cam3d::dot(hit - pl.c, R.col(1));
+                u0 = std::min(u0, u), u1 = std::max(u1, u), w0 = std::min(w0, w), w1 = std::max(w1, w);
+            }
+            cd.O = pl.c + R.col(0) * ((u0 + u1) / 2) + R.col(1) * ((w0 + w1) / 2);
+            cd.R = R, cd.w = u1 - u0, cd.h = w1 - w0;
+            ok = cd.w > 1e-9 && cd.h > 1e-9;
+            cardPreview = ok ? std::string("card on ") + onWhat : "drag over the surface";
         }
-        const V3 ctr = pl.c + R.col(0) * ((u0 + u1) / 2) + R.col(1) * ((w0 + w1) / 2);
-        const double cw = u1 - u0, ch = w1 - w0;
         if (ok) {  // the card it will make
-            scene3d::Card cd;
-            cd.O = ctr, cd.R = R, cd.w = cw, cd.h = ch;
             auto cs = cd.corners();
             ImVec2 q[4];
             bool vis = true;
             for (int k = 0; k < 4; ++k) vis = vis && v.screen(cs[k], p0, q[k]);
             if (vis) dl->AddPolyline(q, 4, IM_COL32(255, 200, 60, 255), ImDrawFlags_Closed, 2.0f);
-            cardPreview = std::string("card on ") + onWhat;
-        } else {
-            cardPreview = "the drag misses the plane";
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             s.cardDrag = false;
-            if (ok && b.x - a.x > 4 && b.y - a.y > 4 && cw > 1e-9 && ch > 1e-9) {
+            if (ok) {
                 const std::string nm = st->name, card = scene3d::nextCardName(st->params);
-                const V3 eul = cam3d::matrixToEuler(R, "ZXY");
+                const V3 eul = cam3d::matrixToEuler(cd.R, "ZXY"), ctr = cd.O;
+                const double cw = cd.w, ch = cd.h;
                 app.checkpoint();
                 app.edit([nm, card, ctr, eul, cw, ch](Comp& c) {
                     if (Node* x = c.find(nm)) {
@@ -1579,7 +1597,9 @@ void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool intera
                 });
                 s.tool = View3DState::Tool::Move;
                 app.message(nm + ": added " + card + " on " + onWhat + " (W / E / R to adjust, L for local axes)");
-            } else if (!ok) {
+            } else if (!dragged) {
+                app.message("card: select 3 or more points first (P), then click for a card on them, or drag one out");
+            } else {
                 app.message("card: the drag doesn't meet the plane; drag over the surface");
             }
         }
@@ -1995,7 +2015,9 @@ void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool intera
         dl->AddText(ImVec2(p0.x + 10, p0.y + 8), IM_COL32(230, 230, 230, 220), hud);
         if (!quad)
             dl->AddText(ImVec2(p0.x + 10, p0.y + 26), IM_COL32(170, 170, 170, 170),
-                        st ? "Alt+LMB tumble  F frame  QWER tools  P points  C card  L local/world  S key  Tab 2D"
+                        st ? (s.tool == View3DState::Tool::Points && selectedPoints(st, stSnap.points.size()).size() >= 3
+                                  ? "then C and click for a card on these points (or drag one)   Alt+LMB tumble  F frame  QWER tools"
+                                  : "Alt+LMB tumble  F frame  QWER tools  P points  C card (click: fit to the points, drag: draw)  L local/world  Tab 2D")
                            : "Alt+LMB tumble  Alt+MMB track  Alt+RMB dolly  F frame  QWER tools  S key  4 5 6 display  Tab 2D");
     }
     dl->PopClipRect();

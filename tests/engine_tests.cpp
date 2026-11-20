@@ -3807,6 +3807,19 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 10; ++i) line.push_back(o + a * (double)i);
         CHECK(!scene3d::fitPlane(line).ok);
         CHECK(!scene3d::fitPlane({o, o + a}).ok);
+        // a card fitted to points (a click with the Card tool): on their plane, covering every one of them
+        scene3d::Card cd;
+        CHECK(scene3d::cardOnPoints(pts, eye, V3(1, 0, 0), cd));
+        int outside = 0;
+        for (auto& p : pts) {
+            const V3 d = p - cd.O;
+            outside += std::fabs(cam3d::dot(d, cd.ex())) > cd.w / 2 || std::fabs(cam3d::dot(d, cd.ey())) > cd.h / 2;
+        }
+        std::printf("    card on the points: %.2f x %.2f, %d of %zu points outside it\n", cd.w, cd.h, outside, pts.size());
+        CHECK(outside == 0);
+        CHECK(std::fabs(cam3d::dot(cd.normal(), pl.n)) > 0.9999 && cam3d::dot(cd.normal(), eye - cd.O) > 0);
+        CHECK(cd.w < 4 * 1.3 && cd.h < 4 * 1.3);  // snug: the patch with a margin, not the whole plane
+        CHECK(!scene3d::cardOnPoints(line, eye, V3(1, 0, 0), cd));
     });
 
     test("Scene3D: Insert / Match Move / Stabilize homographies round-trip on an animated camera", [] {
@@ -4320,6 +4333,89 @@ Connections:  {
             std::printf("    delaunay: 400 points -> %zu triangles, %d circumcircle violations\n", T.size() / 3, bad);
             CHECK(T.size() / 3 > 700 && T.size() / 3 < 800);  // 2n - 2 - hull
             CHECK(bad == 0);
+        }
+        // Delaunay on a grid (duplicates and cocircular points everywhere): 2n - 2 - hull triangles covering it
+        {
+            std::vector<double> xy;
+            for (int j = 0; j < 20; ++j)
+                for (int i = 0; i < 20; ++i) xy.push_back(10.0 * i), xy.push_back(10.0 * j);
+            for (int i = 0; i < 40; ++i) xy.push_back(10.0 * (i % 20)), xy.push_back(10.0 * (i / 20));  // repeats
+            auto T = pointmesh::delaunay(xy);
+            double area = 0;
+            for (size_t t = 0; t < T.size(); t += 3) {
+                const double ax = xy[2 * T[t]], ay = xy[2 * T[t] + 1], bx = xy[2 * T[t + 1]], by = xy[2 * T[t + 1] + 1];
+                const double cx = xy[2 * T[t + 2]], cy = xy[2 * T[t + 2] + 1];
+                area += std::fabs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) / 2;
+            }
+            std::printf("    delaunay on a grid with repeats: %zu triangles, area %.1f\n", T.size() / 3, area);
+            CHECK(T.size() / 3 == 722);
+            CHECK(std::fabs(area - 190.0 * 190.0) < 1e-6);
+        }
+        // speed: a big solve's cloud (it was quadratic: seconds at 20k points)
+        {
+            std::mt19937 rng(11);
+            std::uniform_real_distribution<double> U(-1, 1);
+            cam3d::Camera cam;
+            cam.focal = 35;
+            std::vector<V3> pts;
+            for (int i = 0; i < 40000; ++i) pts.push_back(V3(U(rng) * 14, U(rng) * 8, -20 + 0.05 * U(rng)));
+            pointmesh::Options o;
+            o.smooth = 2, o.subdivide = 1;
+            pointmesh::Stats st;
+            const auto t0 = std::chrono::steady_clock::now();
+            geo::Mesh m = pointmesh::build(pts, cam, 1920, 1080, o, &st);
+            const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("    40000 points (%d in view) -> %d triangles in %.0f ms\n", st.points, st.kept, ms);
+            CHECK(st.kept > 4 * 0.9 * st.triangulated && st.points > 20000);
+            CHECK(ms < 4000);
+        }
+        // stray points: one far in front of a wall is left out (no spike), the wall stays whole
+        {
+            cam3d::Camera cam;
+            cam.focal = 35;
+            std::mt19937 rng(5);
+            std::uniform_real_distribution<double> U(-1, 1);
+            std::vector<V3> pts;
+            for (int i = 0; i < 600; ++i) pts.push_back(V3(U(rng) * 14, U(rng) * 8, -20));
+            pts.push_back(V3(0.3, 0.2, -11));  // a stray, alone in front
+            pointmesh::Options o;
+            pointmesh::Stats st;
+            geo::Mesh m = pointmesh::build(pts, cam, 1920, 1080, o, &st);
+            double nearest = -1e9;
+            for (size_t i = 2; i < m.P.size(); i += 3) nearest = std::max(nearest, (double)m.P[i]);
+            std::printf("    a stray point: %d left out, nearest vertex z %.2f, %d of %d triangles kept\n", st.outliers, nearest, st.kept,
+                        st.triangulated);
+            CHECK(st.outliers == 1);
+            CHECK(nearest < -19.9);
+            CHECK(st.kept > st.triangulated * 0.9);
+        }
+        // a floor seen at a low angle (depth changing fast along it) stays whole, smoothed and subdivided
+        {
+            cam3d::Camera cam;
+            cam.focal = 30;
+            cam.C = V3(0, 1.6, 6);
+            cam.R = cam3d::eulerToMatrix(V3(-12, 0, 0), "ZXY");
+            std::mt19937 rng(9);
+            std::uniform_real_distribution<double> U(0, 1);
+            std::normal_distribution<double> N(0, 0.01);
+            std::vector<V3> pts;
+            while (pts.size() < 2000) {  // even on screen, as a tracker's features are
+                const V3 d = cam.ray(U(rng) * 1920, U(rng) * 1080, 1920, 1080);
+                if (d.y >= -1e-3) continue;
+                const V3 p = cam.C + d * (-cam.C.y / d.y);
+                if (p.z < -40) continue;
+                pts.push_back(V3(p.x, N(rng), p.z));
+            }
+            pointmesh::Options o;
+            o.smooth = 2, o.subdivide = 1, o.reach = 3;
+            pointmesh::Stats st;
+            geo::Mesh m = pointmesh::build(pts, cam, 1920, 1080, o, &st);
+            double off = 0;
+            for (size_t i = 1; i < m.P.size(); i += 3) off += std::fabs(m.P[i]);
+            off /= std::max<size_t>(1, m.P.size() / 3);
+            std::printf("    floor at a low angle: %d of %d triangles kept (x4 subdivided), mean height %.4f\n", st.kept / 4, st.triangulated, off);
+            CHECK(st.kept / 4 > st.triangulated * 0.85);
+            CHECK(off < 0.01);
         }
         // the scene: a camera at the origin looking down -Z; a wall at z = -20, a box face at z = -8 in front
         cam3d::Camera cam;
@@ -4856,60 +4952,66 @@ Connections:  {
         if (!cam) return;
         std::vector<cam3d::V3> pts;
         for (auto& p : s.points) pts.push_back(p.X);
-        pointmesh::Stats st;
-        geo::Mesh m = pointmesh::build(pts, *cam, W, H, pointmesh::Options(), &st);
-        // Each vertex belongs to the nearest real surface (the solve's overall scale is the solver's business:
-        // what the mesh controls is that each surface comes out flat and that triangles don't span two).
-        const double pa = 25 * M_PI / 180;
-        const cam3d::V3 pc(0.5, 1.5, -6.5), pn(std::sin(pa), 0, std::cos(pa)), pu(std::cos(pa), 0, -std::sin(pa));
-        auto surface = [&](cam3d::V3 p) {
-            double d[5] = {std::fabs(p.y), std::fabs(p.z + 14), std::fabs(p.x + 9), std::fabs(p.x - 9), 1e9};
-            cam3d::V3 q = p - pc;
-            if (std::fabs(cam3d::dot(q, pu)) < 1.8 && std::fabs(q.y) < 1.8) d[4] = std::fabs(cam3d::dot(q, pn));
-            return (int)(std::min_element(d, d + 5) - d);
-        };
-        std::vector<std::vector<cam3d::V3>> on(5);
-        int spanning = 0;
-        for (size_t t = 0; t < m.triangles(); ++t) {
-            int sf[3];
-            for (int k = 0; k < 3; ++k) {
-                cam3d::V3 v(m.P[9 * t + 3 * k], m.P[9 * t + 3 * k + 1], m.P[9 * t + 3 * k + 2]);
-                sf[k] = surface(al.toTruth(v));
-                on[sf[k]].push_back(v);
+        // as the node makes it by default too: stray points out, smoothed, subdivided once
+        for (int defaults = 0; defaults < 2; ++defaults) {
+            pointmesh::Options po;
+            if (defaults) po.smooth = 2, po.subdivide = 1, po.reach = 3;
+            pointmesh::Stats st;
+            geo::Mesh m = pointmesh::build(pts, *cam, W, H, po, &st);
+            // Each vertex belongs to the nearest real surface (the solve's overall scale is the solver's business:
+            // what the mesh controls is that each surface comes out flat and that triangles don't span two).
+            const double pa = 25 * M_PI / 180;
+            const cam3d::V3 pc(0.5, 1.5, -6.5), pn(std::sin(pa), 0, std::cos(pa)), pu(std::cos(pa), 0, -std::sin(pa));
+            auto surface = [&](cam3d::V3 p) {
+                double d[5] = {std::fabs(p.y), std::fabs(p.z + 14), std::fabs(p.x + 9), std::fabs(p.x - 9), 1e9};
+                cam3d::V3 q = p - pc;
+                if (std::fabs(cam3d::dot(q, pu)) < 1.8 && std::fabs(q.y) < 1.8) d[4] = std::fabs(cam3d::dot(q, pn));
+                return (int)(std::min_element(d, d + 5) - d);
+            };
+            std::vector<std::vector<cam3d::V3>> on(5);
+            int spanning = 0;
+            for (size_t t = 0; t < m.triangles(); ++t) {
+                int sf[3];
+                for (int k = 0; k < 3; ++k) {
+                    cam3d::V3 v(m.P[9 * t + 3 * k], m.P[9 * t + 3 * k + 1], m.P[9 * t + 3 * k + 2]);
+                    sf[k] = surface(al.toTruth(v));
+                    on[sf[k]].push_back(v);
+                }
+                // a triangle across the panel and the wall behind it (corners where two walls meet are real geometry)
+                if ((sf[0] == 4) != (sf[1] == 4) || (sf[1] == 4) != (sf[2] == 4)) ++spanning;
             }
-            // a triangle across the panel and the wall behind it (corners where two walls meet are real geometry)
-            if ((sf[0] == 4) != (sf[1] == 4) || (sf[1] == 4) != (sf[2] == 4)) ++spanning;
-        }
-        // flatness: each surface's vertices against the plane through them (median: a point by a corner
-        // that went to the other wall doesn't count), relative to the room
-        double worst = 0;
-        std::string per;
-        const char* names[5] = {"floor", "back", "left", "right", "panel"};
-        for (int k = 0; k < 5; ++k) {
-            auto& vs = on[k];
-            if (vs.size() < 12) continue;
-            cam3d::V3 c;
-            for (auto& v : vs) c = c + v * (1.0 / vs.size());
-            double A[9] = {0};
-            for (auto& v : vs) {
-                cam3d::V3 d = v - c;
-                for (int r = 0; r < 3; ++r)
-                    for (int q = 0; q < 3; ++q) A[r * 3 + q] += d[r] * d[q];
+            // flatness: each surface's vertices against the plane through them (median: a point by a corner
+            // that went to the other wall doesn't count), relative to the room
+            double worst = 0;
+            std::string per;
+            const char* names[5] = {"floor", "back", "left", "right", "panel"};
+            for (int k = 0; k < 5; ++k) {
+                auto& vs = on[k];
+                if (vs.size() < 12) continue;
+                cam3d::V3 c;
+                for (auto& v : vs) c = c + v * (1.0 / vs.size());
+                double A[9] = {0};
+                for (auto& v : vs) {
+                    cam3d::V3 d = v - c;
+                    for (int r = 0; r < 3; ++r)
+                        for (int q = 0; q < 3; ++q) A[r * 3 + q] += d[r] * d[q];
+                }
+                double w[3], V[9];
+                camsolve::eigenSym(3, A, w, V);
+                cam3d::V3 n(V[0], V[3], V[6]);  // the smallest eigenvalue's vector (column 0)
+                std::vector<double> d;
+                for (auto& v : vs) d.push_back(std::fabs(cam3d::dot(v - c, n)) * al.scale);
+                std::nth_element(d.begin(), d.begin() + d.size() / 2, d.end());
+                worst = std::max(worst, d[d.size() / 2]);
+                per += std::string(" ") + names[k] + " " + std::to_string(d[d.size() / 2]).substr(0, 6);
             }
-            double w[3], V[9];
-            camsolve::eigenSym(3, A, w, V);
-            cam3d::V3 n(V[0], V[3], V[6]);  // the smallest eigenvalue's vector (column 0)
-            std::vector<double> d;
-            for (auto& v : vs) d.push_back(std::fabs(cam3d::dot(v - c, n)) * al.scale);
-            std::nth_element(d.begin(), d.begin() + d.size() / 2, d.end());
-            worst = std::max(worst, d[d.size() / 2]);
-            per += std::string(" ") + names[k] + " " + std::to_string(d[d.size() / 2]).substr(0, 6);
+            std::printf("    %s: %d triangles, %d across the panel's edge, flat to (median, per surface):%s\n",
+                        defaults ? "smoothed + subdivided" : "plain", st.kept, spanning, per.c_str());
+            CHECK(st.kept > 100);
+            CHECK(worst < 0.2);  // (the vertices are the solved points: this is mostly the solve's noise, and corner points sorted
+                                 // to the wrong surface by the alignment)
+            CHECK(spanning <= st.kept / 50);
         }
-        std::printf("    flat to (median, per surface):%s\n", per.c_str());
-        CHECK(st.kept > 100);
-        CHECK(worst < 0.2);  // (the vertices are the solved points: this is mostly the solve's noise, and corner points sorted
-                             // to the wrong surface by the alignment)
-        CHECK(spanning <= st.kept / 50);
         // for a look: the solve, the mesh textured with the plate, and a render from a new angle
         if (const char* out = std::getenv("STRATA_DEMO_OUT")) {
             json sj = camsolve::toJson(s);

@@ -146,6 +146,26 @@ M3 planeAxes(const Plane& pl, const V3& right) {
     return R;
 }
 
+bool cardOnPoints(const std::vector<V3>& pts, const V3& eye, const V3& right, Card& out, double margin) {
+    Plane pl = fitPlane(pts, &eye);
+    if (!pl.ok) return false;
+    const M3 R = planeAxes(pl, right);
+    double u0 = 1e300, u1 = -1e300, w0 = 1e300, w1 = -1e300;
+    for (const V3& p : pts) {
+        const double u = cam3d::dot(p - pl.c, R.col(0)), w = cam3d::dot(p - pl.c, R.col(1));
+        u0 = std::min(u0, u), u1 = std::max(u1, u), w0 = std::min(w0, w), w1 = std::max(w1, w);
+    }
+    double cw = u1 - u0, ch = w1 - w0;
+    const double big = std::max(cw, ch);
+    // a thin strip of points still makes a usable card
+    cw = std::max(cw, 0.1 * big), ch = std::max(ch, 0.1 * big);
+    out.O = pl.c + R.col(0) * ((u0 + u1) / 2) + R.col(1) * ((w0 + w1) / 2);
+    out.R = R;
+    out.w = cw * (1 + 2 * margin);
+    out.h = ch * (1 + 2 * margin);
+    return out.w > 1e-12 && out.h > 1e-12;
+}
+
 bool rayPlane(const V3& o, const V3& d, const V3& p0, const V3& n, V3& hit) {
     double den = cam3d::dot(n, d);
     if (std::fabs(den) < 1e-12) return false;
