@@ -1603,6 +1603,14 @@ int main(int argc, char** argv) {
             static int shown = 0, loops = 0;
             static double firstLoop = -1;
             static int prevFrame = INT_MIN;
+            // STRATA_TEST_PLAY_ZOOM=<z>: view at that zoom; STRATA_TEST_PLAY_FULLRES=<on s>,<off s>: switch
+            // full res on and off again during the run; each second's fps is printed (PLAYSEC)
+            static const char* tz = std::getenv("STRATA_TEST_PLAY_ZOOM");
+            if (tz && frameCount >= 9) {
+                ui.viewer.zoom = (float)std::atof(tz);
+                ui.viewer.fitPending = false;
+                ui.viewer.checkOnScreen = false;
+            }
             if (t0 < 0 && frameCount == 10) {
                 t0 = glfwGetTime();
                 app.frame = app.playRange().first;
@@ -1611,6 +1619,18 @@ int main(int argc, char** argv) {
             }
             if (t0 >= 0) {
                 ViewResult r = app.result();
+                static double onAt = -1, offAt = -1;
+                static int secShown = 0, sec = 0;
+                if (const char* fr = std::getenv("STRATA_TEST_PLAY_FULLRES"); fr && onAt < 0) std::sscanf(fr, "%lf,%lf", &onAt, &offAt);
+                const double el = glfwGetTime() - t0;
+                if (onAt >= 0 && el >= onAt && el < offAt) ui.viewer.fullRes = true;
+                if (offAt >= 0 && el >= offAt) ui.viewer.fullRes = false;
+                if ((int)el > sec) {
+                    std::printf("PLAYSEC %d: %d fps (full res %s, scale %g)\n", sec, secShown, ui.viewer.fullRes ? "on" : "off", ui.viewer.reqScale);
+                    std::fflush(stdout);
+                    sec = (int)el, secShown = 0;
+                }
+                if ((int)r.frame != prevFrame && r.image) ++secShown;
                 if ((int)r.frame != prevFrame && r.image) {
                     if (prevFrame != INT_MIN && (int)r.frame < prevFrame) {
                         ++loops;

@@ -98,7 +98,7 @@ struct Program {
 std::map<std::string, Program> g_programs;
 
 constexpr GLenum kVertexShader = 0x8B31, kFragmentShader = 0x8B30, kCompileStatus = 0x8B81, kLinkStatus = 0x8B82,
-                 kCurrentProgram = 0x8B8D, kRGBA32F = 0x8814, kRGB32F = 0x8815, kR32F = 0x822E, kRed = 0x1903,
+                 kCurrentProgram = 0x8B8D, kRGBA32F = 0x8814, kRGBA16F = 0x881A, kHalfFloat = 0x140B, kRGB32F = 0x8815, kR32F = 0x822E, kRed = 0x1903,
                  kTexture3D = 0x806F, kTexture0 = 0x84C0, kWrapR = 0x8072;
 
 const char* kVS = R"(#version 330 core
@@ -301,7 +301,25 @@ bool viewerGLInit() {
     return ok;
 }
 
+namespace {
+// Each viewer texture's internal format: a half upload goes to an RGBA16F texture, a float one to
+// RGBA32F, so neither converts on the way and a frame from the half-float playback cache is sent
+// as it is stored (half the bytes, no copy).
+std::map<unsigned int, GLint> gTexFormat;
+void uploadRGBA(unsigned int& tex, int& texW, int& texH, int w, int h, const void* px, GLenum type, GLint internal);
+}  // namespace
+
 void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, const float* rgba) {
+    uploadRGBA(tex, texW, texH, w, h, rgba, GL_FLOAT, kRGBA32F);
+}
+
+void viewerUploadHalf(unsigned int& tex, int& texW, int& texH, int w, int h, const uint16_t* rgba) {
+    uploadRGBA(tex, texW, texH, w, h, rgba, kHalfFloat, kRGBA16F);
+}
+
+namespace {
+void uploadRGBA(unsigned int& tex, int& texW, int& texH, int w, int h, const void* rgba, GLenum type, GLint internal) {
+    if (tex && gTexFormat.count(tex) && gTexFormat[tex] != internal) texW = texH = 0;  // the other format: reallocate
     if (!tex) glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
@@ -311,13 +329,14 @@ void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, co
         const GLenum e = glGetError();
         if (e != GL_OUT_OF_MEMORY) return false;
         crash::crumb("viewer: out of GPU memory uploading " + std::to_string(w) + "x" + std::to_string(h));
+        gTexFormat.erase(tex);
         glDeleteTextures(1, &tex);
         tex = 0;
         texW = texH = 0;
         return true;
     };
     if (w == texW && h == texH) {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_FLOAT, rgba);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, type, rgba);
         failed();
         return;
     }
@@ -325,11 +344,12 @@ void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, co
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);  // see real pixels when zoomed in
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, kRGBA32F, w, h, 0, GL_RGBA, GL_FLOAT, rgba);
+    glTexImage2D(GL_TEXTURE_2D, 0, internal, w, h, 0, GL_RGBA, type, rgba);
     texW = w;
     texH = h;
-    failed();
+    if (!failed()) gTexFormat[tex] = internal;
 }
+}  // namespace
 
 void viewerBeginDisplay(ImDrawList* dl, unsigned int tex, const DisplayParams& d) {
     dl->AddCallback(bindDisplayProgram, keepParams(d));

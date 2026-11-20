@@ -1298,6 +1298,7 @@ bool App::takeCached(const std::string& node, double f) {
     const CachedFrame& c = it->second;
     if (c.gen != editGen_ || c.scale != scale || c.region != region || c.compare != compare) return false;
     result_ = c.r;
+    result_.half = c.image;
     if (c.image) result_.image = unpackFrame(*c.image);
     if (c.imageB) result_.imageB = unpackFrame(*c.imageB);
     result_.serial = ++resultSerial_;

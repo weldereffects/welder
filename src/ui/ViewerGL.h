@@ -5,6 +5,7 @@
 // any of them costs nothing on the CPU and never waits for a render.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 
 #include "color/Color.h"
@@ -26,6 +27,8 @@ bool viewerGLInit();
 
 // Upload RGBA float pixels (row 0 = bottom). Reuses the texture when the size matches.
 void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, const float* rgba);
+// The same from half floats (an RGBA16F texture): playback frames straight from the half cache.
+void viewerUploadHalf(unsigned int& tex, int& texW, int& texH, int w, int h, const uint16_t* rgba);
 
 // Draw `tex` over [p0, p1] (screen space, p0 = top-left) with the display
 // transform, using UVs uv0 -> uv1. Adds ImGui draw callbacks around the image.

@@ -79,19 +79,46 @@ void viewerUpload(ViewerState& v) {
     if (!img || img->bounds.empty()) return;
     const int W = img->bounds.width(), H = img->bounds.height(), n = img->nch();
     std::array<int, 4> m = layerChannels(*img, v.layer);
-    static std::vector<float> buf, bb;
-    buf.resize((size_t)W * H * 4);
-    const float* src = img->data.data();
-    float* d = buf.data();
     const bool direct = n == 4 && m[0] == 0 && m[1] == 1 && m[2] == 2 && m[3] == 3;
-    if (direct) {
-        std::copy(src, src + buf.size(), d);
-    } else {
-        for (size_t i = 0; i < (size_t)W * H; ++i, src += n, d += 4)
-            for (int k = 0; k < 4; ++k) d[k] = m[k] >= 0 ? src[m[k]] : (k == 3 ? 1.0f : 0.0f);
-    }
     v.texBounds = img->bounds;
     v.texScale = v.res.scale;
+    // A playback frame from the half-float cache (no compare): its stored half floats go to the
+    // GPU, directly when they are rgba. At 4.6K the float copy and upload of every frame
+    // (233 MB) was what held cached playback under 24 fps whenever the whole frame was at full
+    // size (#96); this is half the bytes and no copy.
+    const auto& hf = v.res.half;
+    const bool wantB = v.compare != "off" && v.res.imageB && v.res.imageB->bounds == img->bounds;
+    if (!wantB && hf && hf->bounds == img->bounds && hf->channels == img->channels && hf->data.size() == (size_t)W * H * n) {
+        if (direct) {
+            viewerUploadHalf(v.tex, v.texW, v.texH, W, H, hf->data.data());
+            return;
+        }
+        static std::vector<uint16_t> hb;  // RGB plates, layers: gathered to rgba, still as halves
+        hb.resize((size_t)W * H * 4);
+        const uint16_t* hs = hf->data.data();
+        uint16_t* hd = hb.data();
+        const uint16_t one = 0x3c00, zero = 0;
+        halfbits::split((size_t)W * H, [&](size_t b, size_t e) {
+            for (size_t i = b; i < e; ++i)
+                for (int k = 0; k < 4; ++k) hd[i * 4 + k] = m[k] >= 0 ? hs[i * n + m[k]] : (k == 3 ? one : zero);
+        });
+        viewerUploadHalf(v.tex, v.texW, v.texH, W, H, hb.data());
+        return;
+    }
+    static std::vector<float> buf, bb;
+    buf.resize((size_t)W * H * 4);
+    const float* src0 = img->data.data();
+    float* d0 = buf.data();
+    halfbits::split((size_t)W * H, [&](size_t b, size_t e) {  // over a few cores: a 4K frame is a lot of bytes
+        if (direct) {
+            std::copy(src0 + b * 4, src0 + e * 4, d0 + b * 4);
+            return;
+        }
+        const float* src = src0 + b * n;
+        float* d = d0 + b * 4;
+        for (size_t i = b; i < e; ++i, src += n, d += 4)
+            for (int k = 0; k < 4; ++k) d[k] = m[k] >= 0 ? src[m[k]] : (k == 3 ? 1.0f : 0.0f);
+    });
     // the B buffer, over the same pixels, in the same layer
     const ImagePtr& ib = v.res.imageB;
     const bool haveB = v.compare != "off" && ib && ib->bounds == img->bounds;

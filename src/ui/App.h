@@ -40,6 +40,9 @@ bool writeFileAtomic(const std::string& path, const std::string& text, std::stri
 struct ViewResult {
     ImagePtr image;   // null if nothing to show; bounds are pixels at `scale`
     ImagePtr imageB;  // the A/B compare node's image (same region / scale), when comparing
+    // From the playback cache: the same pixels as `image`, as stored (half floats). The viewer
+    // uploads these directly instead of copying the float image (#96).
+    std::shared_ptr<const HalfImage> half;
     std::string nodeB;
     double scale = 1; // render scale of `image`
     Format format;    // full-resolution format
