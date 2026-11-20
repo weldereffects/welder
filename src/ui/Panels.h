@@ -212,7 +212,6 @@ struct RotoState {
     bool onion = false;
     float onionAmount = 0.5f;
     int onionFrames = 3;
-    int showPoints = 0;                 // 0 on selection, 1 always
     bool featherLink = true;            // moving a point takes its feather point with it
     bool labelPoints = false, hideCurves = false, hidePoints = false, hideJack = false, hideJackOnMove = false;
     std::set<std::pair<int, int>> fsel; // selected feather points (Select Feather Points)

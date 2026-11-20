@@ -920,6 +920,37 @@ ImVec2 featherHandle(const Disp& d, int i) {
 }
 
 // The point tools (Add / Remove / Cusp / Smooth Points, Open/Close Curve, Remove Feather): a click.
+// a shape's control point within reach of the mouse (unlocked, alive shapes; strokes have none)
+bool pointUnder(const std::vector<Disp>& ds, ImVec2 mouse) {
+    for (const Disp& d : ds) {
+        if (d.stroke || !d.alive || d.locked) continue;
+        for (const ImVec2& c : d.ctrlS)
+            if (dist(mouse, c) < 7) return true;
+    }
+    return false;
+}
+
+// starts a drag of an open spline's width (green) or feather (pink) handle under the mouse, on one of
+// `shapes`; the nearest handle wins
+bool lineHandleAt(RotoState& r, const std::vector<Disp>& ds, const std::set<int>& shapes, ImVec2 mouse) {
+    float best = 6;
+    int bs = -1, bk = -1;
+    bool width = false;
+    for (int si : shapes) {
+        if (si < 0 || si >= (int)ds.size() || !ds[si].line || ds[si].locked) continue;
+        for (int k = 0; k < (int)ds[si].widthH.size(); ++k) {
+            if (float dw = dist(mouse, ds[si].widthH[k]); dw < best) best = dw, bs = si, bk = k, width = true;
+            if (k < (int)ds[si].featherH.size())
+                if (float df = dist(mouse, ds[si].featherH[k]); df < best) best = df, bs = si, bk = k, width = false;
+        }
+    }
+    if (bs < 0) return false;
+    r.drag = width ? RotoState::Drag::LineWidth : RotoState::Drag::LineFeather;
+    r.lineShape = bs;
+    r.linePoint = bk;
+    return true;
+}
+
 void pointToolClick(App& app, UiState& ui, Node* n, const std::vector<Disp>& ds, ImVec2 mouse, double frame) {
     RotoState& r = ui.roto;
     const json& items = itemsOf(n);
@@ -1379,6 +1410,25 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
 
     // ---- draw items
     const bool featherMode = r.tool == Tool::SelectFeather;
+    // the shape under the mouse (its outline, or inside a closed one) shows its points before it is
+    // picked, so a point can be aimed at with the select tools
+    int hoverShape = -1;
+    if ((r.tool == Tool::Select || r.tool == Tool::SelectPoints || r.tool == Tool::SelectSplines) && r.drag == Drag::None &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        const ImVec2 m = ImGui::GetIO().MousePos;
+        for (int si = (int)ds.size() - 1; si >= 0 && hoverShape < 0; --si) {
+            const Disp& d = ds[si];
+            if (d.stroke || !d.alive || d.locked) continue;
+            for (const ImVec2& c : d.ctrlS)
+                if (dist(m, c) < 10) hoverShape = si;
+            const size_t np = d.poly.size();
+            for (size_t k = 0; hoverShape < 0 && np >= 2 && k + 1 < np + (d.closed ? 1 : 0); ++k)
+                if (distToSeg(m, d.poly[k], d.poly[(k + 1) % np]) < 10) hoverShape = si;
+        }
+        for (int si = (int)ds.size() - 1; si >= 0 && hoverShape < 0; --si)
+            if (!ds[si].stroke && ds[si].alive && !ds[si].locked && ds[si].closed && ds[si].poly.size() >= 3 && insidePoly(ds[si].poly, m))
+                hoverShape = si;
+    }
     for (size_t i = 0; i < ds.size(); ++i) {
         const Disp& d = ds[i];
         const bool sel = selItems.count((int)i) > 0;
@@ -1413,8 +1463,12 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 for (size_t k = 0; k + (d.closed ? 0 : 1) < d.ctrlS.size(); ++k)
                     dl->AddLine(d.ctrlS[k], d.ctrlS[(k + 1) % d.ctrlS.size()], IM_COL32(200, 200, 200, 70), 1.0f);
         }
-        if (r.hidePoints || d.locked || (!sel && r.showPoints == 0 && !featherMode)) continue;
-        if (d.line && sel && r.tool != Tool::SelectSplines)  // width (green) and feather (pink) at each point
+        // points: on the selected shapes, the current one and the one under the mouse, or on all of them
+        const bool pointsShown = sel || featherMode || app.rotoShowPoints == 1 || (int)i == r.curShape || (int)i == hoverShape;
+        if (r.hidePoints || d.locked || !pointsShown) continue;
+        // width (green) and feather (pink) at each point of an open spline: with Select on a selected
+        // one, and on every one with Select Feather (Select Points / Splines leave them out)
+        if (d.line && ((sel && r.tool == Tool::Select) || featherMode))
             for (size_t k = 0; k < d.widthH.size() && k < d.ctrlS.size(); ++k) {
                 const ImVec2 c = d.ctrlS[k];
                 const bool hotW = r.drag == Drag::LineWidth && r.lineShape == (int)i && r.linePoint == (int)k;
@@ -1430,6 +1484,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         for (size_t k = 0; k < d.ctrlS.size(); ++k) {
             ImVec2 c = d.ctrlS[k];
             bool ps = r.sel.count({(int)i, (int)k}) > 0;
+            if (featherMode && d.line) continue;  // (an open spline's feather is its pink handles)
             if (featherMode) {  // every point's feather point (at the point itself when it has none)
                 const ImVec2 fh = featherHandle(d, (int)k);
                 const bool fs = r.fsel.count({(int)i, (int)k}) > 0;
@@ -1657,10 +1712,21 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 pointToolClick(app, ui, n, ds, mouse, frame);
                 break;
             case Tool::SelectFeather: {
+                // an open spline's width / feather handle (every open spline shows them here)
+                {
+                    std::set<int> lines;
+                    for (int si = 0; si < (int)ds.size(); ++si)
+                        if (ds[si].line && ds[si].alive) lines.insert(si);
+                    if (lineHandleAt(r, ds, lines, mouse)) {
+                        r.orig[r.lineShape] = roto::pointsAt(items[r.lineShape], frame);
+                        r.curShape = r.lineShape;
+                        break;
+                    }
+                }
                 // a feather point (every point shows one), else a marquee of them
                 int hs = -1, hp = -1;
                 for (int si = (int)ds.size() - 1; si >= 0 && hs < 0; --si) {
-                    if (ds[si].stroke || !ds[si].alive || ds[si].locked) continue;
+                    if (ds[si].stroke || ds[si].line || !ds[si].alive || ds[si].locked) continue;
                     for (int pi = 0; pi < (int)ds[si].ctrlS.size(); ++pi)
                         if (dist(mouse, featherHandle(ds[si], pi)) < 7) {
                             hs = si, hp = pi;
@@ -1715,21 +1781,12 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
             case Tool::SelectSplines:
             case Tool::SelectPoints: {
                 const bool splinesOnly = r.tool == Tool::SelectSplines, pointsOnly = r.tool == Tool::SelectPoints;
-                // 0. a selected open spline's width (green) / feather (pink) handles
-                if (!splinesOnly) {
-                    for (int si : selItems) {
-                        if (si < 0 || si >= (int)ds.size() || !ds[si].line || ds[si].locked) continue;
-                        for (int k = 0; k < (int)ds[si].widthH.size() && r.drag == Drag::None; ++k) {
-                            if (dist(mouse, ds[si].widthH[k]) < 6) r.drag = Drag::LineWidth;
-                            else if (dist(mouse, ds[si].featherH[k]) < 6) r.drag = Drag::LineFeather;
-                            if (r.drag != Drag::None) r.lineShape = si, r.linePoint = k;
-                        }
-                        if (r.drag != Drag::None) break;
-                    }
-                    if (r.drag != Drag::None) {
-                        r.orig[r.lineShape] = roto::pointsAt(items[r.lineShape], frame);
-                        break;
-                    }
+                // 0. a selected open spline's width (green) / feather (pink) handles: Select only (Select
+                // Points leaves them to Select Feather), and a point under the mouse wins over them, since
+                // at a thin, sharp end the handles sit right on top of the end points
+                if (!splinesOnly && !pointsOnly && !pointUnder(ds, mouse) && lineHandleAt(r, ds, selItems, mouse)) {
+                    r.orig[r.lineShape] = roto::pointsAt(items[r.lineShape], frame);
+                    break;
                 }
                 // 1. the transform jack
                 if (jackShown && dist(mouse, jackRot) < 7) {
@@ -2652,13 +2709,20 @@ void drawRotoToolbar(App& app, UiState& ui) {
         }
         gap();
         ImGui::SetNextItemWidth(104);
-        static const char* showNames[] = {"on selection", "always"};
-        if (kit::beginComboFlat("##showpts", showNames[r.showPoints])) {
+        static const char* showNames[] = {"points: selected", "points: always"};
+        const int shown = std::clamp(app.rotoShowPoints, 0, 1);
+        if (kit::beginComboFlat("##showpts", showNames[shown])) {
             for (int i = 0; i < 2; ++i)
-                if (ImGui::Selectable(showNames[i], r.showPoints == i)) r.showPoints = i;
+                if (ImGui::Selectable(showNames[i], shown == i)) {
+                    app.rotoShowPoints = i;
+                    app.saveSettings();
+                }
             ImGui::EndCombo();
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("points shown: on the selected shapes, or on all of them");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Points shown on the shapes:\n"
+                              "selected: on the selected shapes, the current one and the one under the mouse\n"
+                              "always: on every shape\n(remembered; also in Preferences)");
     }
     ImGui::PopStyleVar();
     ImGui::PopID();

@@ -812,6 +812,16 @@ static void drawPreferences(App& app, UiState& ui) {
             ImGui::EndCombo();
         }
     }
+    ImGui::SeparatorText("Roto");
+    {
+        bool always = app.rotoShowPoints == 1;
+        if (kit::checkbox("Always show points", &always,
+                          "Show the points on every roto shape, not only on the selected one, the current one and the\n"
+                          "one under the mouse (Roto, RotoPaint and Power Roto; also on the viewer's roto toolbar)")) {
+            app.rotoShowPoints = always ? 1 : 0;
+            app.saveSettings();
+        }
+    }
     ImGui::SeparatorText("Node Graph");
     if (kit::checkbox("Right-angle pipes", &app.rightAnglePipes,
                       "Pipes run straight down and across with square corners, instead of in straight lines from node to node"))

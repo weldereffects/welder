@@ -230,6 +230,7 @@ public:
     bool askMatchProject = true;  // the setting: offer to match the project to a new script's first Read
     bool rightAnglePipes = false; // the setting: node graph pipes drawn with square corners
     bool altDragCuts = true;      // the setting: Alt+drag in the node graph cuts pipes (off: it pans)
+    int rotoShowPoints = 0;       // the setting: roto points shown on the selected / current / hovered shapes (0) or on all (1)
     bool middleDragZooms = false; // the setting: a middle-button drag zooms (tablets without a wheel); Alt+middle-drag always does
     bool matchArmed = false;      // this script has had no media yet (the first Read's file brings the offer)
     double playbackCacheGB = 0;  // the setting; 0 = automatic (a quarter of the RAM, 3..64 GB)

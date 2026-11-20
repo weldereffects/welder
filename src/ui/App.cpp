@@ -397,6 +397,7 @@ void App::loadSettings() {
             middleDragZooms = j.value("middle_drag_zooms", middleDragZooms);
             uncPaths = j.value("unc_paths", uncPaths);
             autosaveSecs = j.value("autosave_seconds", autosaveSecs);
+            rotoShowPoints = j.value("roto_show_points", rotoShowPoints);
             if (j.contains("ui_scale") && j["ui_scale"].is_number()) uiScaleSetting = j["ui_scale"].get<float>();
             if (j.contains("ui_theme") && j["ui_theme"].is_string()) {  // ("theme" was written by every save before: ignored)
                 themeName = j["ui_theme"].get<std::string>();
@@ -454,6 +455,7 @@ void App::saveSettings() {
     j["middle_drag_zooms"] = middleDragZooms;
     j["unc_paths"] = uncPaths;
     j["autosave_seconds"] = autosaveSecs;
+    j["roto_show_points"] = rotoShowPoints;
     if (uiScaleSetting > 0) j["ui_scale"] = uiScaleSetting;
     else j.erase("ui_scale");
     if (themeChosen) j["ui_theme"] = themeName;
