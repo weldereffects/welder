@@ -117,6 +117,7 @@ class Worker:
         threading.Thread(target=self._probe_splat, daemon=True).start()
         self.lock = threading.Lock()
         self.quit = False
+        self.loop_time = time.time()  # the main loop's last pass: Welder restarts a worker whose loop hangs between jobs
 
     def _probe_splat(self):
         from .subtask import check_splat_env
@@ -133,7 +134,7 @@ class Worker:
                 cur = self.current
             atomic_write_json(os.path.join(self.home, "worker.json"), {
                 "pid": os.getpid(), "time": time.time(), "started": self.started, "version": __version__,
-                "job": cur, "tasks": sorted(TASKS), "packages": self.packages,
+                "job": cur, "tasks": sorted(TASKS), "packages": self.packages, "loop": self.loop_time,
             })
             for _ in range(20):
                 if self.quit:
@@ -231,6 +232,7 @@ class Worker:
         code, checked = self.code_stamp(), time.time()
         try:
             while True:
+                self.loop_time = time.time()
                 if os.path.exists(stop):
                     os.remove(stop)
                     break

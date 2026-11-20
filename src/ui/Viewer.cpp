@@ -532,15 +532,27 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     ImGui::TextDisabled(" f/stop");
     ImGui::SameLine(0, 4);
     ImGui::SetNextItemWidth(52);
-    ImGui::DragFloat("##fstop", &v.fstop, 0.05f, -10.0f, 10.0f, v.fstop == 0 ? "0" : "%+.1f");
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) v.fstop = 0;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exposure in stops (double-click: 0)");
+    // Double-click resets (#76). ImGui turns a double-click on a drag field into text entry, so
+    // on that frame the field is drawn without it (Ctrl+click still types a value).
+    auto resettingDrag = [](const char* id, float* val, float speed, float lo, float hi, const char* fmt, float def) {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const ImVec2 q(p.x + ImGui::CalcItemWidth(), p.y + ImGui::GetFrameHeight());
+        const bool dbl = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && ImGui::IsMouseHoveringRect(p, q) &&
+                         ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+        ImGui::DragFloat(id, val, speed, lo, hi, fmt, dbl ? ImGuiSliderFlags_NoInput : 0);
+        if (dbl) {
+            *val = def;
+            ImGui::ClearActiveID();
+        }
+    };
+    resettingDrag("##fstop", &v.fstop, 0.05f, -10.0f, 10.0f, v.fstop == 0 ? "0" : "%+.1f", 0.0f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exposure in stops (double-click: 0, Ctrl+click: type a value)");
     ImGui::SameLine(0, 8);
     ImGui::TextDisabled("gamma");
     ImGui::SameLine(0, 4);
     ImGui::SetNextItemWidth(52);
-    ImGui::DragFloat("##gamma", &v.gamma, 0.01f, 0.2f, 4.0f, "%.2f");
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) v.gamma = 1;
+    resettingDrag("##gamma", &v.gamma, 0.01f, 0.2f, 4.0f, "%.2f", 1.0f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamma (double-click: 1, Ctrl+click: type a value)");
     ImGui::SameLine(0, 6);
     viewerProcessCombo(app);
     segEnd();

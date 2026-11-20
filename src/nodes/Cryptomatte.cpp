@@ -164,13 +164,24 @@ std::vector<std::pair<std::string, float>> knownNames(const std::string& layer) 
     return out;
 }
 
-Layer findLayer(const ChannelSet& cs, const std::string& layer) {
+namespace {
+std::string normName(std::string s) {  // case and '_' blind: crypto_object == CryptoObject == cryptoobject
+    for (auto& ch : s) ch = (char)std::tolower((unsigned char)ch);
+    s.erase(std::remove(s.begin(), s.end(), '_'), s.end());
+    return s;
+}
+
+Layer layerAt(const ChannelSet& cs, const std::string& prefix) {  // prefix: the channel name before "00."
     Layer L;
     for (int i = 0; i < 32; ++i) {
-        char base[96];
-        std::snprintf(base, sizeof base, "%s%02d.", layer.c_str(), i);
+        char base[160];
+        std::snprintf(base, sizeof base, "%s%02d.", prefix.c_str(), i);
         std::string b = base;
-        int r = channelIndex(cs, b + "R"), g = channelIndex(cs, b + "G"), bl = channelIndex(cs, b + "B"), a = channelIndex(cs, b + "A");
+        auto at = [&](const char* up, const char* lo) {
+            int k = channelIndex(cs, b + up);
+            return k >= 0 ? k : channelIndex(cs, b + lo);
+        };
+        int r = at("R", "r"), g = at("G", "g"), bl = at("B", "b"), a = at("A", "a");
         if (r < 0 || g < 0) break;
         L.id.push_back(r);
         L.cov.push_back(g);
@@ -178,6 +189,28 @@ Layer findLayer(const ChannelSet& cs, const std::string& layer) {
             L.id.push_back(bl);
             L.cov.push_back(a);
         }
+    }
+    return L;
+}
+}  // namespace
+
+Layer findLayer(const ChannelSet& cs, const std::string& layer) {
+    // Exact name first (Blender, Welder's own renders: cryptoobject00.R), then the
+    // spellings other renderers write: Arnold crypto_object00.R, V-Ray / Redshift
+    // CryptoObject00.R, and multi-layer paths such as ViewLayer.CryptoObject00.R.
+    Layer L = layerAt(cs, layer);
+    if (!L.id.empty()) return L;
+    const std::string want = normName(layer);
+    for (auto& c : cs) {
+        auto dot = c.rfind('.');
+        if (dot == std::string::npos || dot < 2) continue;
+        std::string pre = c.substr(0, dot);
+        if (pre.compare(pre.size() - 2, 2, "00") != 0) continue;
+        pre.resize(pre.size() - 2);
+        std::string n = normName(pre), tail = n.substr(n.rfind('.') == std::string::npos ? 0 : n.rfind('.') + 1);
+        if (tail != want) continue;
+        L = layerAt(cs, pre);
+        if (!L.id.empty()) return L;
     }
     return L;
 }
@@ -214,7 +247,18 @@ public:
         std::string layer = params.str("layer", "cryptoobject");
         Layer L = findLayer(src->channels, layer);
         if (L.id.empty())
-            throw RenderError(name + ": the input has no " + layer + "00 channels (enable cryptomatte on the render, and pick its layer)");
+        {
+            std::string seen;  // name the cryptomatte-looking layers the input does have
+            for (auto& c : src->channels) {
+                auto p = c.find("00.");
+                if (p == std::string::npos || normName(c).find("crypto") == std::string::npos) continue;
+                std::string l = c.substr(0, p);
+                if (seen.find(l) == std::string::npos) seen += (seen.empty() ? "" : ", ") + l;
+            }
+            throw RenderError(name + ": the input has no " + layer + "00 channels" +
+                              (seen.empty() ? std::string(" (enable cryptomatte on the render, and pick its layer)")
+                                            : " (it has: " + seen + "; pick the matching layer)"));
+        }
         std::vector<uint32_t> ids;
         for (auto& e : splitList(params.str("matte_list", ""))) {
             float id;

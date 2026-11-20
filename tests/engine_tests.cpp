@@ -3315,6 +3315,20 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(sk, 3, 3, "A"), 0, 1e-5);     // screen
         CHECK_NEAR(px(sk, 3, 3, "G"), 0, 1e-5);     // premultiplied: nothing left of the screen
         CHECK_NEAR(px(sk, 32, 24, "R"), 0.8, 1e-5); // the disc keeps its colour (no spill in it)
+        {  // HDR (#80): a bright, slightly green highlight stays; a brighter copy of the screen still keys
+            auto one = [](std::array<double, 3> col, bool hdr) {
+                auto k = comp(json::array({
+                    {{"name", "P"}, {"type", "Constant"}, {"params", {{"color", {col[0], col[1], col[2], 1}}}}},
+                    {{"name", "K"}, {"type", "ScreenKeyer"}, {"inputs", {"P"}},
+                     {"params", {{"screen_color", {0.1, 0.6, 0.15, 1}}, {"hdr_highlights", hdr}}}},
+                }), 8, 8);
+                return px(render(*k, "K"), 4, 4, "A");
+            };
+            CHECK(one({10, 10.6, 10}, false) < 0.01f);  // the classic difference punches a hole
+            CHECK(one({10, 10.6, 10}, true) > 0.8f);
+            CHECK(one({0.3, 1.8, 0.45}, true) < 0.01f);  // 3x the screen: still screen
+            CHECK_NEAR(one({0.8, 0.5, 0.4}, true), 1, 1e-5);
+        }
         auto skm = render(*c, "SKm");
         CHECK_NEAR(px(skm, 32, 24, "R"), 1, 1e-5);  // matte view
         CHECK(px(skm, 44, 24, "A") < 0.5f);          // shrunk edge
@@ -6792,6 +6806,15 @@ Connections:  {
                 CHECK_NEAR(px(render(*c, "K"), 1, 1, "A"), want, 1e-6);
             }
         }
+        {  // other renderers' spellings of the layer: Arnold crypto_object, V-Ray CryptoObject, multi-layer paths
+            for (std::string pre : {"crypto_object", "CryptoObject", "ViewLayer.CryptoObject"}) {
+                ChannelSet cs = {"R", "G", "B", "A", pre + "00.R", pre + "00.G", pre + "00.B", pre + "00.A", pre + "01.R", pre + "01.G"};
+                crypto::Layer L = crypto::findLayer(cs, "cryptoobject");
+                CHECK(L.id.size() == 3 && L.id[0] == 4 && L.cov[0] == 5 && L.id[2] == 8);
+                CHECK(crypto::findLayer(cs, "cryptomaterial").id.empty());
+            }
+            CHECK(crypto::findLayer({"crypto_material00.R", "crypto_material00.G"}, "cryptomaterial").id.size() == 1);
+        }
         // Defocus keeps the light: the mean over the middle of a checkerboard stays 0.5, small and large radii
         for (double r : {6.0, 60.0}) {
             auto c = comp(json::array({
@@ -6837,6 +6860,37 @@ Connections:  {
             CHECK(d1 < 1e-5);  // in focus: untouched
             CHECK(dp < 1e-5);  // focused on the point at the card
             CHECK(d2 / (70 * 80) > 0.1);  // out of focus: soft
+        }
+        {  // a flat grey card tilted away (depth ramps across it): defocus must leave it flat grey, no
+           // dark grain where focus turns to bokeh (#86: dithered layers left one-pixel holes)
+            json grey = json::array({{{"name", "G"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}, {"format", {256, 256}}}}}});
+            json base = json::array({
+                grey[0],
+                {{"name", "Card"}, {"type", "Card"}, {"inputs", {"G"}}, {"params", {{"uniform_scale", 4}, {"rotate", {0, 70, 0}}}}},
+                {{"name", "Cam"}, {"type", "Camera"}, {"params", {{"translate", {0, 0, 2}}}}},
+                {{"name", "S"}, {"type", "ScanlineRender"}, {"inputs", {nullptr, "Card", "Cam"}}, {"params", {{"antialiasing", "high"}}}},
+                {{"name", "Z"}, {"type", "ZDefocus"}, {"inputs", {"S"}}, {"params", {{"focus_plane", 2}, {"size", 15}, {"maximum", 15}}}},
+            });
+            json cj = {{"strata", 1}, {"format", {{"width", 200}, {"height", 150}}}, {"frame_range", {1, 10}}, {"fps", 24}, {"nodes", base}};
+            auto c = Comp::fromJson(cj, std::filesystem::temp_directory_path());
+            auto s0 = render(*c, "S"), z = render(*c, "Z");
+            double worst = 0;
+            int n = 0;
+            for (int y = 30; y < 120; ++y)
+                for (int x = 0; x < 200; ++x) {  // where the card covers the pixel and its neighbourhood
+                    bool inside = true;
+                    for (int dy = -20; dy <= 20 && inside; dy += 4)
+                        for (int dx = -20; dx <= 20 && inside; dx += 4) {
+                            int xx = std::clamp(x + dx, 0, 199), yy = std::clamp(y + dy, 0, 149);
+                            if (px(s0, xx, yy, "A") < 0.999f || xx != x + dx) inside = false;
+                        }
+                    if (!inside) continue;
+                    ++n;
+                    worst = std::max(worst, (double)std::fabs(px(z, x, y, "R") - 0.5f));
+                }
+            std::printf("  ZDefocus on a tilted flat card: %d px checked, worst change %.4f\n", n, worst);
+            CHECK(n > 500);
+            CHECK(worst < 0.02);
         }
         // a card sliding right 0.2 units a frame: vectors, and VectorBlur vs. real motion blur
         json keys = json::parse(R"({"keys": [[1, -0.8], [10, 1.0]]})");  // centred at frame 5

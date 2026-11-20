@@ -471,6 +471,8 @@ WorkerInfo workerInfo() {
     if (!j.is_object()) return w;
     w.age = nowSeconds() - j.value("time", 0.0);
     w.online = w.age < 10;
+    if (j.contains("pid") && j["pid"].is_number_integer()) w.pid = j["pid"].get<long long>();
+    if (j.contains("loop") && j["loop"].is_number()) w.loopAge = nowSeconds() - j["loop"].get<double>();
     if (j.contains("job") && j["job"].is_string()) w.job = j["job"];
     if (j.contains("packages")) w.packages = j["packages"];
     if (j.contains("tasks"))
@@ -604,12 +606,34 @@ static bool outdatedFor(const WorkerInfo& w, const std::string& key) {
     return !task.empty() && std::find(w.tasks.begin(), w.tasks.end(), task) == w.tasks.end();
 }
 
+// End a worker process that has stopped answering (its heartbeat thread still runs, its main loop doesn't).
+static void killWorkerProcess(long long pid) {
+    if (pid <= 0) return;
+#ifdef _WIN32
+    if (HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)pid)) {
+        TerminateProcess(h, 1);
+        CloseHandle(h);
+    }
+#else
+    ::kill((pid_t)pid, SIGKILL);
+#endif
+    std::error_code ec;
+    fs::remove(P(home()) / "worker.json", ec);
+}
+
 bool ensureWorkerFor(const std::string& key, std::string* err) {
     static std::mutex m;
     static double lastLaunch = -1e9, lastStop = -1e9;
     std::lock_guard<std::mutex> l(m);
     const double now = nowSeconds();
     WorkerInfo w = workerInfo();
+    // Online but idle, with its main loop stuck for a while: it will never take the queued job
+    // (#87: jobs sat on "waiting for the worker" until stray python processes were killed).
+    if (w.online && w.job.empty() && w.loopAge > 45 && now - lastLaunch > 60) {
+        killWorkerProcess(w.pid);
+        lastLaunch = now;
+        return launchWorker(err);
+    }
     if (w.online) {
         if (outdatedFor(w, key) && now - lastStop > 10) {
             stopWorker();

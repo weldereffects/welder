@@ -70,6 +70,8 @@ struct WorkerInfo {
     std::string job;     // running job key
     json packages;       // what the worker found installed
     std::vector<std::string> tasks;
+    long long pid = 0;
+    double loopAge = -1;  // seconds since its main loop last went round (-1: an older worker that doesn't say)
 };
 WorkerInfo workerInfo();
 // Start the worker in the background (no console window). False + reason if it can't.

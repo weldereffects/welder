@@ -581,25 +581,35 @@ public:
         const int K = std::max(1, (int)params.num("layers", f, 16) / 2);
         std::vector<double> radii(K + 1);
         for (int k = 0; k <= K; ++k) radii[k] = maxR * (double)(k * k) / (K * K);
-        // each pixel to a layer (dithered between the two nearest: no banding)
-        std::vector<int8_t> layerOf((size_t)B.width() * B.height(), 0);
+        // each pixel split between the two nearest layers by how far it sits between their radii
+        // (no banding). A soft split, not a random pick: dithering left each layer full of
+        // one-pixel holes that the blurred neighbour layer only part filled, which showed as
+        // hard black grain where focus turns to bokeh (#86).
+        const int BW = B.width();
+        std::vector<int8_t> layerOf((size_t)BW * B.height(), 0);  // the nearer layer (signed)
+        std::vector<int8_t> outerOf((size_t)BW * B.height(), 0);  // the next one out (same side)
+        std::vector<float> share((size_t)BW * B.height(), 0.0f);  // the outer layer's weight
         std::vector<Box> lbox(2 * K + 1);
         for (int y = B.y1; y < B.y2; ++y)
             for (int x = B.x1; x < B.x2; ++x) {
                 float c = coc.at(x, y)[0], ac = std::fabs(c);
                 int k = 0;
                 while (k < K && radii[k + 1] <= ac) ++k;
-                if (k < K) {
-                    double t = (ac - radii[k]) / std::max(1e-9, radii[k + 1] - radii[k]);
-                    if (hash01(x, y) < t) ++k;
-                }
-                int L = c < 0 ? -k : k;
-                layerOf[(size_t)(y - B.y1) * B.width() + (x - B.x1)] = (int8_t)L;
-                Box& lb = lbox[L + K];
-                lb = lb.unite(Box(x, y, x + 1, y + 1));
+                float t = 0;
+                if (k < K) t = (float)std::clamp((ac - radii[k]) / std::max(1e-9, radii[k + 1] - radii[k]), 0.0, 1.0);
+                const int sgn = c < 0 ? -1 : 1;
+                const size_t i = (size_t)(y - B.y1) * BW + (x - B.x1);
+                layerOf[i] = (int8_t)(sgn * k);
+                outerOf[i] = (int8_t)(sgn * std::min(k + 1, K));
+                share[i] = t;
+                const Box px(x, y, x + 1, y + 1);
+                if (t < 1) lbox[sgn * k + K] = lbox[sgn * k + K].unite(px);
+                if (t > 0) lbox[sgn * (k + 1) + K] = lbox[sgn * (k + 1) + K].unite(px);
             }
-        // far to near: +K ... 0 ... -K, each blurred and laid over the result
-        Buf acc(a.region, 4);
+        // far to near: +K ... 0 ... -K, each blurred and laid over the result. A fifth channel
+        // carries coverage (how much of the frame each layer holds), composited like alpha: the
+        // split layers' blurs do not quite sum back to whole, and dividing by it makes them so.
+        Buf acc(a.region, 5);
         for (int L = K; L >= -K; --L) {
             const Box& lb = lbox[L + K];
             if (lb.empty()) continue;
@@ -607,10 +617,15 @@ public:
             int reach = (int)std::ceil(r * std::max(bk.aspect, 1 / bk.aspect) * (1 + bk.fringe)) + 2;
             if (lb.pad(reach, reach).intersect(a.region).empty()) continue;
             Box sb = lb.intersect(B);
-            Buf layer(sb, 4);
+            Buf layer(sb, 5);
             for (int y = sb.y1; y < sb.y2; ++y)
                 for (int x = sb.x1; x < sb.x2; ++x) {
-                    if (layerOf[(size_t)(y - B.y1) * B.width() + (x - B.x1)] != L || !src->bounds.contains(x, y)) continue;
+                    if (!src->bounds.contains(x, y)) continue;
+                    const size_t i = (size_t)(y - B.y1) * BW + (x - B.x1);
+                    float w = 0;
+                    if (L == layerOf[i]) w = 1 - share[i];
+                    else if (L == outerOf[i]) w = share[i];
+                    if (w <= 0) continue;
                     const float* s = src->px(x, y);
                     float* d = layer.at(x, y);
                     d[0] = s[R];
@@ -618,6 +633,8 @@ public:
                     d[2] = s[Bc];
                     d[3] = A >= 0 ? s[A] : 1.0f;
                     boostHighlights(d, thr, gain);
+                    for (int c = 0; c < 4; ++c) d[c] *= w;
+                    d[4] = w;
                 }
             // only where this layer can reach: its pixels' box grown by its blur
             const Box ob = lb.pad(reach, reach).intersect(a.region);
@@ -626,20 +643,25 @@ public:
             for (int y = ob.y1; y < ob.y2; ++y) {
                 const float* l = blurred.at(ob.x1, y);
                 float* o = acc.at(ob.x1, y);
-                for (int x = ob.x1; x < ob.x2; ++x, l += 4, o += 4) {
-                    float t = 1 - std::clamp(l[3], 0.0f, 1.0f);
-                    o[0] = l[0] + o[0] * t;
-                    o[1] = l[1] + o[1] * t;
-                    o[2] = l[2] + o[2] * t;
-                    o[3] = l[3] + o[3] * t;
+                for (int x = ob.x1; x < ob.x2; ++x, l += 5, o += 5) {
+                    float t = 1 - std::clamp(l[3], 0.0f, 1.0f);  // (alpha occludes, as before)
+                    for (int c = 0; c < 5; ++c) o[c] = l[c] + o[c] * t;
                 }
             }
         }
+        for (int y = a.region.y1; y < a.region.y2; ++y)
+            for (int x = a.region.x1; x < a.region.x2; ++x) {
+                float* v = acc.at(x, y);
+                if (v[4] > 1e-4f && v[4] < 1) {
+                    const float k = 1 / v[4];
+                    for (int c = 0; c < 4; ++c) v[c] *= k;
+                }
+            }
         MaskMix mm = MaskMix::setup(a, this, 2);
         for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y)
             for (int x = a.region.x1; x < a.region.x2; ++x) {
                 float* o = out.px(x, y);
-                const float* v = acc.at(x, y);
+                const float* v = acc.at(x, y);  // (5 channels: rgba, coverage)
                 float w = mm.active() ? mm.weight(x, y) : 1.0f;
                 int oc[4] = {oR, oG, oB, oA};
                 for (int c = 0; c < 4; ++c)

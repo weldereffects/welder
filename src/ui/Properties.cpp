@@ -548,6 +548,7 @@ void keyButton(Ctx& c, const KnobDef& k, int n, const std::vector<double>& cur, 
 
 // The node definition being drawn (for "when" / "enableWhen" defaults).
 const NodeDef* gDef = nullptr;
+bool gLabelReset = false;  // the knob drawn now had its name double-clicked: back to its default
 void buttonAction(Ctx& c, const std::string& action);
 
 void label(const KnobDef& k) {
@@ -575,9 +576,10 @@ void label(const KnobDef& k) {
         }
         return;
     }
-    if (!k.hideLabel && k.type != Knob::Bool)  // checkboxes carry their label on the right, as is standard
+    if (!k.hideLabel && k.type != Knob::Bool) {  // checkboxes carry their label on the right, as is standard
         kit::rowLabel(k.label.c_str(), k.tip.c_str());
-    else
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) gLabelReset = true;  // (#76)
+    } else
         kit::skipLabel();
 }
 
@@ -1545,7 +1547,19 @@ std::string dividerLabel(Ctx& c, const KnobDef& k) {
 void knob(Ctx& c, const KnobDef& k) {
     const bool enabled = k.enableWhen.empty() || condOk(c.node, k.enableWhen);
     if (!enabled) ImGui::BeginDisabled();
+    gLabelReset = false;
     knobBody(c, k);
+    if (gLabelReset && enabled && !k.name.empty() && findParam(c.node, k.name)) {  // double-click on the name: reset (#76)
+        c.app.checkpoint();
+        std::string name = c.node->name, key = k.name;
+        c.app.edit([name, key](Comp& comp) {
+            if (Node* nd = comp.find(name)) {
+                eraseParam(nd, key);
+                nd->paramsChanged();
+            }
+        });
+    }
+    gLabelReset = false;
     if (!enabled) ImGui::EndDisabled();
 }
 
@@ -3251,10 +3265,25 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
     ImGui::PopStyleColor(2);
     if (keepOpen && ImGui::BeginPopupContextItem("panel_menu")) {  // (not on a floating panel itself)
         if (ImGui::MenuItem("Float this panel (OK / Cancel)")) openFloatPanel(app, ui, n->name);
+        if (const NodeDef* d = nodeDef(n->type); d && ImGui::MenuItem("Reset all knobs to default")) {  // (#76)
+            std::vector<std::string> keys;
+            for (auto& k : d->knobs)  // its knobs only: a Read keeps its file, shapes and tracks stay
+                if (!k.name.empty() && k.type != Knob::File && k.type != Knob::Button && k.type != Knob::Divider &&
+                    k.type != Knob::Info && k.type != Knob::Json && k.type != Knob::Text)
+                    keys.push_back(k.name);
+            app.checkpoint();
+            std::string name = n->name;
+            app.edit([name, keys](Comp& comp) {
+                if (Node* nd = comp.find(name)) {
+                    for (auto& key : keys) eraseParam(nd, key);
+                    nd->paramsChanged();
+                }
+            });
+        }
         ImGui::EndPopup();
     }
     if (keepOpen && ImGui::IsItemHovered() && !ImGui::IsPopupOpen("panel_menu"))
-        ImGui::SetTooltip("Right-click: float this panel in a window of its own, with Cancel to undo what you try");
+        ImGui::SetTooltip("Right-click: float this panel in a window of its own, or reset all its knobs to default");
     {
         const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
         ImDrawList* dl = ImGui::GetWindowDrawList();

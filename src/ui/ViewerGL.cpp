@@ -1,5 +1,7 @@
 #include "ViewerGL.h"
 
+#include <deque>
+
 #include <GLFW/glfw3.h>
 
 #include <cstdio>
@@ -68,7 +70,21 @@ PFN_ActiveTexture pActiveTexture;
 PFN_TexImage3D pTexImage3D;
 
 bool g_loaded = false;
-DisplayParams g_params;
+// Each draw's display settings, kept until the frame is drawn: ImGui runs the callbacks after
+// every panel has been laid out, so one shared copy would give every viewer the settings of
+// the last one drawn (#79). Cleared when the next frame records its first draw.
+std::deque<DisplayParams> g_frameParams;
+int g_paramsFrame = -1;
+
+void* keepParams(const DisplayParams& d) {
+    const int f = ImGui::GetFrameCount();
+    if (f != g_paramsFrame) {
+        g_frameParams.clear();
+        g_paramsFrame = f;
+    }
+    g_frameParams.push_back(d);  // deque: earlier entries keep their addresses
+    return &g_frameParams.back();
+}
 
 // One program per display transform ("" = the plain sRGB encode), with the
 // OCIO LUT textures it samples.
@@ -229,8 +245,9 @@ Program* program(const std::shared_ptr<const color::GpuShader>& ocio) {
     return &P;
 }
 
-void bindDisplayProgram(const ImDrawList*, const ImDrawCmd*) {
-    if (!g_loaded) return;
+void bindDisplayProgram(const ImDrawList*, const ImDrawCmd* cmd) {
+    if (!g_loaded || !cmd || !cmd->UserCallbackData) return;
+    const DisplayParams& g_params = *(const DisplayParams*)cmd->UserCallbackData;
     GLint imguiProg = 0;
     glGetIntegerv(kCurrentProgram, &imguiProg);
     Program* P = program(g_params.ocio);
@@ -315,8 +332,7 @@ void viewerUploadFloat(unsigned int& tex, int& texW, int& texH, int w, int h, co
 }
 
 void viewerBeginDisplay(ImDrawList* dl, unsigned int tex, const DisplayParams& d) {
-    g_params = d;
-    dl->AddCallback(bindDisplayProgram, nullptr);
+    dl->AddCallback(bindDisplayProgram, keepParams(d));
     dl->PushTexture((ImTextureID)(intptr_t)tex);
 }
 
@@ -327,8 +343,7 @@ void viewerEndDisplay(ImDrawList* dl) {
 
 void viewerDrawImage(ImDrawList* dl, unsigned int tex, ImVec2 p0, ImVec2 p1, ImVec2 uv0, ImVec2 uv1,
                      const DisplayParams& d) {
-    g_params = d;
-    dl->AddCallback(bindDisplayProgram, nullptr);
+    dl->AddCallback(bindDisplayProgram, keepParams(d));
     dl->AddImage((ImTextureID)(intptr_t)tex, p0, p1, uv0, uv1);
     dl->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }

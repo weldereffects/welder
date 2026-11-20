@@ -204,8 +204,19 @@ public:
             int pb = (int)std::lround(params.num("screen_preblur", f, 0) * sc);
             if (pb > 0)
                 for (auto& v : c) boxBlur(v, PW, PH, pb);
+            // HDR (#80): the colour difference grows with brightness, so a bright highlight with a
+            // slight screen tint (values of 10, say) read as many times "more screen" than the
+            // screen and punched holes. Pixels brighter than the screen are measured relative to
+            // their brightness: a brighter copy of the screen still keys fully, a tinted highlight
+            // keeps its tint's share. Pixels at or below the screen's brightness are unchanged.
+            const bool hdr = params.flag("hdr_highlights", true);
+            const float sL = std::max(1e-4f, lum(s.col[0], s.col[1], s.col[2]));
             for (size_t i = 0; i < alpha.size(); ++i) {
                 float d = c[s.p][i] - (bal * c[s.q1][i] + (1 - bal) * c[s.q2][i]);
+                if (hdr) {
+                    const float L = lum(c[0][i], c[1][i], c[2][i]);
+                    if (L > sL) d *= sL / L;
+                }
                 float m = 1.0f - clamp01(d / dS * gain);
                 alpha[i] = cw > cb ? clamp01((m - cb) / (cw - cb)) : (m > cb ? 1.0f : 0.0f);
             }

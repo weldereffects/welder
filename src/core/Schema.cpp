@@ -848,6 +848,9 @@ std::vector<NodeDef> build() {
                   F("screen_preblur", "screen pre-blur", 0, 0, 20, "Blur the source before keying (px)"),
                   F("shrink_grow", "shrink / grow", 0, -20, 20, "Erode (negative) or dilate the matte (px)"),
                   F("softness", "softness", 0, 0, 20, "Blur the matte (px)"),
+                  [] { KnobDef k = B("hdr_highlights", "HDR highlights", true); k.tip =
+                    "Measure pixels brighter than the screen relative to their brightness, so bright (over 1.0) "
+                    "highlights with a slight screen tint are not keyed out. Off: the classic colour difference"; return k; }(),
                   Div("despill"), B("despill", "despill", true),
                   C("despill_limit", "limit", "balance", {"balance", "average", "max", "min"}),
                   B("restore_luminance", "restore luminance", false),
@@ -875,7 +878,8 @@ std::vector<NodeDef> build() {
                  {C("layer", "layer", "cryptoobject", {"cryptoobject", "cryptomaterial", "cryptoasset"}),
                   S("matte_list", "matte list", ""), B("invert", "invert", false),
                   C("output", "output", "alpha", {"alpha", "premultiplied rgba", "matte channel"}), B("preview", "preview colours", false)},
-                 "Mattes from Cryptomatte ids (render them from Blender with the cryptomatte pass). Pick objects in the viewer, "
+                 "Mattes from Cryptomatte ids (Blender, Arnold, V-Ray, Redshift... renders; Arnold's crypto_object reads as cryptoobject). "
+                 "Pick objects in the viewer, "
                  "or type names (comma separated; <hex> for unnamed ids)."});
     d.push_back({"Keyer", "Keyer",
                  {C("operation", "operation", "luminance key",
