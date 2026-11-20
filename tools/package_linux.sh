@@ -7,7 +7,7 @@
 #   OCIO_LINUX, FFMPEG_LINUX, NCNN_LINUX  - colour management, movies, the RIFE node (all linked statically).
 # The C++ runtime is linked in; libgomp travels in bin/lib (found through RUNPATH $ORIGIN/lib). The result runs on distributions with at
 # least the glibc of the machine that built it (build on the oldest system you want to support).
-# Output: dist/welder-<version>-linux-x86_64.tar.gz (+ -rife-models, -tests)
+# Output: dist/welder-<version>-linux-x86_64.tar.gz (+ -tests)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUILD="$ROOT/build-linux"
@@ -75,12 +75,10 @@ install -m 755 "$ROOT/tools/linux/install-desktop-entry.sh" "$STAGE/install-desk
 cp "$ROOT/assets/brand/welder-icon-256.png" "$STAGE/bin/welder.png"
 
 # Tarballs sharing the top folder (they unpack into one):
-#   <top>.tar.gz              the app, docs, examples
-#   <top>-rife-models.tar.gz  bin/models/rife (the RIFE node's networks)
-#   <top>-tests.tar.gz        the engine and EXR self-tests
+#   <top>.tar.gz              the app with the RIFE node's networks (bin/models/rife), docs, examples (#85)
+#   <top>-tests.tar.gz        the engine and EXR self-tests (optional)
 cd "$ROOT/dist"
 rm -f "$TOP".tar.gz "$TOP"-rife-models.tar.gz "$TOP"-tests.tar.gz
 tar czf "$TOP-tests.tar.gz" "$TOP/bin/welder_tests" "$TOP/bin/welder_exr_tests"
-[ -d "$TOP/bin/models" ] && tar czf "$TOP-rife-models.tar.gz" "$TOP/bin/models"
-tar czf "$TOP.tar.gz" --exclude="$TOP/bin/models" --exclude="$TOP/bin/welder_tests" --exclude="$TOP/bin/welder_exr_tests" "$TOP"
+tar czf "$TOP.tar.gz" --exclude="$TOP/bin/welder_tests" --exclude="$TOP/bin/welder_exr_tests" "$TOP"
 for f in "$TOP"*.tar.gz; do echo "packaged: $ROOT/dist/$f ($(du -h "$f" | cut -f1))"; done

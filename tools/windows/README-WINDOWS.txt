@@ -1,16 +1,22 @@
 Welder for Windows (x64)
 ========================
 
-No install needed. Unzip anywhere. The download comes in up to five zips
-that all unpack into the same welder-@VERSION@-win64 folder: unzip them into
-the same place.
-  welder-@VERSION@-win64.zip              the app (required)
-  welder-@VERSION@-win64-python.zip       Python for the .nk importer (python\):
-                                      importing .nk scripts and pasting nodes
-                                      copied in another .nk app (or have Python 3 installed)
-  welder-@VERSION@-win64-rife-models.zip  the RIFE node's networks (bin\models\rife)
+No install needed. Unzip anywhere. One zip has everything: the app, Python
+for the .nk importer (python\) and the RIFE node's networks (bin\models\rife).
+  welder-@VERSION@-win64.zip              the app (all you need)
   welder-@VERSION@-win64-tests.zip        self-tests (optional)
   welder-@VERSION@-win64-ofx-tests.zip    the OFX host self-test and test plugins (optional)
+The optional zips unpack into the same welder-@VERSION@-win64 folder.
+
+UPDATES
+  Welder checks GitHub for a newer version when it starts (at most every 12
+  hours) and shows "Update available" at the top right of the menu bar. Help >
+  Check for Updates checks now. Turn it off in Edit > Preferences > Updates, or
+  set WELDER_NO_UPDATE_CHECK=1 (e.g. on offline machines). Unzip a new version
+  anywhere: your settings and the ML setup live outside the Welder folder
+  (%APPDATA%\Welder and %LOCALAPPDATA%\Welder\ml), so the new one picks them up.
+  Models you put in the old folder's models\ by hand: move that folder across,
+  or list it in WELDER_ML_MODELS.
 
 USER MANUAL
   Welder-Manual.html (open it in any browser, or Help > User Manual in Welder).
@@ -1009,7 +1015,7 @@ FILE FORMATS
   MJPEG, MPEG-4, FFV1 (lossless 16-bit) or PNG. Writing H.264 isn't
   included (it needs a GPL encoder).
 
-.NK SCRIPTS (the importer runs on the Python in python\ - the -python zip -
+.NK SCRIPTS (the importer runs on the Python in python\, which comes in the zip,
 or on an installed Python 3)
   In the editor: File > Import .nk Script (Ctrl+I), or drag the .nk onto Welder.bat.
   Copy nodes in .nk apps and press Ctrl+V over Welder's node graph to paste them;

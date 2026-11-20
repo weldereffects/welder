@@ -450,6 +450,10 @@ struct UiState {
     std::string maximized;        // currently maximized panel
     bool showShortcuts = false;
     bool showAbout = false;
+    // is there a newer Welder (#85): main.cpp turns the startup check on for interactive runs only
+    bool updateAutoCheck = false;
+    bool updateManual = false;  // Help > Check for Updates is running: say what it found
+    bool showUpdate = false;    // the "Welder x.y.z is available" dialog
     bool resetWorkspace = false;  // Workspace > Reset Workspace: the default layout on the next frame
     bool showPrefs = false;  // Edit > Preferences (Shift+S)
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)

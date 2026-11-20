@@ -20,6 +20,7 @@
 #include "core/Engine.h"
 #include "core/ThreadBudget.h"
 #include "core/NetPath.h"
+#include "core/Update.h"
 #include "io/ImageIO.h"
 #include "io/PsdIO.h"
 #include "io/MovieIO.h"
@@ -208,6 +209,83 @@ int main(int argc, char** argv) {
     NodeRegistry::instance().add("TestTexture", [] { return std::make_unique<synth::TestTexture>(); });
     auto tmp = std::filesystem::temp_directory_path() / "welder_tests";
     std::filesystem::create_directories(tmp);
+
+    test("update check: versions compare and GitHub's release list is read (issue #85)", [] {
+        using update::compareVersions;
+        CHECK(compareVersions("0.2.4", "0.2.3") > 0);
+        CHECK(compareVersions("v0.2.10", "0.2.9") > 0);
+        CHECK(compareVersions("0.2.3", "v0.2.3") == 0);
+        CHECK(compareVersions("0.2", "0.2.0") == 0);
+        CHECK(compareVersions("0.3.0-beta.1", "0.3.0") < 0);
+        CHECK(compareVersions("0.3.0-beta.2", "0.3.0-beta.10") < 0);
+        CHECK(compareVersions("0.3.0-alpha", "0.3.0-beta") < 0);
+        CHECK(compareVersions("0.3.0-beta", "0.3.0-beta.1") < 0);
+        CHECK(compareVersions("1.0.0", "0.99.99") > 0);
+        CHECK(compareVersions("nightly", "0.1.0") < 0);
+        const std::string list = R"J([
+            {"tag_name": "v0.2.3", "name": "Welder 0.2.3", "html_url": "https://github.com/x/releases/tag/v0.2.3",
+             "body": "fixes", "draft": false, "prerelease": true, "published_at": "2026-11-19T18:09:29Z"},
+            {"tag_name": "v0.3.0", "name": "", "html_url": "https://github.com/x/releases/tag/v0.3.0",
+             "body": "draft notes", "draft": true, "prerelease": false},
+            {"tag_name": "v0.2.10", "name": "Welder 0.2.10", "html_url": "javascript:alert(1)",
+             "body": null, "draft": false, "prerelease": true, "published_at": "2026-11-25T10:00:00Z"},
+            {"tag_name": "test-build", "draft": false},
+            {"tag_name": "v0.2.4", "name": null, "html_url": "https://github.com/x/releases/tag/v0.2.4", "draft": false}
+        ])J";
+        std::vector<update::Release> rels;
+        std::string err;
+        CHECK(update::parseReleases(list, rels, &err));
+        CHECK(rels.size() == 3);  // no draft, no tag that isn't a version
+        if (rels.size() == 3) {
+            CHECK(rels[0].version == "0.2.10" && rels[1].version == "0.2.4" && rels[2].version == "0.2.3");
+            CHECK(rels[0].url == update::kReleasesPage);  // only https pages are ever opened
+            CHECK(rels[1].name == "Welder 0.2.4");
+            CHECK(rels[0].notes.empty());
+        }
+        CHECK(update::newestAfter(rels, "0.2.3").version == "0.2.10");
+        CHECK(update::newestAfter(rels, "0.2.10").version.empty());
+        CHECK(update::newestAfter(rels, "0.2.3", "0.2.10").version.empty());  // skipped
+        CHECK(update::newestAfter(rels, "0.2.3", "0.2.4").version == "0.2.10");  // newer than the skipped one
+        CHECK(!update::parseReleases(R"({"message": "API rate limit exceeded"})", rels, &err));
+        CHECK(err.find("rate limit") != std::string::npos);
+        CHECK(!update::parseReleases("<html>", rels, &err));
+    });
+#ifndef _WIN32
+    test("update check: the checker fetches the list with curl (issue #85)", [] {
+        if (Process::findInPath("curl").empty()) {
+            std::printf("  (no curl: skipped)\n");
+            return;
+        }
+        auto dir = std::filesystem::temp_directory_path() / "welder_tests" / "update";
+        std::filesystem::create_directories(dir);
+        {
+            std::ofstream(dir / "releases.json") << R"([{"tag_name": "v9.0.0", "html_url": "https://example.com/r", "draft": false}])";
+        }
+        auto wait = [](update::Checker& c) {
+            for (int i = 0; i < 300 && c.state() == update::Checker::State::Checking; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            return c.state();
+        };
+        setenv("WELDER_UPDATE_URL", ("file://" + (dir / "releases.json").string()).c_str(), 1);
+        update::Checker c;
+        c.start("0.2.3", (dir / "tmp").string());
+        CHECK(wait(c) == update::Checker::State::Done);
+        auto rels = c.releases();
+        CHECK(rels.size() == 1 && update::newestAfter(rels, "0.2.3").version == "9.0.0");
+        c.reset();
+        CHECK(c.state() == update::Checker::State::Idle);
+        setenv("WELDER_UPDATE_URL", ("file://" + (dir / "missing.json").string()).c_str(), 1);
+        c.start("0.2.3", (dir / "tmp").string());
+        CHECK(wait(c) == update::Checker::State::Failed);
+        CHECK(!c.error().empty());
+        unsetenv("WELDER_UPDATE_URL");
+        setenv("WELDER_NO_UPDATE_CHECK", "1", 1);
+        CHECK(update::disabledByEnv());
+        setenv("WELDER_NO_UPDATE_CHECK", "0", 1);
+        CHECK(!update::disabledByEnv());
+        unsetenv("WELDER_NO_UPDATE_CHECK");
+    });
+#endif
 
     test("comp with null / non-numeric node positions opens and saves clean (issue #14)", [] {
         json j = json::parse(R"({

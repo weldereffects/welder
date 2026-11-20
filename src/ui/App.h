@@ -30,6 +30,7 @@
 #include "core/Comp.h"
 #include "core/DiskCache.h"
 #include "core/Engine.h"
+#include "core/Update.h"
 
 namespace strata::ui {
 
@@ -257,6 +258,12 @@ public:
     void setCacheDir(const std::string& dir);
     void loadSettings();
     void saveSettings();
+    // ---- is there a newer Welder? (#85; Shell.cpp asks GitHub at most every 12 hours, Help > Check for Updates any time)
+    bool checkUpdates = true;     // Preferences > Updates
+    double updateLastCheck = 0;   // when the last check finished (seconds since 1970)
+    std::string updateSkip;       // "Skip this version": no banner until a newer one than this
+    update::Release updateFound;  // the newest newer release the last check found (version "": none)
+    update::Checker updateChecker;
 
     // ------------------------------------------------------------ batch rendering
     // Render Write nodes for a frame range: all enabled ones, or only `names`.

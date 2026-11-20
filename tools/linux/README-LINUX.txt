@@ -1,11 +1,9 @@
 Welder for Linux (x86_64)
 =========================
 
-No install needed. Unpack anywhere. The download comes in up to three
-tarballs that all unpack into the same folder: unpack them in the same place.
-  welder-<version>-linux-x86_64.tar.gz              the app (required)
-  welder-<version>-linux-x86_64-rife-models.tar.gz  the RIFE node's networks
-  welder-<version>-linux-x86_64-tests.tar.gz        self-tests (optional)
+No install needed. Unpack anywhere. One download has everything:
+  welder-<version>-linux-x86_64.tar.gz              the app, with the RIFE node's networks
+  welder-<version>-linux-x86_64-tests.tar.gz        self-tests (optional; unpack in the same place)
 
     tar xzf welder-<version>-linux-x86_64.tar.gz
     cd welder-<version>-linux-x86_64

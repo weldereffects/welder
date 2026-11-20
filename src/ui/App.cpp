@@ -409,6 +409,18 @@ void App::loadSettings() {
             netpath::enabled() = uncPaths;
             // "use_gpu": the release builds up to 0.2.0 had no GPU code and saved "gpu" as false (#46)
             gpu::setEnabled(j.value("use_gpu", true));
+            checkUpdates = j.value("check_for_updates", checkUpdates);
+            updateLastCheck = j.value("update_last_check", 0.0);
+            updateSkip = j.value("update_skip", std::string());
+            if (j.contains("update_found") && j["update_found"].is_object()) {
+                const json& u = j["update_found"];
+                updateFound.version = u.value("version", std::string());
+                updateFound.name = u.value("name", std::string());
+                updateFound.url = u.value("url", std::string());
+                updateFound.notes = u.value("notes", std::string());
+                updateFound.published = u.value("published", std::string());
+            }
+            if (update::compareVersions(updateFound.version, STRATA_VERSION) <= 0) updateFound = {};  // installed since
             cacheDirSetting = j.value("cache_dir", std::string());
             setCacheRoot(cacheDirSetting);
         }
@@ -448,6 +460,14 @@ void App::saveSettings() {
     j["recent_files"] = recentFiles;
     if (gpu::built()) j["use_gpu"] = gpu::enabled();  // a build without the GPU code keeps the saved choice
     j.erase("gpu");
+    j["check_for_updates"] = checkUpdates;
+    j["update_last_check"] = updateLastCheck;
+    if (updateSkip.empty()) j.erase("update_skip");
+    else j["update_skip"] = updateSkip;
+    if (updateFound.version.empty()) j.erase("update_found");
+    else
+        j["update_found"] = {{"version", updateFound.version}, {"name", updateFound.name}, {"url", updateFound.url},
+                             {"notes", updateFound.notes}, {"published", updateFound.published}};
     if (cacheDirSetting.empty()) j.erase("cache_dir");
     else j["cache_dir"] = cacheDirSetting;
     writeFileAtomic(settingsPath, j.dump(2), nullptr);
@@ -3513,7 +3533,7 @@ bool App::runImporter(const std::vector<std::string>& args, std::string* err) {
     std::string log = (fs::path(cacheDir("tmp")) / "strata_nk2strata.log").string();
     auto pys = pythonCandidates();
     if (pys.empty()) {
-        if (err) *err = "the .nk importer needs Python 3. On Windows, download welder-" STRATA_VERSION "-win64-python.zip from the same release and unzip it into the Welder folder (it adds python\\), or install Python 3";
+        if (err) *err = "the .nk importer needs Python 3, and the Welder folder has no python\\ (it comes in the welder-" STRATA_VERSION "-win64.zip download: unzip it again), or install Python 3";
         return false;
     }
     std::string lastErr;

@@ -88,6 +88,7 @@ add_library(strata_core STATIC
   src/core/Paths.cpp
   src/core/Studio.cpp
   src/core/Brand.cpp
+  src/core/Update.cpp
   src/nodes/BlenderNode.cpp
   src/nodes/NoiseLib.cpp
   src/nodes/DetailMask.cpp

@@ -113,29 +113,28 @@ for p in sys.argv[1:]:
     open(p, "w", newline="").write(t)
 PY
 
-# Zips (each under 30 MB, all sharing the top folder so they unpack into one):
-#   welder-<v>-win64.zip          the app, docs, examples
-#   welder-<v>-win64-rife-models.zip   bin/models/rife (the RIFE node's networks)
-#   welder-<v>-win64-tests.zip    the engine and EXR self-tests
-#   welder-<v>-win64-ofx-tests.zip  the OFX host test and its test plugins
-#   welder-<v>-win64-python.zip   python/ (runs the .nk importer: import, paste from .nk apps)
+# Zips (all sharing the top folder, so the optional ones unpack into the same place):
+#   welder-<v>-win64.zip            everything needed to run: the app, python/ (the .nk importer),
+#                                   bin/models/rife (the RIFE node's networks), docs, examples (#85)
+#   welder-<v>-win64-tests.zip      the engine and EXR self-tests (optional)
+#   welder-<v>-win64-ofx-tests.zip  the OFX host test and its test plugins (optional)
 python3 - "$ROOT/dist" "welder-$VERSION-win64" <<'PY'
 import os, sys, zipfile
 dist, top = sys.argv[1], sys.argv[2]
-parts = {"": [], "-rife-models": [], "-tests": [], "-ofx-tests": [], "-python": []}
+parts = {"": [], "-tests": [], "-ofx-tests": []}
 for d, _, files in os.walk(os.path.join(dist, top)):
     for f in files:
         rel = os.path.relpath(os.path.join(d, f), dist).replace(os.sep, "/")
-        if rel.startswith(top + "/bin/models/"):
-            parts["-rife-models"].append(rel)
-        elif rel.startswith(top + "/python/"):
-            parts["-python"].append(rel)
-        elif rel.startswith(top + "/ofx-test-plugins/") or f == "welder_ofx_tests.exe":
+        if rel.startswith(top + "/ofx-test-plugins/") or f == "welder_ofx_tests.exe":
             parts["-ofx-tests"].append(rel)
         elif rel.startswith(top + "/bin/") and "_tests" in f:
             parts["-tests"].append(rel)
         else:
             parts[""].append(rel)
+# the split packages of 0.2.3 and before: gone, so an old one can't be uploaded with a new release
+for old in ("-python", "-rife-models"):
+    if os.path.exists(os.path.join(dist, top + old + ".zip")):
+        os.remove(os.path.join(dist, top + old + ".zip"))
 for suffix, names in parts.items():
     out = os.path.join(dist, top + suffix + ".zip")
     if os.path.exists(out):

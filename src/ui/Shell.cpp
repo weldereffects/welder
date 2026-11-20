@@ -8,6 +8,7 @@
 #include <optional>
 #include <functional>
 #include <future>
+#include <sstream>
 
 #include "Panels.h"
 #include "core/NetPath.h"
@@ -151,7 +152,115 @@ static void doSave(App& app, UiState& ui) {
 
 
 
+// ------------------------------------------------------------------ updates (#85)
+namespace {
+
+double nowSeconds() {
+    return (double)std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// The release the banner offers ("" version: none): newer than this build and than a skipped one.
+const update::Release* offeredUpdate(const App& app) {
+    const update::Release& f = app.updateFound;
+    if (f.version.empty() || update::compareVersions(f.version, STRATA_VERSION) <= 0) return nullptr;
+    if (!app.updateSkip.empty() && update::compareVersions(f.version, app.updateSkip) <= 0) return nullptr;
+    return &f;
+}
+
+void startUpdateCheck(App& app) {
+    app.updateChecker.start(STRATA_VERSION, cacheDir("tmp"));
+}
+
+// Each frame: the startup check (once, at most every 12 hours) and a finished check's result.
+void tickUpdates(App& app, UiState& ui) {
+    if (ui.updateAutoCheck) {
+        ui.updateAutoCheck = false;
+        if (app.checkUpdates && !update::disabledByEnv() && nowSeconds() - app.updateLastCheck >= 12 * 3600.0) startUpdateCheck(app);
+    }
+    const auto st = app.updateChecker.state();
+    if (st == update::Checker::State::Done) {
+        const auto rels = app.updateChecker.releases();
+        app.updateChecker.reset();
+        app.updateLastCheck = nowSeconds();
+        app.updateFound = update::newestAfter(rels, STRATA_VERSION);
+        app.saveSettings();
+        if (ui.updateManual) {
+            ui.updateManual = false;
+            if (!app.updateFound.version.empty()) ui.showUpdate = true;  // asked: shown even if it was skipped
+            else app.message(std::string("Welder ") + STRATA_VERSION + " is the newest version");
+        } else if (offeredUpdate(app)) {
+            app.message("Welder " + app.updateFound.version + " is available: click \"Update available\" at the top right");
+        }
+    } else if (st == update::Checker::State::Failed) {
+        const std::string err = app.updateChecker.error();
+        app.updateChecker.reset();
+        if (ui.updateManual) {  // a startup check that fails (offline) says nothing; it tries again next start
+            ui.updateManual = false;
+            app.message("error: couldn't check for a newer Welder: " + err);
+        }
+    }
+}
+
+void drawUpdateDialog(App& app, UiState& ui) {
+    if (ui.showUpdate) {
+        ImGui::OpenPopup("Update available");
+        ui.showUpdate = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 40, 0), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("Update available", nullptr)) return;
+    const update::Release& r = app.updateFound;
+    if (r.version.empty()) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+    ImGui::Text("Welder %s is available. You have %s.", r.version.c_str(), STRATA_VERSION);
+    if (r.published.size() >= 10) ImGui::TextDisabled("Released %s", r.published.substr(0, 10).c_str());
+    if (!r.notes.empty()) {
+        ImGui::SeparatorText("What's new");
+        // the release text is Markdown: headings without their #s, \r\n as \n
+        std::string notes;
+        std::stringstream in(r.notes);
+        for (std::string line; std::getline(in, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            size_t h = 0;
+            while (h < line.size() && line[h] == '#') ++h;
+            if (h > 0 && h < line.size() && line[h] == ' ') line = line.substr(h + 1);
+            notes += line + "\n";
+        }
+        while (!notes.empty() && (notes.back() == '\n' || notes.back() == ' ')) notes.pop_back();
+        const ImGuiStyle& st = ImGui::GetStyle();
+        const float textH = ImGui::CalcTextSize(notes.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x - st.WindowPadding.x * 2).y;
+        ImGui::BeginChild("##notes", ImVec2(0, std::min(textH + st.WindowPadding.y * 2, ImGui::GetFontSize() * 18)), ImGuiChildFlags_Borders);
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextUnformatted(notes.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    }
+    ImGui::TextWrapped("Download the new zip from its release page and unzip it. Your settings and the ML setup aren't kept "
+                       "in the Welder folder, so the new version picks them up. Models you put in the old folder's models\\ "
+                       "by hand: move that folder across (or list it in WELDER_ML_MODELS).");
+    ImGui::Spacing();
+    if (ImGui::Button("Open the release page")) {
+        ml::openFolder(r.url.empty() ? update::kReleasesPage : r.url);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Skip this version")) {
+        app.updateSkip = r.version;
+        app.saveSettings();
+        ImGui::CloseCurrentPopup();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("No reminder until a newer version than %s comes out", r.version.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Later") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
+}  // namespace
+
 void drawMenuBar(App& app, UiState& ui) {
+    tickUpdates(app, ui);
     // Actions requested by hotkeys that need the file dialog live here.
     if (!ui.menuAction.empty()) {
         std::string a = ui.menuAction;
@@ -346,12 +455,27 @@ void drawMenuBar(App& app, UiState& ui) {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Attach the newest crash-<time>.txt to a bug report");
         ImGui::Separator();
+        const bool checking = app.updateChecker.state() == update::Checker::State::Checking;
+        if (ImGui::MenuItem(checking ? "Checking for Updates..." : "Check for Updates", nullptr, false, !checking)) {
+            ui.updateManual = true;
+            startUpdateCheck(app);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Asks GitHub whether there is a newer Welder than %s", STRATA_VERSION);
         if (ImGui::MenuItem("About Welder")) ui.showAbout = true;
         ImGui::EndMenu();
     }
     // Title / status on the right.
     std::string title = (app.compPath.empty() ? std::string("untitled") : fs::path(app.compPath).filename().string()) + (app.dirty ? " *" : "");
     float w = ImGui::CalcTextSize(title.c_str()).x;
+    if (const update::Release* u = offeredUpdate(app)) {  // "Update available: 0.2.4", left of the title
+        const std::string label = "Update available: " + u->version;
+        const float lw = ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().ItemSpacing.x * 2;
+        ImGui::SameLine(ImGui::GetWindowWidth() - w - 16 - lw - ImGui::GetFontSize());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(themeAccent()));
+        if (ImGui::MenuItem(label.c_str())) ui.showUpdate = true;
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("You have %s. Click for what's new and the download", STRATA_VERSION);
+    }
     ImGui::SameLine(ImGui::GetWindowWidth() - w - 16);
     ImGui::TextDisabled("%s", title.c_str());
     ImGui::EndMainMenuBar();
@@ -739,6 +863,15 @@ static void drawPreferences(App& app, UiState& ui) {
         netpath::enabled() = app.uncPaths;
         app.saveSettings();
     }
+    ImGui::SeparatorText("Updates");
+    ImGui::BeginDisabled(update::disabledByEnv());
+    if (kit::checkbox("Check for a newer Welder when it starts", &app.checkUpdates,
+                      "At most every 12 hours Welder asks GitHub for its list of releases (one small request to api.github.com;\n"
+                      "nothing about you or your work is sent) and shows \"Update available\" in the menu bar when there's a newer one.\n"
+                      "Help > Check for Updates asks any time. WELDER_NO_UPDATE_CHECK=1 turns it off for a machine."))
+        app.saveSettings();
+    ImGui::EndDisabled();
+    if (update::disabledByEnv()) ImGui::TextDisabled("(off: WELDER_NO_UPDATE_CHECK is set)");
     ImGui::Spacing();
     ImGui::SeparatorText("Caches");
     ImGui::TextWrapped("One folder holds everything Welder caches: the disk cache of finished frames, BlenderRender's frames, "
@@ -1325,6 +1458,7 @@ void drawDialogs(App& app, UiState& ui) {
     drawMatchProject(app, ui);
     drawPerformance(app, ui);
     drawPreferences(app, ui);
+    drawUpdateDialog(app, ui);
     if (!ui.lastCrash.empty() && !ImGui::IsPopupOpen("Welder closed unexpectedly")) ImGui::OpenPopup("Welder closed unexpectedly");
     if (ImGui::BeginPopupModal("Welder closed unexpectedly", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Welder crashed last time. It wrote a report of what happened:");

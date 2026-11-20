@@ -446,6 +446,7 @@ int main(int argc, char** argv) {
     app.applyEdits();
     if (opt.file.empty() && opt.screenshot.empty() && !opt.smoke) app.checkAutosave();  // an untitled comp left by a crash
     if (opt.smoke) smoke::start(opt.smokeItems);
+    ui.updateAutoCheck = interactive && !opt.smoke;  // (Shell.cpp: at most every 12 hours, if allowed)
     if (const char* tr = std::getenv("STRATA_TEST_RECOVERY"); tr && *tr && !opt.screenshot.empty())  // screenshots: the offer
         app.recovery = {tr, app.compPath, 7};
     if (opt.frame >= 0) app.frame = opt.frame;
@@ -638,6 +639,14 @@ int main(int argc, char** argv) {
                 if (!sel.empty()) testSelectInBrowser(sel);
             }
             if (const char* tp = std::getenv("STRATA_TEST_PREFS"); tp && *tp) ui.showPrefs = true;
+            // STRATA_TEST_UPDATE=<version>: the "Update available" banner and dialog for that version (screenshots)
+            if (const char* tu = std::getenv("STRATA_TEST_UPDATE"); tu && *tu) {
+                app.updateFound = {tu, std::string("Welder ") + tu, update::kReleasesPage,
+                                   "## What's new\n- One download for Windows: Python and the RIFE networks are in the zip\n"
+                                   "- Welder says when a newer version is out (Help > Check for Updates)",
+                                   "2026-11-21T10:00:00Z"};
+                ui.showUpdate = true;
+            }
             // STRATA_TEST_RECENT=<dir>: save 12 scripts there, reopen one, and check File > Open Recent's list
             // (10 kept, most recent first, no repeats, kept in the settings); also the Alt+Shift+N pick
             if (const char* td = std::getenv("STRATA_TEST_RECENT"); td && *td) {

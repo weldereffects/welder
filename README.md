@@ -37,16 +37,22 @@ updates per second.
 
 | Platform | Download | Needs |
 |---|---|---|
-| Windows 10 / 11, x64 | `welder-0.2.3-win64.zip`, plus `-python.zip` (.nk import) and `-rife-models.zip` (the RIFE node) if you want them | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
-| Linux x86_64 | `welder-0.2.3-linux-x86_64.tar.gz` (+ `-rife-models`) | glibc 2.28 or newer (Rocky / Alma / RHEL 8 and 9, Ubuntu 20.04, Debian 11 or later), X11 or XWayland |
+| Windows 10 / 11, x64 | `welder-0.2.3-win64.zip` (one zip: the app, Python for .nk import, the RIFE node's networks) | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
+| Linux x86_64 | `welder-0.2.3-linux-x86_64.tar.gz` | glibc 2.28 or newer (Rocky / Alma / RHEL 8 and 9, Ubuntu 20.04, Debian 11 or later), X11 or XWayland |
 | macOS 11 or later | `welder-0.2.3-macos-arm64.zip` (Apple silicon) or `welder-0.2.3-macos-x86_64.zip` (Intel) | not signed yet: right-click Welder.app, **Open**, the first time |
 
 **Windows:** before unzipping, right-click the zip, Properties, tick **Unblock**, OK. The build
 isn't code-signed yet, so Windows may still say "Windows protected your PC": click **More info**,
-then **Run anyway**. Unzip every zip into the same folder and run `Welder.bat`.
+then **Run anyway**. Unzip it and run `Welder.bat`.
 
 **Linux:** unpack and run `./Welder`; `./install-desktop-entry.sh` adds it to your
 applications menu.
+
+**Updates:** Welder checks GitHub for a newer version when it starts (at most every 12 hours) and
+shows **Update available** at the top right of the menu bar; **Help › Check for Updates** checks now.
+Unzip the new version anywhere: settings and the ML setup aren't kept in the Welder folder, so it
+picks them up (models you put in the old folder's `models\` by hand: move them across). Turn the
+check off in **Edit › Preferences › Updates**, or with `WELDER_NO_UPDATE_CHECK=1` on offline machines.
 
 It's a beta: save often (it autosaves every 30 seconds and offers to recover after a crash) and
 don't put it on a delivery you can't redo.
