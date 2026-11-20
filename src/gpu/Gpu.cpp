@@ -138,6 +138,7 @@ struct Device {
     VkQueue queue = VK_NULL_HANDLE;
     uint32_t family = 0;
     uint32_t maxGroupsX = 65535, maxGroupsY = 65535;
+    size_t maxBuffer = size_t(1) << 27;  // the largest storage buffer a kernel may bind (from the card)
     std::mutex queueM;
     std::map<std::string, Pipe> pipes;
     std::mutex pipesM;
@@ -319,6 +320,7 @@ bool setup(Device& d) {
     vkGetPhysicalDeviceMemoryProperties(d.phys, &d.memProps);
     d.maxGroupsX = props.limits.maxComputeWorkGroupCount[0];
     d.maxGroupsY = props.limits.maxComputeWorkGroupCount[1];
+    d.maxBuffer = props.limits.maxStorageBufferRange;
     uint32_t qn = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(d.phys, &qn, nullptr);
     std::vector<VkQueueFamilyProperties> qs(qn);
@@ -495,6 +497,8 @@ bool runSequence(const char* kernel, const std::vector<Buffer>& bufs, const std:
     Device& d = *dp;
     for (auto& x : ds)
         if (x.gx == 0 || x.gy == 0 || x.gz == 0 || x.gx > d.maxGroupsX || x.gy > d.maxGroupsY) return false;
+    for (auto& b : bufs)
+        if (b.bytes > d.maxBuffer) return false;  // more than the card can bind at once: the CPU does it
     // a free slot
     Slot* s = nullptr;
     {

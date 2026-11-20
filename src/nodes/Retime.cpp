@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -537,6 +540,15 @@ void Flow::at(float x, float y, float& ou, float& ov) const {
 
 Flow estimateFlow(const Plane& a0, const Plane& b0, const FlowOptions& o) {
     const int W = a0.w, H = a0.h;
+    const auto tStart = std::chrono::steady_clock::now();
+    struct Report {
+        std::chrono::steady_clock::time_point t;
+        ~Report() {
+            if (std::getenv("STRATA_OFLOW_TIMING"))
+                std::fprintf(stderr, "  estimateFlow: %.0f ms\n",
+                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count());
+        }
+    } report{tStart};
     Flow r;
     r.w = W;
     r.h = H;
@@ -596,6 +608,10 @@ Flow estimateFlow(const Plane& a0, const Plane& b0, const FlowOptions& o) {
 
 // ================================================================= interpolation
 
+Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* la, const Plane* lb) {
+    return fieldsAt(pairMotion(f01, f10, la, lb), t);
+}
+
 Fields blendFields(int w, int h, double t) {
     Fields f;
     f.resizeTo(w, h);
@@ -606,39 +622,73 @@ Fields blendFields(int w, int h, double t) {
 // Flow at every image pixel. With the image's luminance, joint-bilateral
 // upsampling: grid samples that look like the pixel count more, so motion
 // edges follow image edges instead of being smeared over a grid cell.
+// exp(-x) for x in [0, 16], in steps of 1/256 (index x * 256)
+static const float* expLut() {
+    static const std::vector<float> t = [] {
+        std::vector<float> t(4097);
+        for (int i = 0; i <= 4096; ++i) t[i] = std::exp(-i / 256.0f);
+        return t;
+    }();
+    return t.data();
+}
+
 static void densify(const Flow& f, const Plane* lum, std::vector<float>& u, std::vector<float>& v) {
     const int W = f.w, H = f.h;
     const bool jbu = lum && lum->w == W && lum->h == H && f.ref.size() == (size_t)f.fw * f.fh && (f.fw < W || f.fh < H);
+    if (!jbu) {
+        parallelFor(H, [&](int b, int e) {
+            for (int y = b; y < e; ++y)
+                for (int x = 0; x < W; ++x) f.at((float)x, (float)y, u[(size_t)y * W + x], v[(size_t)y * W + x]);
+        });
+        return;
+    }
+    // The 4x4 grid taps of a pixel: their spatial weight is a Gaussian of the distance, which splits
+    // into a weight across times a weight down, both the same for every pixel of a column / row.
+    struct Taps {
+        int i0;
+        float w[4];
+    };
+    auto taps = [](int n, int fn) {
+        std::vector<Taps> t(n);
+        for (int x = 0; x < n; ++x) {
+            float g = (x + 0.5f) * fn / n - 0.5f;
+            t[x].i0 = (int)std::floor(g);
+            for (int k = 0; k < 4; ++k) {
+                float d = g - (t[x].i0 + k - 1);
+                t[x].w[k] = std::exp(-(d * d) / (2 * 0.6f * 0.6f));
+            }
+        }
+        return t;
+    };
+    const std::vector<Taps> tx = taps(W, f.fw), ty = taps(H, f.fh);
+    const float* R = expLut();  // the range weight exp(-dl^2) (beyond dl^2 = 16 it is < 1e-7)
     parallelFor(H, [&](int b, int e) {
-        for (int y = b; y < e; ++y)
+        for (int y = b; y < e; ++y) {
+            const Taps& Y = ty[y];
+            int rows[4];
+            for (int j = 0; j < 4; ++j) rows[j] = std::clamp(Y.i0 + j - 1, 0, f.fh - 1) * f.fw;
             for (int x = 0; x < W; ++x) {
                 size_t i = (size_t)y * W + x;
-                if (!jbu) {
-                    f.at((float)x, (float)y, u[i], v[i]);
-                    continue;
-                }
-                float gx = (x + 0.5f) * f.fw / W - 0.5f, gy = (y + 0.5f) * f.fh / H - 0.5f;
-                int ix = (int)std::floor(gx), iy = (int)std::floor(gy);
-                float l0 = lum->v[i];
+                const Taps& X = tx[x];
+                int cols[4];
+                for (int k = 0; k < 4; ++k) cols[k] = std::clamp(X.i0 + k - 1, 0, f.fw - 1);
+                const float l0 = lum->v[i];
                 float su = 0, sv = 0, sw = 0, bu = 0, bv = 0, bw = 0;
-                for (int j = -1; j <= 2; ++j) {
-                    int yy = std::clamp(iy + j, 0, f.fh - 1);
-                    float dy = gy - (iy + j);
-                    for (int k = -1; k <= 2; ++k) {
-                        int xx = std::clamp(ix + k, 0, f.fw - 1);
-                        float dx = gx - (ix + k);
-                        float ws = std::exp(-(dx * dx + dy * dy) / (2 * 0.6f * 0.6f));
-                        size_t g = (size_t)yy * f.fw + xx;
-                        float dl = (f.ref[g] - l0) / 0.04f;
-                        float w = ws * std::exp(-dl * dl);
-                        su += w * f.u[g];
-                        sv += w * f.v[g];
+                for (int j = 0; j < 4; ++j)
+                    for (int k = 0; k < 4; ++k) {
+                        const size_t g = (size_t)rows[j] + cols[k];
+                        const float ws = Y.w[j] * X.w[k];
+                        const float dl = (f.ref[g] - l0) * 25.0f;  // / 0.04
+                        const float q = dl * dl * 256.0f;          // dl^2 in table steps
+                        const float w = q < 4096.0f ? ws * R[(int)(q + 0.5f)] : 0.0f;
+                        const float fu = f.u[g], fv = f.v[g];
+                        su += w * fu;
+                        sv += w * fv;
                         sw += w;
-                        bu += ws * f.u[g];
-                        bv += ws * f.v[g];
+                        bu += ws * fu;
+                        bv += ws * fv;
                         bw += ws;
                     }
-                }
                 if (sw > 1e-4f * bw) {
                     u[i] = su / sw;
                     v[i] = sv / sw;
@@ -647,6 +697,7 @@ static void densify(const Flow& f, const Plane* lum, std::vector<float>& u, std:
                     v[i] = bv / bw;
                 }
             }
+        }
     });
 }
 
@@ -675,12 +726,14 @@ static void fixOccluded(std::vector<float>& u, std::vector<float>& v, const std:
                         if (xx < 0 || xx >= W) continue;
                         size_t j = (size_t)yy * W + xx;
                         if (occ[j] > 0.2f) continue;
-                        float d2 = (float)(dx * dx + dy * dy) / (R * R);
-                        float w = std::exp(-2 * d2);
+                        // exp(-(2 d^2 + dl^2)) from the table (nothing beyond 16: under 1e-7)
+                        float q = 2.0f * (float)(dx * dx + dy * dy) / (R * R);
                         if (lum) {
-                            float dl = (lum->v[j] - l0) / 0.05f;
-                            w *= std::exp(-dl * dl);
+                            float dl = (lum->v[j] - l0) * 20.0f;  // / 0.05
+                            q += dl * dl;
                         }
+                        if (q >= 16.0f) continue;
+                        float w = expLut()[(int)(q * 256.0f + 0.5f)];
                         su += w * u[j];
                         sv += w * v[j];
                         sw += w;
@@ -697,15 +750,85 @@ static void fixOccluded(std::vector<float>& u, std::vector<float>& v, const std:
     v.swap(nv);
 }
 
-Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* la, const Plane* lb) {
+// pairMotion on the GPU (gpu/shaders/oflow_motion.comp). False when there's no GPU, the frame is
+// small, only one frame's luminance was given, or the call failed: the CPU does it.
+static bool pairMotionGpu(const Flow& f01, const Flow& f10, const Plane* la, const Plane* lb, PairMotion& P) {
     const int W = f01.w, H = f01.h;
     const size_t N = (size_t)W * H;
-    Fields F;
-    F.resizeTo(W, H);
+    if (N < 65536 || !gpu::available()) return false;
+    if (f10.w != W || f10.h != H || f10.fw != f01.fw || f10.fh != f01.fh) return false;
+    const size_t G = (size_t)f01.fw * f01.fh;
+    if (f01.u.size() != G || f10.u.size() != G) return false;
+    const bool lumA = la && la->w == W && la->h == H, lumB = lb && lb->w == W && lb->h == H;
+    if (lumA != lumB) return false;
+    const bool lum = lumA;
+    auto jbuOf = [&](const Flow& f) { return lum && f.ref.size() == G && (f.fw < W || f.fh < H); };
+    if (jbuOf(f01) != jbuOf(f10)) return false;
+    auto grid = [&](const Flow& f) {
+        std::vector<float> g(3 * G, 0.0f);
+        std::copy(f.u.begin(), f.u.end(), g.begin());
+        std::copy(f.v.begin(), f.v.end(), g.begin() + G);
+        if (f.ref.size() == G) std::copy(f.ref.begin(), f.ref.end(), g.begin() + 2 * G);
+        return g;
+    };
+    const std::vector<float> g01 = grid(f01), g10 = grid(f10);
+    const float none = 0;
+    P.w = W, P.h = H;
+    for (auto* v : {&P.u0, &P.v0, &P.u1, &P.v1, &P.o0, &P.o1}) v->assign(N, 0.0f);
+    struct Push {
+        int mode, w, h, fw, fh, jbu, photo;
+    };
+    const uint32_t gx = (uint32_t)(W + 15) / 16, gy = (uint32_t)(H + 15) / 16;
+    std::vector<gpu::Dispatch> ds;
+    for (int mode = 0; mode < (lum ? 6 : 4); ++mode) {
+        const Push pc{mode, W, H, f01.fw, f01.fh, jbuOf(f01) ? 1 : 0, lum ? 1 : 0};
+        gpu::Dispatch d;
+        std::memcpy(d.push, &pc, sizeof pc);
+        d.gx = gx, d.gy = gy;
+        ds.push_back(d);
+    }
+    const size_t bytes = N * sizeof(float);
+    // with the occlusion fix, the fixed flows (bindings 10-13) are the result; without, the dense ones
+    auto res = [&](std::vector<float>& v, bool isResult) { return gpu::Buffer{nullptr, isResult ? v.data() : nullptr, bytes}; };
+    const bool ok = gpu::runSequence("oflow_motion",
+                            {{g01.data(), nullptr, g01.size() * sizeof(float)},
+                             {g10.data(), nullptr, g10.size() * sizeof(float)},
+                             {lum ? la->v.data() : &none, nullptr, lum ? bytes : sizeof(float)},
+                             {lum ? lb->v.data() : &none, nullptr, lum ? bytes : sizeof(float)},
+                             res(P.u0, !lum), res(P.v0, !lum), res(P.u1, !lum), res(P.v1, !lum),
+                             res(P.o0, true), res(P.o1, true),
+                             lum ? res(P.u0, true) : gpu::Buffer{nullptr, nullptr, sizeof(float)},
+                             lum ? res(P.v0, true) : gpu::Buffer{nullptr, nullptr, sizeof(float)},
+                             lum ? res(P.u1, true) : gpu::Buffer{nullptr, nullptr, sizeof(float)},
+                             lum ? res(P.v1, true) : gpu::Buffer{nullptr, nullptr, sizeof(float)}},
+                            ds);
+    return ok;
+}
+
+PairMotion pairMotion(const Flow& f01, const Flow& f10, const Plane* la, const Plane* lb) {
+    const int W = f01.w, H = f01.h;
+    static const bool timing = std::getenv("STRATA_OFLOW_TIMING");
+    auto T0 = std::chrono::steady_clock::now();
+    auto lap = [&](const char* what) {
+        if (!timing) return;
+        auto t1 = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "  motion %s: %.0f ms\n", what, std::chrono::duration<double, std::milli>(t1 - T0).count());
+        T0 = t1;
+    };
+    const size_t N = (size_t)W * H;
+    PairMotion P;
+    if (!std::getenv("STRATA_OFLOW_CPU") && pairMotionGpu(f01, f10, la, lb, P)) {
+        lap("on the GPU");
+        return P;
+    }
+    P.w = W;
+    P.h = H;
     // dense flows at image resolution
-    std::vector<float> u0(N), v0(N), u1(N), v1(N);
+    std::vector<float>&u0 = P.u0, &v0 = P.v0, &u1 = P.u1, &v1 = P.v1, &o0 = P.o0, &o1 = P.o1;
+    u0.resize(N), v0.resize(N), u1.resize(N), v1.resize(N);
     densify(f01, la, u0, v0);
     densify(f10, lb, u1, v1);
+    lap("densify");
     auto bil = [&](const std::vector<float>& p, float x, float y) {
         x = std::clamp(x, 0.0f, (float)(W - 1));
         y = std::clamp(y, 0.0f, (float)(H - 1));
@@ -716,7 +839,7 @@ Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* l
         return a + (c - a) * fy;
     };
     // forward-backward consistency: 0 = seen in both frames, 1 = occluded in the other
-    std::vector<float> o0(N), o1(N);
+    o0.resize(N), o1.resize(N);
     // Occlusion: a pixel whose match leaves the frame, whose flow and the
     // reverse flow disagree, or whose match looks different, is taken to be
     // seen in one frame only. (Smoothing often drags the flow of revealed /
@@ -753,37 +876,111 @@ Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* l
     occl(u0, v0, u1, v1, la, lb, o0);
     occl(u1, v1, u0, v0, lb, la, o1);
     if (la && la->w == W && la->h == H) fixOccluded(u0, v0, o0, la, W, H);
+    lap("occlusion + fixOccluded A");
     if (lb && lb->w == W && lb->h == H) fixOccluded(u1, v1, o1, lb, W, H);
+    lap("fixOccluded");
+    return P;
+}
 
-    // splat both directions to time t; lower cost wins
-    std::vector<float> cost(N, 1e30f), ut(N, 0), vt(N, 0), mt(N, 0);
-    auto splat = [&](float x, float y, float c, float uu, float vv, float m) {
-        int xi = (int)std::floor(x), yi = (int)std::floor(y);
-        for (int j = 0; j < 2; ++j)
-            for (int i = 0; i < 2; ++i) {
-                int px = xi + i, py = yi + j;
-                if (px < 0 || py < 0 || px >= W || py >= H) continue;
-                // distance from the landing point breaks ties between overlapping pixels
-                float d = std::fabs(px - x) + std::fabs(py - y);
-                float cc = c + 0.01f * d;
-                size_t k = (size_t)py * W + px;
-                if (cc < cost[k]) {
-                    cost[k] = cc;
-                    ut[k] = uu;
-                    vt[k] = vv;
-                    mt[k] = m;
-                }
-            }
+
+Fields fieldsAt(const PairMotion& P, double t) {
+    const int W = P.w, H = P.h;
+    static const bool timing = std::getenv("STRATA_OFLOW_TIMING");
+    auto T0 = std::chrono::steady_clock::now();
+    auto lap = [&](const char* what) {
+        if (!timing) return;
+        auto t1 = std::chrono::steady_clock::now();
+        std::fprintf(stderr, "  fields %s: %.0f ms\n", what, std::chrono::duration<double, std::milli>(t1 - T0).count());
+        T0 = t1;
     };
+    const size_t N = (size_t)W * H;
+    const std::vector<float>&u0 = P.u0, &v0 = P.v0, &u1 = P.u1, &v1 = P.v1, &o0 = P.o0, &o1 = P.o1;
+    Fields F;
+    F.resizeTo(W, H);
+    // Splat both directions to time t; lower cost wins. In parallel: each target pixel keeps the
+    // least (cost, source) key, the source being pixel i from A (2i) or from B (2i + 1), so ties go
+    // to the earlier source exactly as a pass in that order would. Costs are >= 0, so their float
+    // bits order as the floats do.
     const float tf = (float)t;
-    for (int y = 0; y < H; ++y)
-        for (int x = 0; x < W; ++x) {
-            size_t i = (size_t)y * W + x;
-            // from A: seen in A (and in B unless occluded)
-            splat(x + tf * u0[i], y + tf * v0[i], o0[i], u0[i], v0[i], (1 - tf) * (1 - o0[i]) + o0[i]);
-            // from B: motion A->B is -F10
-            splat(x + (1 - tf) * u1[i], y + (1 - tf) * v1[i], o1[i], -u1[i], -v1[i], (1 - tf) * (1 - o1[i]));
+    std::vector<float> cost(N), ut(N), vt(N), mt(N);
+    auto resolve = [&](size_t k, uint64_t key) {  // target k's winning (cost, source)
+        if (key == ~0ull) {
+            cost[k] = 1e30f, ut[k] = vt[k] = mt[k] = 0;
+            return;
         }
+        const uint32_t cb = (uint32_t)(key >> 32), src = (uint32_t)key;
+        std::memcpy(&cost[k], &cb, 4);
+        const size_t i = src >> 1;
+        if (!(src & 1)) {
+            ut[k] = u0[i], vt[k] = v0[i], mt[k] = (1 - tf) * (1 - o0[i]) + o0[i];
+        } else {
+            ut[k] = -u1[i], vt[k] = -v1[i], mt[k] = (1 - tf) * (1 - o1[i]);
+        }
+    };
+    bool onGpu = false;
+    if (N >= 65536 && N < (1u << 31) && !std::getenv("STRATA_OFLOW_CPU") && gpu::available()) {
+        std::vector<uint32_t> gc(N), gs(N);
+        struct Push {
+            int mode, w, h;
+            float t;
+        };
+        std::vector<gpu::Dispatch> ds;
+        for (int mode = 0; mode < 3; ++mode) {
+            const Push pc{mode, W, H, tf};
+            gpu::Dispatch d;
+            std::memcpy(d.push, &pc, sizeof pc);
+            d.gx = (uint32_t)(W + 15) / 16, d.gy = (uint32_t)(H + 15) / 16;
+            ds.push_back(d);
+        }
+        const size_t bytes = N * sizeof(float);
+        onGpu = gpu::runSequence("oflow_splat",
+                                 {{u0.data(), nullptr, bytes}, {v0.data(), nullptr, bytes}, {u1.data(), nullptr, bytes},
+                                  {v1.data(), nullptr, bytes}, {o0.data(), nullptr, bytes}, {o1.data(), nullptr, bytes},
+                                  {nullptr, gc.data(), bytes}, {nullptr, gs.data(), bytes}},
+                                 ds);
+        if (onGpu)
+            parallelFor(H, [&](int b, int e) {
+                for (size_t k = (size_t)b * W; k < (size_t)e * W; ++k) resolve(k, (uint64_t)gc[k] << 32 | gs[k]);
+            });
+    }
+    if (!onGpu) {
+        std::unique_ptr<std::atomic<uint64_t>[]> best(new std::atomic<uint64_t>[N]);
+        parallelFor(H, [&](int b, int e) {
+            for (size_t i = (size_t)b * W; i < (size_t)e * W; ++i) best[i].store(~0ull, std::memory_order_relaxed);
+        });
+        auto splat = [&](float x, float y, float c, uint32_t src) {
+            int xi = (int)std::floor(x), yi = (int)std::floor(y);
+            for (int j = 0; j < 2; ++j)
+                for (int i = 0; i < 2; ++i) {
+                    int px = xi + i, py = yi + j;
+                    if (px < 0 || py < 0 || px >= W || py >= H) continue;
+                    // distance from the landing point breaks ties between overlapping pixels
+                    float d = std::fabs(px - x) + std::fabs(py - y);
+                    float cc = c + 0.01f * d;
+                    uint32_t cb;
+                    std::memcpy(&cb, &cc, 4);
+                    const uint64_t key = (uint64_t)cb << 32 | src;
+                    auto& slot = best[(size_t)py * W + px];
+                    uint64_t cur = slot.load(std::memory_order_relaxed);
+                    while (key < cur && !slot.compare_exchange_weak(cur, key, std::memory_order_relaxed)) {
+                    }
+                }
+        };
+        parallelFor(H, [&](int b, int e) {
+            for (int y = b; y < e; ++y)
+                for (int x = 0; x < W; ++x) {
+                    size_t i = (size_t)y * W + x;
+                    // from A: seen in A (and in B unless occluded)
+                    splat(x + tf * u0[i], y + tf * v0[i], o0[i], (uint32_t)(2 * i));
+                    // from B: motion A->B is -F10
+                    splat(x + (1 - tf) * u1[i], y + (1 - tf) * v1[i], o1[i], (uint32_t)(2 * i + 1));
+                }
+        });
+        parallelFor(H, [&](int b, int e) {
+            for (size_t k = (size_t)b * W; k < (size_t)e * W; ++k) resolve(k, best[k].load(std::memory_order_relaxed));
+        });
+    }
+    lap(onGpu ? "splat (GPU)" : "splat");
     // fill holes from their neighbours, outside in
     std::vector<size_t> holes;
     for (size_t i = 0; i < N; ++i)
@@ -825,6 +1022,7 @@ Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* l
         }
         holes.swap(left);
     }
+    lap("holes");
     // the fields, and which input can actually be sampled
     parallelFor(H, [&](int b, int e) {
         for (int y = b; y < e; ++y)
@@ -860,6 +1058,7 @@ Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* l
                 F.m[(size_t)y * W + x] = s / n;
             }
     });
+    lap("fields");
     return F;
 }
 

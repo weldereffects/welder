@@ -1,0 +1,53 @@
+// OFlow's splat of a pair's motion to time t (nodes/Retime.cpp, fieldsAt) on the GPU. Every pixel
+// of A and of B lands at its place at t and offers itself to the 2x2 pixels around; each target
+// keeps the lowest cost, ties going to the earlier source (pixel i of A = 2i, of B = 2i + 1), as
+// the CPU's pass in that order does. Two dispatches: the least cost (float bits, all >= 0, order as
+// the floats do), then the least source among those offering exactly that cost.
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer U0 { float u0[]; };
+layout(std430, set = 0, binding = 1) readonly buffer V0 { float v0[]; };
+layout(std430, set = 0, binding = 2) readonly buffer U1 { float u1[]; };
+layout(std430, set = 0, binding = 3) readonly buffer V1 { float v1[]; };
+layout(std430, set = 0, binding = 4) readonly buffer O0 { float o0[]; };
+layout(std430, set = 0, binding = 5) readonly buffer O1 { float o1[]; };
+layout(std430, set = 0, binding = 6) buffer C { uint cost[]; };
+layout(std430, set = 0, binding = 7) buffer S { uint src[]; };
+
+layout(push_constant) uniform P {
+    int mode;  // 0 clear, 1 least cost, 2 least source at that cost
+    int w, h;
+    float t;
+} p;
+
+void offer(float x, float y, float c, uint id) {
+    int xi = int(floor(x)), yi = int(floor(y));
+    for (int j = 0; j < 2; ++j)
+        for (int i = 0; i < 2; ++i) {
+            int px = xi + i, py = yi + j;
+            if (px < 0 || py < 0 || px >= p.w || py >= p.h) continue;
+            // distance from the landing point breaks ties between overlapping pixels
+            precise float d = abs(float(px) - x) + abs(float(py) - y);
+            precise float cc = c + 0.01 * d;
+            uint cb = floatBitsToUint(cc);
+            int k = py * p.w + px;
+            if (p.mode == 1) atomicMin(cost[k], cb);
+            else if (cost[k] == cb) atomicMin(src[k], id);
+        }
+}
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
+    if (x >= p.w || y >= p.h) return;
+    int i = y * p.w + x;
+    if (p.mode == 0) {
+        cost[i] = 0xffffffffu;
+        src[i] = 0xffffffffu;
+        return;
+    }
+    precise float ax = float(x) + p.t * u0[i], ay = float(y) + p.t * v0[i];
+    precise float bx = float(x) + (1.0 - p.t) * u1[i], by = float(y) + (1.0 - p.t) * v1[i];
+    offer(ax, ay, o0[i], uint(2 * i));      // from A: seen in A (and in B unless occluded)
+    offer(bx, by, o1[i], uint(2 * i + 1));  // from B: motion A->B is -F10
+}

@@ -10,7 +10,10 @@
 //   shutter_samples, shutter_time, auto_shutter     motion blur from several in-betweens
 // OFlow: vector_detail (0.2), smoothness (0.5), flicker (false), weight_red/green/blue
 // RIFE:  model ("" = newest installed), use_gpu (true), resolution ("auto" | "full" | "half" | "quarter")
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 
 #include "../core/Engine.h"
@@ -60,7 +63,14 @@ public:
         for (int fr : frames(a.frame)) key = hashCombine(key, a.engine.hash(input(0), fr));
         key = hashCombine(key, ((uint64_t)(uint32_t)D.x1 << 32) ^ (uint32_t)D.y1);
         key = hashCombine(key, ((uint64_t)(uint32_t)D.x2 << 32) ^ (uint32_t)D.y2);
-        auto res = results_.get(key, [&] { return build(a, D); });
+        auto res = results_.get(key, [&] {
+            auto t0 = std::chrono::steady_clock::now();
+            auto r = build(a, D);
+            if (std::getenv("STRATA_OFLOW_TIMING"))
+                std::fprintf(stderr, "oflow build frame %g: %.0f ms\n", a.frame,
+                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+            return r;
+        });
         out.copyFrom(*res);
     }
 
@@ -68,6 +78,7 @@ private:
     bool rife_;
     SharedCache<Image> results_{3};
     SharedCache<Flow> flows_{8};
+    SharedCache<PairMotion> motion_{2};  // ~350 MB each on a 4.6K plate
 
     // The source frames an output frame needs.
     std::vector<int> frames(double f) {
@@ -161,23 +172,15 @@ private:
         k = hashBytes(&o.detail, sizeof(double), k);
         k = hashBytes(&o.smoothness, sizeof(double), k);
         k = hashBytes(wts, sizeof(wts), hashCombine(k, o.flicker));
-        std::shared_ptr<const Plane> la, lb;
-        auto lum = [&] {
-            if (!la) {
-                la = std::make_shared<Plane>(luminance(ia, wts));
-                lb = std::make_shared<Plane>(luminance(ib, wts));
-            }
-        };
-        auto fwd = flows_.get(hashCombine(k, 1), [&] {
-            lum();
-            return std::make_shared<Flow>(estimateFlow(*la, *lb, o));
+        // The motion of this pair at image resolution is the same for every in-between (a speed of
+        // 25% makes four from each pair): built once, then only the splat to t is per frame.
+        auto motion = motion_.get(k, [&] {
+            const Plane la = luminance(ia, wts), lb = luminance(ib, wts);
+            auto fwd = flows_.get(hashCombine(k, 1), [&] { return std::make_shared<Flow>(estimateFlow(la, lb, o)); });
+            auto bwd = flows_.get(hashCombine(k, 2), [&] { return std::make_shared<Flow>(estimateFlow(lb, la, o)); });
+            return std::make_shared<PairMotion>(pairMotion(*fwd, *bwd, &la, &lb));
         });
-        auto bwd = flows_.get(hashCombine(k, 2), [&] {
-            lum();
-            return std::make_shared<Flow>(estimateFlow(*lb, *la, o));
-        });
-        lum();
-        return fieldsFromFlow(*fwd, *bwd, t, la.get(), lb.get());
+        return fieldsAt(*motion, t);
     }
 
     Fields rifeFields(const Image& ia, const Image& ib, double t) {

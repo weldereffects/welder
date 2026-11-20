@@ -7105,6 +7105,56 @@ Connections:  {
             CHECK(worst < 2e-4);
         }
     });
+    test("GPU: OFlow pair motion and splat match the CPU (occluding square)", [] {
+        if (!gpu::available()) return;
+        // a textured background drifting left, a bright square moving right over it: occlusions both ways
+        const int W = 320, H = 240;
+        auto frame = [&](int f) {
+            retime::Plane p(W, H);
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    const int X = x + 2 * f;
+                    float v = 0.4f + 0.2f * std::sin(X * 0.21f) * std::cos(y * 0.17f) + 0.1f * std::sin((X + y) * 0.07f);
+                    const int sx = x - (100 + 9 * f), sy = y - 80;
+                    if (sx >= 0 && sx < 70 && sy >= 0 && sy < 70) v = 0.9f + 0.05f * std::sin(sx * 0.5f) * std::cos(sy * 0.4f);
+                    p.at(x, y) = v;
+                }
+            return p;
+        };
+        const retime::Plane la = frame(0), lb = frame(1);
+        retime::FlowOptions o;
+        gpu::setEnabled(false);
+        const retime::Flow f01 = retime::estimateFlow(la, lb, o), f10 = retime::estimateFlow(lb, la, o);
+        const retime::PairMotion cpu = retime::pairMotion(f01, f10, &la, &lb);
+        const retime::Fields fc = retime::fieldsAt(cpu, 0.37);
+        gpu::setEnabled(true);
+        const auto before = gpu::stats().runs;
+        const retime::PairMotion g = retime::pairMotion(f01, f10, &la, &lb);
+        const retime::Fields fg = retime::fieldsAt(cpu, 0.37);  // the same motion: the splat alone
+        CHECK(gpu::stats().runs >= before + 2);
+        // (the CPU takes its weights from a table, so an occluded pixel's borrowed motion can differ a
+        // little, and one near a threshold now and then a lot: count those)
+        double du = 0, dO = 0;
+        size_t occluded = 0, far = 0;
+        for (size_t i = 0; i < cpu.u0.size(); ++i) {
+            const double d = std::max(std::fabs(cpu.u0[i] - g.u0[i]), std::fabs(cpu.v1[i] - g.v1[i]));
+            du += d;
+            far += d > 0.05;
+            dO = std::max({dO, (double)std::fabs(cpu.o0[i] - g.o0[i]), (double)std::fabs(cpu.o1[i] - g.o1[i])});
+            occluded += cpu.o0[i] > 0.5f;
+        }
+        du /= cpu.u0.size();
+        size_t differ = 0;
+        for (size_t i = 0; i < fc.m.size(); ++i)
+            differ += std::fabs(fc.m[i] - fg.m[i]) > 1e-5f || std::fabs(fc.fx0[i] - fg.fx0[i]) > 1e-5f;
+        std::printf("  mean |du| %.5f px, %zu of %zu off by > 0.05 px, max |do| %.4f, %zu occluded, %zu field pixels differ\n",
+                    du, far, cpu.u0.size(), dO, occluded, differ);
+        CHECK(occluded > 500);  // the scene has occlusions to fix
+        CHECK(du < 0.002);
+        CHECK(far < cpu.u0.size() / 500);
+        CHECK(dO < 0.05);
+        CHECK(differ == 0);     // the splat picks exactly what the CPU picks
+    });
     test("GPU: Defocus (disc, blades, gaussian, picture) matches the CPU", [] {
         if (!gpu::available()) return;
         json nodes = json::array({

@@ -104,6 +104,16 @@ struct Fields {
 // la / lb (optional, image resolution): luminance of the two frames, used to
 // give pixels seen in only one frame the motion of the background around them.
 Fields fieldsFromFlow(const Flow& f01, const Flow& f10, double t, const Plane* la = nullptr, const Plane* lb = nullptr);
+// fieldsFromFlow in two steps: the part that is the same at every t (dense flows at image
+// resolution, occlusion, occluded pixels given their background's motion), kept for the
+// in-betweens of one pair of frames, then the splat to time t.
+struct PairMotion {
+    int w = 0, h = 0;
+    std::vector<float> u0, v0, u1, v1, o0, o1;
+    size_t bytes() const { return 6 * u0.size() * sizeof(float); }
+};
+PairMotion pairMotion(const Flow& f01, const Flow& f10, const Plane* la = nullptr, const Plane* lb = nullptr);
+Fields fieldsAt(const PairMotion& p, double t);
 // A plain cross-dissolve (the classic Blend).
 Fields blendFields(int w, int h, double t);
 

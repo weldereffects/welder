@@ -1,0 +1,171 @@
+// OFlow's motion of a pair of frames at image resolution (nodes/Retime.cpp, pairMotion) on the
+// GPU, one step per dispatch (gpu::runSequence runs them in one submission): the dense flows
+// (edge-aware upsampling of the flow grids), forward-backward occlusion, then occluded pixels
+// given the motion of their background. Each step follows the CPU code.
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer G01 { float g01[]; };  // grid A->B: u, v, ref (fw*fh each)
+layout(std430, set = 0, binding = 1) readonly buffer G10 { float g10[]; };  // grid B->A
+layout(std430, set = 0, binding = 2) readonly buffer LA { float la[]; };    // luminance of A (W*H), or 1 float
+layout(std430, set = 0, binding = 3) readonly buffer LB { float lb[]; };
+layout(std430, set = 0, binding = 4) buffer U0 { float u0[]; };
+layout(std430, set = 0, binding = 5) buffer V0 { float v0[]; };
+layout(std430, set = 0, binding = 6) buffer U1 { float u1[]; };
+layout(std430, set = 0, binding = 7) buffer V1 { float v1[]; };
+layout(std430, set = 0, binding = 8) buffer O0 { float o0[]; };
+layout(std430, set = 0, binding = 9) buffer O1 { float o1[]; };
+layout(std430, set = 0, binding = 10) buffer NU0 { float nu0[]; };  // the dense flows after the occlusion fix
+layout(std430, set = 0, binding = 11) buffer NV0 { float nv0[]; };
+layout(std430, set = 0, binding = 12) buffer NU1 { float nu1[]; };
+layout(std430, set = 0, binding = 13) buffer NV1 { float nv1[]; };
+
+layout(push_constant) uniform P {
+    int mode;  // 0 densify A->B, 1 densify B->A, 2 occlusion of A, 3 of B, 4 fix A, 5 fix B
+    int w, h;  // image
+    int fw, fh;  // flow grid
+    int jbu;     // edge-aware upsampling (luminance and grid ref present)
+    int photo;   // luminance of both frames present
+} p;
+
+// ---------------------------------------------------------------- planes by direction
+float G(int dir, int k, int i) { return dir == 0 ? g01[k * p.fw * p.fh + i] : g10[k * p.fw * p.fh + i]; }
+float L(int dir, int i) { return dir == 0 ? la[i] : lb[i]; }
+float Lc(int dir, int x, int y) { return L(dir, clamp(y, 0, p.h - 1) * p.w + clamp(x, 0, p.w - 1)); }
+float U(int dir, int i) { return dir == 0 ? u0[i] : u1[i]; }
+float V(int dir, int i) { return dir == 0 ? v0[i] : v1[i]; }
+float O(int dir, int i) { return dir == 0 ? o0[i] : o1[i]; }
+
+// bilinear, edges extended (Plane::sample)
+float Lsample(int dir, float x, float y) {
+    x = clamp(x, 0.0, float(p.w - 1));
+    y = clamp(y, 0.0, float(p.h - 1));
+    int x0 = int(x), y0 = int(y), x1 = min(x0 + 1, p.w - 1), y1 = min(y0 + 1, p.h - 1);
+    float fx = x - float(x0), fy = y - float(y0);
+    float a = L(dir, y0 * p.w + x0) + (L(dir, y0 * p.w + x1) - L(dir, y0 * p.w + x0)) * fx;
+    float b = L(dir, y1 * p.w + x0) + (L(dir, y1 * p.w + x1) - L(dir, y1 * p.w + x0)) * fx;
+    return a + (b - a) * fy;
+}
+// the dense flow (u: c = 0, v: c = 1) of a direction, bilinear
+float Fsample(int dir, int c, float x, float y) {
+    x = clamp(x, 0.0, float(p.w - 1));
+    y = clamp(y, 0.0, float(p.h - 1));
+    int x0 = int(x), y0 = int(y), x1 = min(x0 + 1, p.w - 1), y1 = min(y0 + 1, p.h - 1);
+    float fx = x - float(x0), fy = y - float(y0);
+    int i00 = y0 * p.w + x0, i01 = y0 * p.w + x1, i10 = y1 * p.w + x0, i11 = y1 * p.w + x1;
+    float r00, r01, r10, r11;
+    if (c == 0) r00 = U(dir, i00), r01 = U(dir, i01), r10 = U(dir, i10), r11 = U(dir, i11);
+    else r00 = V(dir, i00), r01 = V(dir, i01), r10 = V(dir, i10), r11 = V(dir, i11);
+    float a = r00 + (r01 - r00) * fx;
+    float b = r10 + (r11 - r10) * fx;
+    return a + (b - a) * fy;
+}
+
+void densify(int dir, int x, int y, int i) {
+    float gx = (float(x) + 0.5) * float(p.fw) / float(p.w) - 0.5, gy = (float(y) + 0.5) * float(p.fh) / float(p.h) - 0.5;
+    float ou, ov;
+    if (p.jbu == 0) {  // Flow::at: bilinear on the grid
+        gx = clamp(gx, 0.0, float(p.fw - 1));
+        gy = clamp(gy, 0.0, float(p.fh - 1));
+        int x0 = int(gx), y0 = int(gy), x1 = min(x0 + 1, p.fw - 1), y1 = min(y0 + 1, p.fh - 1);
+        float fx = gx - float(x0), fy = gy - float(y0);
+        for (int c = 0; c < 2; ++c) {
+            float a = G(dir, c, y0 * p.fw + x0) + (G(dir, c, y0 * p.fw + x1) - G(dir, c, y0 * p.fw + x0)) * fx;
+            float b = G(dir, c, y1 * p.fw + x0) + (G(dir, c, y1 * p.fw + x1) - G(dir, c, y1 * p.fw + x0)) * fx;
+            if (c == 0) ou = a + (b - a) * fy;
+            else ov = a + (b - a) * fy;
+        }
+    } else {  // joint-bilateral: grid samples that look like the pixel count more
+        int ix = int(floor(gx)), iy = int(floor(gy));
+        float l0 = L(dir, i);
+        float su = 0, sv = 0, sw = 0, bu = 0, bv = 0, bw = 0;
+        for (int j = -1; j <= 2; ++j) {
+            int yy = clamp(iy + j, 0, p.fh - 1);
+            float dy = gy - float(iy + j);
+            for (int k = -1; k <= 2; ++k) {
+                int xx = clamp(ix + k, 0, p.fw - 1);
+                float dx = gx - float(ix + k);
+                float ws = exp(-(dx * dx + dy * dy) / (2.0 * 0.6 * 0.6));
+                int g = yy * p.fw + xx;
+                float dl = (G(dir, 2, g) - l0) / 0.04;
+                float wt = ws * exp(-dl * dl);
+                float fu = G(dir, 0, g), fv = G(dir, 1, g);
+                su += wt * fu;
+                sv += wt * fv;
+                sw += wt;
+                bu += ws * fu;
+                bv += ws * fv;
+                bw += ws;
+            }
+        }
+        if (sw > 1e-4 * bw) ou = su / sw, ov = sv / sw;
+        else ou = bu / bw, ov = bv / bw;
+    }
+    if (dir == 0) u0[i] = ou, v0[i] = ov;
+    else u1[i] = ou, v1[i] = ov;
+}
+
+// 0 = seen in both frames, 1 = occluded in the other (fieldsFromFlow's occl)
+void occlusion(int dir, int x, int y, int i) {
+    int other = 1 - dir;
+    float ua = U(dir, i), va = V(dir, i);
+    float qx = float(x) + ua, qy = float(y) + va;
+    float r;
+    if (qx < -0.5 || qy < -0.5 || qx > float(p.w) - 0.5 || qy > float(p.h) - 0.5) {
+        r = 1.0;  // leaves the frame
+    } else {
+        float bu = Fsample(other, 0, qx, qy), bv = Fsample(other, 1, qx, qy);
+        float ex = ua + bu, ey = va + bv;
+        float thr = 0.01 * (ua * ua + va * va + bu * bu + bv * bv) + 0.5;
+        r = (ex * ex + ey * ey) / thr - 1.0;
+        if (p.photo != 0) {
+            float d = abs(L(dir, i) - Lsample(other, qx, qy));
+            float gx = 0.5 * (Lc(dir, x + 1, y) - Lc(dir, x - 1, y));
+            float gy = 0.5 * (Lc(dir, x, y + 1) - Lc(dir, x, y - 1));
+            float tol = 0.03 + 0.5 * sqrt(gx * gx + gy * gy);
+            r = max(r, (d - tol) / tol);
+        }
+        r = clamp(r, 0.0, 1.0);
+    }
+    if (dir == 0) o0[i] = r;
+    else o1[i] = r;
+}
+
+// occluded pixels take the motion of nearby, reliable pixels of similar brightness (fixOccluded)
+void fix(int dir, int x, int y, int i) {
+    float ou = U(dir, i), ov = V(dir, i);
+    if (O(dir, i) >= 0.5) {
+        int R = clamp(int(ceil(length(vec2(ou, ov)) * 1.5)) + 4, 4, 40);
+        int step = max(1, R / 10);
+        float l0 = L(dir, i);
+        float su = 0, sv = 0, sw = 0;
+        for (int dy = -R; dy <= R; dy += step) {
+            int yy = y + dy;
+            if (yy < 0 || yy >= p.h) continue;
+            for (int dx = -R; dx <= R; dx += step) {
+                int xx = x + dx;
+                if (xx < 0 || xx >= p.w) continue;
+                int j = yy * p.w + xx;
+                if (O(dir, j) > 0.2) continue;
+                float d2 = float(dx * dx + dy * dy) / float(R * R);
+                float dl = (L(dir, j) - l0) / 0.05;
+                float wt = exp(-2.0 * d2 - dl * dl);
+                su += wt * U(dir, j);
+                sv += wt * V(dir, j);
+                sw += wt;
+            }
+        }
+        if (sw > 1e-6) ou = su / sw, ov = sv / sw;
+    }
+    if (dir == 0) nu0[i] = ou, nv0[i] = ov;
+    else nu1[i] = ou, nv1[i] = ov;
+}
+
+void main() {
+    int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
+    if (x >= p.w || y >= p.h) return;
+    int i = y * p.w + x;
+    if (p.mode < 2) densify(p.mode, x, y, i);
+    else if (p.mode < 4) occlusion(p.mode - 2, x, y, i);
+    else fix(p.mode - 4, x, y, i);
+}
