@@ -493,6 +493,7 @@ private:
         size_t bytes = 0;
         uint64_t content = 0;  // ViewResult::content: an edit that leaves it the same keeps the frame
     };
+    bool servesView(const CachedFrame& c, double scale, const Box& region, const std::string& compare) const;  // resM_ held
     std::map<std::pair<std::string, int>, CachedFrame> frameCache_;  // (node, frame), guarded by resM_
     std::vector<std::shared_ptr<Image>> unpackPool_;  // images cached frames were unpacked into, reused once nothing holds them (resM_)
     ImagePtr unpackFrame(const HalfImage& h);  // with resM_ held
@@ -503,7 +504,9 @@ private:
     std::atomic<uint64_t> resultSerial_{0};
     std::string compareNode_;  // guarded by reqM_
     void storeFrame(const ViewResult& r, uint64_t gen, double scale, const Box& region, const std::string& compare);
-    bool takeCached(const std::string& node, double frame);
+    // forGen: the render thread's request; nothing is taken once a newer request came in, which
+    // would otherwise be marked done unseen (playback stuck on a frame)
+    bool takeCached(const std::string& node, double frame, uint64_t forGen = 0);
     // render `node` at `f` for the viewer (A, and B when comparing); throws RenderCancelled
     ViewResult renderView(Engine& e, const std::string& node, const std::string& compare, double f, double sc, const Box& region);
 

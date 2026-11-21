@@ -1626,10 +1626,41 @@ int main(int argc, char** argv) {
                 if (onAt >= 0 && el >= onAt && el < offAt) ui.viewer.fullRes = true;
                 if (offAt >= 0 && el >= offAt) ui.viewer.fullRes = false;
                 if ((int)el > sec) {
-                    std::printf("PLAYSEC %d: %d fps (full res %s, scale %g)\n", sec, secShown, ui.viewer.fullRes ? "on" : "off", ui.viewer.reqScale);
+                    std::printf("PLAYSEC %d: %d fps (full res %s, scale %g), frame %g, showing %g, rendering %d, edits pending %d\n", sec, secShown, ui.viewer.fullRes ? "on" : "off", ui.viewer.reqScale, app.frame, r.frame, (int)app.rendering(), (int)app.editsPending());
                     std::fflush(stdout);
                     sec = (int)el, secShown = 0;
                 }
+                // STRATA_TEST_PLAY_STRESS=<every s>: while playing, every so often toggle full res, jump to a
+                // frame, change the zoom or switch the viewer between its first two inputs; reports the
+                // longest time no new frame was shown (a hang would show here, or the run would time out)
+                static double lastNew = -1, stall = 0, nextAct = 1;
+                static int acts = 0;
+                static uint32_t rng = 12345;
+                if (const char* st = std::getenv("STRATA_TEST_PLAY_STRESS"); st && el < secs) {
+                    if (el >= nextAct) {
+                        nextAct = el + std::atof(st);
+                        rng = rng * 1664525u + 1013904223u;
+                        const int what = (int)((rng >> 16) % 4);
+                        Node* vn = app.comp->find("Viewer1");
+                        if (what == 0) ui.viewer.fullRes = !ui.viewer.fullRes;
+                        else if (what == 1) {
+                            auto [a, b] = app.playRange();
+                            app.frame = std::floor(a + ((rng >> 8) % 1000) / 1000.0 * (b - a));
+                            app.requestView();
+                        } else if (what == 2) {
+                            if (!tz) ui.viewer.zoom = 0.2f + ((rng >> 8) % 100) / 100.0f;
+                        } else if (vn && vn->input(1)) {
+                            const int cur = vn->params.data.value("a_pipe", 1);
+                            app.setViewerParam("Viewer1", "a_pipe", cur == 1 ? 2 : 1);
+                        }
+                        std::printf("STRESS %.1fs: %s\n", el, what == 0 ? (ui.viewer.fullRes ? "full res on" : "full res off") : what == 1 ? "jump" : what == 2 ? "zoom" : "switch input");
+                        ++acts;
+                    }
+                    if (lastNew >= 0) stall = std::max(stall, el - lastNew);
+                }
+                if (std::getenv("STRATA_TEST_PLAY_STRESS") && el >= secs && last < 0)
+                    std::printf("STRESS %d actions, longest without a new frame %.0f ms\n", acts, stall * 1000);
+                if ((int)r.frame != prevFrame && r.image) lastNew = el;
                 if ((int)r.frame != prevFrame && r.image) ++secShown;
                 if ((int)r.frame != prevFrame && r.image) {
                     if (prevFrame != INT_MIN && (int)r.frame < prevFrame) {
@@ -1675,6 +1706,7 @@ int main(int argc, char** argv) {
                         });
                     }
                     static uint64_t lastSerial = 0;
+                    if (editedAt >= 0 && lastSerial == 0) lastSerial = r.serial;  // (what was on screen at the edit isn't a frame after it)
                     if (editedAt >= 0 && frameCount > editedAt + 3 && r.image && r.serial != lastSerial) {
                         lastSerial = r.serial;
                         const float v = r.image->at((r.image->bounds.x1 + r.image->bounds.x2) / 2, (r.image->bounds.y1 + r.image->bounds.y2) / 2, 0);

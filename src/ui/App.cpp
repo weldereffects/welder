@@ -1132,7 +1132,7 @@ void App::workerLoop() {
                 if (!inf || stale) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
-            if (takeCached(nodeName, f)) {
+            if (takeCached(nodeName, f, gen)) {
                 if (onResult) onResult();
                 continue;
             }
@@ -1210,11 +1210,25 @@ void App::workerLoop() {
                 superseded = true;
                 break;
             }
+            bool overtaken = false;
             {
                 std::lock_guard<std::mutex> l(resM_);
-                r.serial = ++resultSerial_;
-                shownScale_ = sc;
-                result_ = std::move(r);
+                {
+                    // a newer request was already answered from the cache (playback moved on while this
+                    // rendered): showing this would put the viewer back a frame, with nothing left to
+                    // ask for the frame playback waits on (stuck)
+                    std::lock_guard<std::mutex> rl(reqM_);
+                    overtaken = doneGen_ > gen;
+                }
+                if (!overtaken) {
+                    r.serial = ++resultSerial_;
+                    shownScale_ = sc;
+                    result_ = std::move(r);
+                }
+            }
+            if (overtaken) {
+                superseded = true;
+                break;
             }
             if (onResult) onResult();
         }
@@ -1283,13 +1297,14 @@ ImagePtr App::unpackFrame(const HalfImage& h) {
     return im;
 }
 
-bool App::takeCached(const std::string& node, double f) {
+bool App::takeCached(const std::string& node, double f, uint64_t forGen) {
     if (node.empty() || std::fabs(f - std::round(f)) > 1e-9) return false;
     Box region;
     double scale;
     std::string compare;
     {
         std::lock_guard<std::mutex> l(reqM_);
+        if (forGen && reqGen_ != forGen) return false;
         region = viewRegion_;
         scale = viewScale_;
         compare = compareNode_;
@@ -1298,15 +1313,20 @@ bool App::takeCached(const std::string& node, double f) {
     auto it = frameCache_.find({node, (int)std::lround(f)});
     if (it == frameCache_.end()) return false;
     const CachedFrame& c = it->second;
-    if (c.gen != editGen_ || c.scale != scale || c.region != region || c.compare != compare) return false;
+    if (!servesView(c, scale, region, compare)) return false;
+    if (forGen) {  // (see above: re-checked here, with the result about to change)
+        std::lock_guard<std::mutex> rl(reqM_);
+        if (reqGen_ != forGen) return false;
+    }
     result_ = c.r;
     result_.half = c.image;
     if (c.image) result_.image = unpackFrame(*c.image);
     if (c.imageB) result_.imageB = unpackFrame(*c.imageB);
     result_.serial = ++resultSerial_;
-    shownScale_ = scale;
+    shownScale_ = c.scale;  // (finer than asked, when servesView took a full-res frame)
     {
         std::lock_guard<std::mutex> rl(reqM_);  // nothing to render for this request
+        if (forGen && reqGen_ != forGen) return true;  // a newer request came in just now: it stays to do
         ++reqGen_;
         doneGen_ = reqGen_;
         reqNode_ = node;
@@ -1330,8 +1350,7 @@ bool App::cacheFrame(double f) const {
     }
     std::lock_guard<std::mutex> l(self->resM_);
     auto it = frameCache_.find({viewed, (int)std::lround(f)});
-    return it != frameCache_.end() && it->second.gen == editGen_ && it->second.scale == scale &&
-           it->second.region == region && it->second.compare == compare;
+    return it != frameCache_.end() && servesView(it->second, scale, region, compare);
 }
 
 std::vector<int> App::cachedFrames() {
@@ -1347,8 +1366,7 @@ std::vector<int> App::cachedFrames() {
     std::vector<int> v;
     std::lock_guard<std::mutex> l(resM_);
     for (auto& [k, c] : frameCache_)
-        if (k.first == viewed && c.gen == editGen_ && c.scale == scale && c.region == region && c.compare == compare)
-            v.push_back(k.second);
+        if (k.first == viewed && servesView(c, scale, region, compare)) v.push_back(k.second);
     return v;
 }
 
@@ -1435,6 +1453,16 @@ void App::setPrecache(bool on) {
     precache_ = on;
     reqCv_.notify_all();
     aheadCv_.notify_all();
+}
+
+// A cached frame can be shown for this view: rendered for it, or at a finer scale over at least the
+// same pixels (Full res just turned off: the frames rendered at full size still play, rather than
+// the first loop waiting on renders; the viewer draws any scale). The read-ahead (aheadFresh) still
+// wants the exact scale, so it replaces those frames with smaller ones as it goes.
+bool App::servesView(const CachedFrame& c, double scale, const Box& region, const std::string& compare) const {
+    if (c.gen != editGen_ || c.compare != compare) return false;
+    if (c.scale == scale && c.region == region) return true;
+    return c.scale > scale && !region.empty() && c.region.intersect(region) == region;
 }
 
 bool App::aheadFresh(const std::string& node, int f, double scale, const Box& region, const std::string& compare) {
