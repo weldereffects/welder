@@ -869,14 +869,42 @@ public:
             for (int j = k; j < r && j < k + 5000; ++j) h = hashCombine(h, e.hash(input(1), j));
         return h;
     }
+    // "output: ST map": where each pixel was on the reference frame, as an ST map (R, G = x / width,
+    // y / height), for STMap: any image warped the same way, or the warp kept on disk.
+    bool stMapOut() const { return params.str("output", "effect") == "ST map"; }
+    Format format(Engine& e, double f) override {
+        if (stMapOut() && input(1)) return input(1)->format(e, f);
+        return FlowMapNode::format(e, f);
+    }
+    ChannelSet channels(Engine& e, double f) override {
+        if (stMapOut()) return rgbaChannels();
+        return FlowMapNode::channels(e, f);
+    }
+    int identityInput(double) override { return -1; }
     void render(RenderArgs& a, Image& out) override {
         std::fill(out.data.begin(), out.data.end(), 0.0f);
-        if (!input(0) || !input(1)) return;
+        const bool st = stMapOut();
+        if ((!st && !input(0)) || !input(1)) return;
         Engine& e = a.engine;
         const Box R = a.region.intersect(dod(e, a.frame));
         if (R.empty()) return;
         const Box D = dod(e, a.frame);
         auto P = lockMap(e, (int)std::round(a.frame), D);
+        if (st) {
+            const Format fm = format(e, a.frame);
+            const double W = std::max(1, fm.width), H = std::max(1, fm.height);
+            const int rc = out.ch("R"), gc = out.ch("G"), ac = out.ch("A");
+            for (int y = R.y1; y < R.y2; ++y)
+                for (int x = R.x1; x < R.x2; ++x) {
+                    float ox, oy;
+                    P->at(D, x + 0.5, y + 0.5, ox, oy);
+                    float* o = out.px(x, y);
+                    if (rc >= 0) o[rc] = (float)((x + 0.5 + ox) / W);
+                    if (gc >= 0) o[gc] = (float)((y + 0.5 + oy) / H);
+                    if (ac >= 0) o[ac] = 1.0f;
+                }
+            return;
+        }
         std::vector<float> pos((size_t)R.width() * R.height() * 3);
         size_t k = 0;
         for (int y = R.y1; y < R.y2; ++y)

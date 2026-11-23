@@ -8067,6 +8067,8 @@ Connections:  {
             {{"name", "VG"}, {"type", "VectorGenerator"}, {"inputs", {"M"}}},
             {{"name", "Pat"}, {"type", "Noise"}, {"params", {{"size", 25}}}},
             {{"name", "Lock"}, {"type", "SurfaceLock"}, {"inputs", {"Pat", "VG"}}, {"params", {{"reference", 5}}}},
+            {{"name", "LockST"}, {"type", "SurfaceLock"}, {"inputs", {nullptr, "VG"}}, {"params", {{"reference", 5}, {"output", "ST map"}}}},
+            {{"name", "ViaST"}, {"type", "STMap"}, {"inputs", {"Pat", "LockST"}}},
             {{"name", "PatR"}, {"type", "Transform"}, {"inputs", {"Pat"}}, {"params", {{"translate", {9, 0}}}}},
             {{"name", "PatL"}, {"type", "Transform"}, {"inputs", {"Pat"}}, {"params", {{"translate", {-9, 0}}}}},
         });
@@ -8138,6 +8140,24 @@ Connections:  {
         CHECK(er < er0 * 0.15);
         CHECK(el < el0 * 0.15);
         CHECK(e5 < 1e-3);
+        // output ST map (#106): the same warp as an ST map; STMap with it gives the locked effect
+        {
+            auto st8 = render(*c, "LockST", 8), v8 = render(*c, "ViaST", 8);
+            // frame 8 is 9 px right of the reference: each pixel was 9 px left on it
+            const double u = px(st8, 80, 56, "R") * W, v = px(st8, 80, 56, "G") * H;
+            std::printf("  surface lock ST map at (80, 56) on frame 8: (%.2f, %.2f) (71.5, 56.5)\n", u, v);
+            CHECK(std::fabs(u - 71.5) < 1.0);
+            CHECK(std::fabs(v - 56.5) < 1.0);
+            CHECK_NEAR(px(st8, 80, 56, "A"), 1, 1e-6);
+            double ev = 0, ev0 = 0;
+            for (int y = 15; y < H - 15; ++y)
+                for (int x = 25; x < W - 25; ++x) {
+                    ev += std::fabs(px(v8, x, y, "R") - px(l8, x, y, "R"));
+                    ev0 += std::fabs(px(pt, x, y, "R") - px(l8, x, y, "R"));
+                }
+            std::printf("  STMap(ST map) vs locked effect %.2f (vs the unmoved pattern %.2f)\n", ev, ev0);
+            CHECK(ev < ev0 * 0.1);
+        }
     });
     test("Threads: nested whole-frame renders in several engines stay within the thread budget", [] {
         // like playback read-ahead on a many-core machine: engines of 16 threads, nodes that render

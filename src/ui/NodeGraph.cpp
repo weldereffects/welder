@@ -3042,6 +3042,17 @@ void drawNodeGraph(App& app, UiState& ui) {
         for (auto& d : nodeDefs())
             if (d.type != "OFX" && (q.empty() || lower(d.type).find(q) != std::string::npos))
                 items.push_back({d.type, d.type, json::object()});
+        // What other apps call the job: the nodes that do it here
+        static const std::vector<std::pair<std::string, std::vector<std::string>>> kJobs = {
+            {"smart vector", {"SurfaceLock", "VectorGenerator"}}, {"smartvector", {"SurfaceLock", "VectorGenerator"}},
+            {"vector distort", {"SurfaceLock"}}, {"vectordistort", {"SurfaceLock"}}, {"motion vectors", {"VectorGenerator"}},
+        };
+        if (q.size() >= 4)
+            for (auto& [job, types] : kJobs)
+                if (job.rfind(q, 0) == 0 || q.rfind(job, 0) == 0)
+                    for (auto& t : types)
+                        if (std::none_of(items.begin(), items.end(), [&](const Item& it) { return it.type == t; }))
+                            items.push_back({t + "  (" + job + ")", t, json::object()});
         for (auto& [id, label] : ui.ofxPlugins)
             if (!q.empty() && (lower(label).find(q) != std::string::npos || lower(id).find(q) != std::string::npos))
                 items.push_back({label + "  [OFX]", "OFX", {{"plugin", id}}});

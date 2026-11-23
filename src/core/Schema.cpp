@@ -639,13 +639,18 @@ std::vector<NodeDef> build() {
                       return k;
                   }(),
                   C("evolve", "effect", "animated", {"animated", "hold reference"}),
+                  Tip(C("output", "output", "effect", {"effect", "ST map"}),
+                      "effect: the effect input, stuck to the plate.\nST map: the warp itself (R, G = where each pixel was on the reference "
+                      "frame, over width / height). Feed it to STMap to warp anything the same way, or write it out once and reuse it."),
                   Div("vectors"), C("flow_channels", "vectors from", "auto", {"auto", "forward.u / .v", "RG flowmap"}),
                   F("speed", "speed", 1, -10, 10, "Multiplies the vectors"), F("rg_speed", "RG flowmap speed (px / frame)", 4, 0, 200),
                   B("flip_g", "flip green (RG flowmap)", false),
                   Div("sampling"), C("edges", "edges", "clamp", {"clamp", "repeat", "mirror", "black"}), C("filter", "filter", "cubic", {"impulse", "bilinear", "cubic"})},
                  "Sticks an effect to the plate's surfaces: design it on the reference frame (a pattern, paint, a noise) and it moves "
                  "with what it covers as the camera moves, before and after that frame. Vectors: VectorGenerator on the plate "
-                 "(forward.u / .v). 'animated' keeps the effect's own animation; 'hold reference' carries the reference frame's."});
+                 "(forward.u / .v), or vectors written to an EXR earlier and read back (much faster on long shots). 'animated' keeps the effect's "
+                 "own animation; 'hold reference' carries the reference frame's. This is the smart vector workflow: paint a fix on one frame, "
+                 "carry it through the shot."});
     d.push_back({"MorphDissolve", "Merge",
                  {C("timing", "timing", "frames", {"frames", "mix"}), When(F("start", "start frame", 1, -10000, 100000), "timing=frames"),
                   When(F("length", "length (frames)", 10, 1, 1000), "timing=frames"), When(B("ease", "ease in / out", true), "timing=frames"),
