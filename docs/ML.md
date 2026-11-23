@@ -139,7 +139,9 @@ plates. If it still does, the job retries at half the Max Size (down to
 big being refused, so a GPU monitor never shows the card filling up.
 
 The worker starts on its own when a job is queued. The panel shows it as
-running, with the GPU name and VRAM. **stop** ends it.
+running, with the GPU name and VRAM. **stop** ends it. When the last Welder
+using it quits, the worker stops too (after the job it's on), so its models
+don't stay in memory. A worker you started by hand keeps running.
 
 ## Hardware
 
