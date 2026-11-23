@@ -353,6 +353,52 @@ int main(int argc, char** argv) {
         }
         CHECK(threw);
     });
+    test("SetMetadata / CopyMetadata, and metadata into and out of EXR headers (#99)", [] {
+        const auto dir = std::filesystem::temp_directory_path() / "welder_md_test";
+        std::filesystem::create_directories(dir);
+        const std::string out = (dir / "md.exr").generic_string();
+        json j = json::parse(R"({
+            "format": {"width": 8, "height": 4}, "frame_range": [1, 1],
+            "nodes": [
+                {"name": "C", "type": "Constant"},
+                {"name": "TC", "type": "AddTimeCode", "inputs": ["C"]},
+                {"name": "S", "type": "SetMetadata", "inputs": ["TC"],
+                 "params": {"set": "shot = sh010\nexr/focal = 35.5\nexr/pos = [1, 2, 3]\nn = 7\nbad line", "remove": "fps"}},
+                {"name": "K", "type": "Constant"},
+                {"name": "Win", "type": "CopyMetadata", "inputs": ["K", "S"]},
+                {"name": "Keep", "type": "CopyMetadata", "inputs": ["S2", "S"], "params": {"mode": "merge, keep image's"}},
+                {"name": "S2", "type": "SetMetadata", "inputs": ["K"], "params": {"set": "shot = mine"}},
+                {"name": "None", "type": "CopyMetadata", "inputs": ["S", "S"], "params": {"mode": "remove all"}},
+                {"name": "W", "type": "Write", "inputs": ["S"], "params": {"file": "OUT"}},
+                {"name": "R", "type": "Read", "params": {"file": "OUT"}},
+                {"name": "RS", "type": "SetMetadata", "inputs": ["R"], "params": {"remove": "exr/*"}}
+            ]})");
+        for (auto& n : j["nodes"])
+            if (n["params"].contains("file")) n["params"]["file"] = out;
+        auto c = Comp::fromJson(j, dir);
+        const json md = c->find("S")->metadata(1);
+        CHECK(md.value("shot", "") == "sh010");
+        CHECK(md["exr/focal"].is_number_float() && std::fabs(md["exr/focal"].get<double>() - 35.5) < 1e-9);
+        CHECK(md["exr/pos"] == json::array({1, 2, 3}));
+        CHECK(md["n"] == 7);
+        CHECK(md.value("timecode", "") == "01:00:00:00");
+        CHECK(!md.contains("fps") && !md.contains("bad line"));
+        CHECK(c->find("Win")->metadata(1).value("shot", "") == "sh010");
+        CHECK(c->find("Keep")->metadata(1).value("shot", "") == "mine");
+        CHECK(c->find("Keep")->metadata(1).contains("exr/focal"));
+        CHECK(c->find("None")->metadata(1).empty());
+        Engine e;
+        c->find("W")->execute(e, 1);
+        const json rd = c->find("R")->metadata(1);
+        CHECK(rd.value("exr/shot", "") == "sh010");
+        CHECK(rd.contains("exr/focal") && std::fabs(rd["exr/focal"].get<double>() - 35.5) < 1e-4);
+        CHECK(rd["exr/pos"] == json::array({1.0, 2.0, 3.0}));
+        CHECK(rd["exr/n"] == 7);
+        CHECK(rd.value("input/filename", "") == out);
+        const json rs = c->find("RS")->metadata(1);
+        CHECK(!rs.contains("exr/shot") && rs.contains("input/filename"));
+        std::filesystem::remove_all(dir);
+    });
     test("PSD: composite and layers as channels, raw and RLE data, unicode names (issue #12)", [] {
         // a 4 x 2, 8-bit RGB document: "BG" (full canvas, RLE, opaque blue) under "Sky glow"
         // (columns 1-2, raw, red at alpha 128, hidden), unicode name "Glüh" for a third, tiny layer

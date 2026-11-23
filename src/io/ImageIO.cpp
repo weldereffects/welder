@@ -184,6 +184,13 @@ void writeImage(const std::string& path, const Image& src, const Format& fmt, co
         eo.dataWindowFromBbox = o.exrBboxDataWindow;
         eo.timecode = o.timecode;
         eo.fps = o.timecodeFps;
+        // metadata -> header attributes: "exr/<name>" as <name>, other keys as they are, except the
+        // reader's own facts about the file it read (input/...) and what is written anyway
+        if (o.metadata.is_object())
+            for (auto& [k, v] : o.metadata.items()) {
+                if (k.rfind("input/", 0) == 0 || k == "timecode" || k == "fps" || k == "exr/compression" || k == "exr/deep") continue;
+                eo.attributes[k.rfind("exr/", 0) == 0 ? k.substr(4) : k] = v;
+            }
         writeExr(path, src, fmt, eo);
         return;
     }

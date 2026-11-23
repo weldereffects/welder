@@ -72,10 +72,11 @@ protected:
 };
 
 // ------------------------------------------------------------------ Text
-// [frame], [value Node.knob], [date] and [time] in the message are replaced.
+// [frame], [value Node.knob], [metadata key], [date] and [time] in the message are replaced
+// ([metadata key]: the input's metadata at this frame, #99; [metadata] alone: every key = value).
 std::string expandMessage(const std::string& msg, double frame, const Node* owner) {
     std::string out;
-    std::regex re(R"(\[(frame|date|time|value\s+[A-Za-z0-9_.]+)(\s+[^\]]*)?\])");
+    std::regex re(R"(\[(frame|date|time|metadata(?:\s+[^\]\s]+)?|value\s+[A-Za-z0-9_.]+)(\s+[^\]]*)?\])");
     auto it = std::sregex_iterator(msg.begin(), msg.end(), re);
     size_t last = 0;
     for (; it != std::sregex_iterator(); ++it) {
@@ -96,6 +97,16 @@ std::string expandMessage(const std::string& msg, double frame, const Node* owne
 #endif
             std::strftime(b, sizeof b, cmd == "date" ? "%Y-%m-%d" : "%H:%M:%S", &tm);
             out += b;
+        } else if (cmd.rfind("metadata", 0) == 0) {
+            Node* in = owner && !owner->inputs.empty() ? owner->inputs[0] : nullptr;
+            const json md = in ? in->metadata(frame) : json();
+            std::string key = cmd.substr(8);
+            key.erase(0, key.find_first_not_of(" \t"));
+            auto text = [](const json& v) { return v.is_string() ? v.get<std::string>() : v.dump(); };
+            if (!md.is_object()) out += key.empty() ? "" : "?";
+            else if (key.empty()) {
+                for (auto& [k, v] : md.items()) out += k + " = " + text(v) + "\n";
+            } else out += md.contains(key) ? text(md[key]) : "?";
         } else {
             std::string path = cmd.substr(cmd.find_first_of(" \t"));
             path.erase(0, path.find_first_not_of(" \t"));

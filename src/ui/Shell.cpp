@@ -508,6 +508,7 @@ void drawMenuBar(App& app, UiState& ui) {
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Go to Frame...", "Alt+G")) ui.openGotoFrame = true;
+        if (ImGui::MenuItem("Metadata", nullptr, ui.showMetadata)) ui.showMetadata = !ui.showMetadata;
         if (ImGui::MenuItem("Performance", nullptr, ui.showPerf)) {
             ui.showPerf = !ui.showPerf;
             app.setProfiling(ui.showPerf);
@@ -1579,8 +1580,61 @@ static void drawPerformance(App& app, UiState& ui) {
     }
 }
 
+// Viewer > Metadata (#99): the metadata of the frame the active viewer shows (what Write puts in an
+// EXR header), searchable; updates with the frame and the viewed node.
+static void drawMetadata(App& app, UiState& ui) {
+    if (!ui.showMetadata) return;
+    ImGui::SetNextWindowSize(ImVec2(480, 420), ImGuiCond_FirstUseEver);
+    bool open = true;
+    if (!ImGui::Begin(ui.win("Metadata").c_str(), &open)) {
+        ImGui::End();
+        if (!open) ui.showMetadata = false;
+        return;
+    }
+    if (!open) ui.showMetadata = false;
+    static char filter[96] = "";
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##mdfilter", "search keys and values", filter, sizeof filter);
+    if (app.viewed.empty()) {
+        ImGui::TextDisabled("Nothing in the viewer");
+        ImGui::End();
+        return;
+    }
+    bool ready = true;
+    const App::NodeInfo ni = app.nodeInfo(app.viewed, &ready);
+    ImGui::TextDisabled("%s, frame %g%s", app.viewed.c_str(), app.frame, ready ? "" : "  (updating)");
+    const json& md = ni.metadata;
+    if (!ni.error.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.4f, 1), "%s", ni.error.c_str());
+    else if (!md.is_object() || md.empty()) ImGui::TextDisabled(ni.valid ? "no metadata" : "reading...");
+    else if (ImGui::BeginTable("##md", 2, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY)) {
+        ImGui::TableSetupColumn("key", ImGuiTableColumnFlags_WidthStretch, 0.4f);
+        ImGui::TableSetupColumn("value", ImGuiTableColumnFlags_WidthStretch, 0.6f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+        std::string f = filter;
+        std::transform(f.begin(), f.end(), f.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        for (auto& [k, v] : md.items()) {
+            const std::string val = v.is_string() ? v.get<std::string>() : v.dump();
+            if (!f.empty()) {
+                std::string hay = k + " " + val;
+                std::transform(hay.begin(), hay.end(), hay.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                if (hay.find(f) == std::string::npos) continue;
+            }
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(k.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(val.size() > 300 ? (val.substr(0, 300) + "...").c_str() : val.c_str());
+            if (ImGui::IsItemHovered() && val.size() > 60) ImGui::SetTooltip("%s", val.substr(0, 2000).c_str());
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
 void drawDialogs(App& app, UiState& ui) {
     drawMatchProject(app, ui);
+    drawMetadata(app, ui);
     drawPerformance(app, ui);
     drawPreferences(app, ui);
     drawUpdateDialog(app, ui);

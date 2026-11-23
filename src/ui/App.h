@@ -339,6 +339,7 @@ public:
         Format format;
         Box bbox;
         json info;
+        json metadata;  // Node::metadata at the frame (#99)
         std::string error;
         bool valid = false;
     };

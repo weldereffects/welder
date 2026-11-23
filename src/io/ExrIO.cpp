@@ -16,6 +16,14 @@
 #include <ImfFramesPerSecond.h>
 #include <ImfTimeCode.h>
 #include <ImfStringAttribute.h>
+#include <ImfIntAttribute.h>
+#include <ImfFloatAttribute.h>
+#include <ImfDoubleAttribute.h>
+#include <ImfVecAttribute.h>
+#include <ImfMatrixAttribute.h>
+#include <ImfTimeCodeAttribute.h>
+#include <ImfRationalAttribute.h>
+#include <ImfStringVectorAttribute.h>
 #include <ImfInputPart.h>
 #include <ImfMultiPartInputFile.h>
 #include <ImfOutputFile.h>
@@ -32,6 +40,76 @@
 #include <thread>
 
 namespace strata {
+
+// ---------------------------------------------------------------- header attributes as metadata (#99)
+namespace {
+bool layoutAttribute(const std::string& n) {
+    static const char* names[] = {"channels", "compression", "dataWindow", "displayWindow", "lineOrder", "pixelAspectRatio",
+                                  "screenWindowCenter", "screenWindowWidth", "tiles", "type", "name", "version", "chunkCount",
+                                  "dwaCompressionLevel", "zipCompressionLevel", "maxSamplesPerPixel", "view"};
+    for (const char* x : names)
+        if (n == x) return true;
+    return false;
+}
+
+json attributesOf(const Imf::Header& h) {
+    json out = json::object();
+    for (auto it = h.begin(); it != h.end(); ++it) {
+        const std::string n = it.name();
+        if (layoutAttribute(n)) continue;
+        const Imf::Attribute& a = it.attribute();
+        if (auto* x = dynamic_cast<const Imf::StringAttribute*>(&a)) out[n] = x->value();
+        else if (auto* x = dynamic_cast<const Imf::IntAttribute*>(&a)) out[n] = x->value();
+        else if (auto* x = dynamic_cast<const Imf::FloatAttribute*>(&a)) out[n] = x->value();
+        else if (auto* x = dynamic_cast<const Imf::DoubleAttribute*>(&a)) out[n] = x->value();
+        else if (auto* x = dynamic_cast<const Imf::RationalAttribute*>(&a)) out[n] = double(x->value());
+        else if (auto* x = dynamic_cast<const Imf::V2iAttribute*>(&a)) out[n] = {x->value().x, x->value().y};
+        else if (auto* x = dynamic_cast<const Imf::V2fAttribute*>(&a)) out[n] = {x->value().x, x->value().y};
+        else if (auto* x = dynamic_cast<const Imf::V3iAttribute*>(&a)) out[n] = {x->value().x, x->value().y, x->value().z};
+        else if (auto* x = dynamic_cast<const Imf::V3fAttribute*>(&a)) out[n] = {x->value().x, x->value().y, x->value().z};
+        else if (auto* x = dynamic_cast<const Imf::M33fAttribute*>(&a)) {
+            json m = json::array();
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c) m.push_back(x->value()[r][c]);
+            out[n] = m;
+        } else if (auto* x = dynamic_cast<const Imf::M44fAttribute*>(&a)) {
+            json m = json::array();
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c) m.push_back(x->value()[r][c]);
+            out[n] = m;
+        } else if (auto* x = dynamic_cast<const Imf::TimeCodeAttribute*>(&a)) {
+            char b[32];
+            const Imf::TimeCode& t = x->value();
+            std::snprintf(b, sizeof b, "%02d:%02d:%02d:%02d", t.hours(), t.minutes(), t.seconds(), t.frame());
+            out[n] = b;
+        } else if (auto* x = dynamic_cast<const Imf::StringVectorAttribute*>(&a)) out[n] = x->value();
+    }
+    return out;
+}
+
+void writeAttributes(Imf::Header& h, const json& attrs) {
+    if (!attrs.is_object()) return;
+    for (auto& [n, v] : attrs.items()) {
+        if (n.empty() || layoutAttribute(n) || n == "timeCode" || n == "framesPerSecond") continue;
+        try {
+            if (v.is_string()) h.insert(n, Imf::StringAttribute(v.get<std::string>()));
+            else if (v.is_number_integer()) h.insert(n, Imf::IntAttribute(v.get<int>()));
+            else if (v.is_number()) h.insert(n, Imf::FloatAttribute(v.get<float>()));
+            else if (v.is_array() && !v.empty() && std::all_of(v.begin(), v.end(), [](const json& e) { return e.is_number(); })) {
+                auto f = [&](size_t i) { return v[i].get<float>(); };
+                if (v.size() == 2) h.insert(n, Imf::V2fAttribute(Imath::V2f(f(0), f(1))));
+                else if (v.size() == 3) h.insert(n, Imf::V3fAttribute(Imath::V3f(f(0), f(1), f(2))));
+                else if (v.size() == 9) h.insert(n, Imf::M33fAttribute(Imath::M33f(f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7), f(8))));
+                else if (v.size() == 16)
+                    h.insert(n, Imf::M44fAttribute(Imath::M44f(f(0), f(1), f(2), f(3), f(4), f(5), f(6), f(7), f(8), f(9), f(10), f(11),
+                                                               f(12), f(13), f(14), f(15))));
+            } else if (v.is_array() && std::all_of(v.begin(), v.end(), [](const json& e) { return e.is_string(); }))
+                h.insert(n, Imf::StringVectorAttribute(v.get<std::vector<std::string>>()));
+        } catch (const std::exception&) {  // (a name already used with another type: left as it is)
+        }
+    }
+}
+}  // namespace
 
 namespace {
 
@@ -354,6 +432,7 @@ ExrFile readExr(const std::string& path) {
             }
         }
         out.image = img;
+        out.attributes = attributesOf(in.header(0));
         for (int p = 0; p < nparts; ++p)
             for (auto it = in.header(p).begin(); it != in.header(p).end(); ++it)
                 if (auto* sa = dynamic_cast<const Imf::StringAttribute*>(&it.attribute())) out.metadata[it.name()] = sa->value();
@@ -374,6 +453,7 @@ ExrHeader readExrHeader(const std::string& path) {
         h.format = L.out.format;
         h.bounds = L.bounds;
         h.channels = L.finalCs;
+        h.attributes = attributesOf(in.header(0));
         return h;
     } catch (const RenderError&) {
         throw;
@@ -406,6 +486,7 @@ void writeExr(const std::string& path, const Image& src, const Format& fmt, cons
                 Imf::addTimeCode(h, Imf::TimeCode(hh, mm, ss, ff));
         }
         if (o.fps > 0) Imf::addFramesPerSecond(h, Imf::guessExactFps(o.fps));
+        writeAttributes(h, o.attributes);
         if (cit->second == Imf::DWAA_COMPRESSION || cit->second == Imf::DWAB_COMPRESSION) h.dwaCompressionLevel() = o.dwaLevel;
         const bool half = o.type == ExrPixelType::Half;
         Imf::PixelType pt = half ? Imf::HALF : Imf::FLOAT;

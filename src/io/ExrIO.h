@@ -23,6 +23,9 @@ struct ExrFile {
     std::string compression;         // of the first part
     std::map<std::string, std::string> metadata;  // string header attributes (e.g. cryptomatte/<id>/manifest)
     bool deep = false;                            // has deep parts (read flattened: see readExr)
+    json attributes;  // the first part's header attributes for metadata (#99): strings, numbers, vectors (arrays
+                      // of 2 or 3), 3x3 / 4x4 matrices (arrays of 9 / 16, row by row), timecodes "HH:MM:SS:FF";
+                      // the image layout ones (channels, windows, compression...) left out
 };
 
 // Deep parts (scanline or tiled) are flattened as they are read: each pixel's samples composited
@@ -36,6 +39,7 @@ struct ExrHeader {
     Format format;
     Box bounds;
     ChannelSet channels;
+    json attributes;  // as ExrFile::attributes
 };
 ExrHeader readExrHeader(const std::string& path);
 
@@ -48,7 +52,10 @@ struct ExrWriteOptions {
     bool dataWindowFromBbox = false;  // write only the image's bbox (may extend past the format)
     std::string timecode;             // "HH:MM:SS:FF": the TimeCode attribute (empty: none)
     double fps = 0;                   // > 0: the FramesPerSecond attribute
+    json attributes;                  // more header attributes {name: value}, typed as ExrFile::attributes
+                                      // (layout names and ones that don't fit are skipped)
 };
+
 
 // Writes the channels of `img`. The data window is the format box (or the
 // image bounds with dataWindowFromBbox).

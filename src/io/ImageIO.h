@@ -37,6 +37,7 @@ struct WriteOptions {
     double fps = 0;                      // written into DPX headers
     std::string timecode;                // "HH:MM:SS:FF" (AddTimeCode): the EXR header
     double timecodeFps = 0;              // its rate (EXR FramesPerSecond)
+    json metadata;                       // the frame's metadata (#99): EXR files get it as header attributes
 };
 
 ExrFile readImage(const std::string& path, const ReadOptions& o = {});

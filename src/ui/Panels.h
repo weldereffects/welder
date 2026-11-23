@@ -461,6 +461,7 @@ struct UiState {
     bool showPrefs = false;  // Edit > Preferences (Shift+S)
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)
     bool showPerf = false;     // Viewer > Performance
+    bool showMetadata = false; // Viewer > Metadata: the viewed frame's metadata (#99)
     float frameMs[240] = {};   // the UI's work per frame, the last 240 frames (a ring)
     int frameIdx = 0;
     double frameStamp[240] = {};  // when each was drawn (s)

@@ -235,6 +235,9 @@ std::vector<NodeDef> build() {
                   When(Width(C("compression", "compression", "zip", {"none", "rle", "zips", "zip", "piz", "pxr24", "b44", "b44a", "dwaa", "dwab"}), 90), "@ext=exr"),
                   When(F("dwa_level", "dw compression level", 45, 0, 200), "@ext=exr"),
                   When(Width(C("data_window", "data window", "format", {"format", "bbox"}), 90), "@ext=exr"),
+                  When(Tip(Width(C("metadata", "metadata", "all", {"all", "timecode only"}), 110),
+                           "all: the input's metadata goes into the EXR header (exr/<name> as <name>; not the input/... "
+                           "facts about the file read). timecode only: just the timecode and frame rate"), "@ext=exr"),
                   When(Width(C("bit_depth", "datatype", "default", {"default", "8", "10", "12", "16", "32 float"}), 90), "@ext=dpx|tif|tiff|png"),
                   When(Width(C("tiff_compression", "compression", "zip", {"none", "lzw", "zip", "packbits"}), 90), "@ext=tif|tiff"),
                   When(Width(C("codec", "codec", "prores 422 hq", {"prores 4444", "prores 4444 xq", "prores 422 hq", "prores 422",
@@ -334,7 +337,7 @@ std::vector<NodeDef> build() {
                  "Analyses its input over a frame range (press Go!): average intensity (flicker), the auto-crop box, the exposure "
                  "difference to the first frame, the brightest and darkest pixel. Link other knobs to the curves it makes."});
     d.push_back({"Text", "Draw",
-                 withMask({Txt("message", "message", "[frame], [date], [time] and [value Node.knob] are filled in"), File("font", "font"),
+                 withMask({Txt("message", "message", "[frame], [date], [time], [value Node.knob] and [metadata key] (the input's metadata) are filled in"), File("font", "font"),
                            F("size", "size", 100, 1, 1000), F("tracking", "tracking", 0, -0.5, 1), F("leading", "leading", 0, -1, 2),
                            Width(C("xjustify", "justify", "left", {"left", "center", "right"}), 90),
                            Same(Width(C("yjustify", "", "top", {"top", "center", "bottom", "baseline"}), 90), true),
@@ -1394,6 +1397,16 @@ std::vector<NodeDef> build() {
                   B("use_frame", "start frame", false), I("frame", "frame", 1, -100000, 100000)},
                  "Stamps a timecode on the frames: the start code on the project's first frame (or the given frame), "
                  "counting up from there. Write puts it in the header of EXR files."});
+    d.push_back({"SetMetadata", "Time",
+                 {Txt("set", "set", "One \"key = value\" a line, e.g. shot = sh010 or exr/lens = 35. A value that reads as JSON "
+                                    "(a number, [1, 2], \"text\") keeps its type; anything else is text"),
+                  Txt("remove", "remove", "One key a line; a trailing * removes every key starting with what comes before it")},
+                 "Sets or removes metadata on the frames passing through. Write puts it in EXR headers "
+                 "(exr/<name> as <name>); the viewer's Metadata window lists it."});
+    d.push_back({"CopyMetadata", "Time",
+                 {C("mode", "mode", "merge, meta wins", {"merge, meta wins", "merge, keep image's", "replace", "remove all"})},
+                 "The image input's pixels, with metadata from the meta input (e.g. the original plate's, just before a Write): "
+                 "merged (the meta input or the image winning where both have a key), replacing it, or all removed."});
     {
         const std::vector<std::string> edge = {"hold", "loop", "bounce", "black"};
         d.push_back({"Retime", "Time",

@@ -352,6 +352,7 @@ void App::infoLoop() {
                     ni.format = n->format(*infoEngine_, f);
                     ni.bbox = infoEngine_->dod(n, f);
                     ni.info = n->info(*infoEngine_, f);
+                    ni.metadata = n->metadata(f);
                     ni.valid = true;
                 }
             } catch (const std::exception& e) {

@@ -1,3 +1,4 @@
+#include <sstream>
 // Channel and time nodes: Shuffle, Remove, FrameHold, TimeOffset, Dot, NoOp.
 #include "core/Expr.h"
 #include "core/Comp.h"
@@ -178,6 +179,70 @@ public:
     }
 };
 
+// SetMetadata (#99): sets or removes metadata keys on the frames passing through (the classic
+// ModifyMetaData). "set": one "key = value" a line (a value that reads as JSON - a number, an array,
+// "quoted text" - keeps its type, anything else is text); "remove": one key a line, a trailing *
+// matching every key that starts with what's before it.
+class SetMetadataNode : public Node, public CameraThrough {
+public:
+    int identityInput(double) override { return 0; }
+    void render(RenderArgs&, Image&) override {}
+    static std::string trim(std::string t) {
+        t.erase(0, t.find_first_not_of(" \t\r"));
+        t.erase(t.find_last_not_of(" \t\r") + 1);
+        return t;
+    }
+    json metadata(double frame) override {
+        json md = Node::metadata(frame);
+        if (!md.is_object()) md = json::object();
+        std::stringstream rm(params.str("remove", ""));
+        for (std::string line; std::getline(rm, line);) {
+            const std::string k = trim(line);
+            if (k.empty()) continue;
+            if (k.back() == '*') {
+                const std::string pre = k.substr(0, k.size() - 1);
+                for (auto it = md.begin(); it != md.end();)
+                    it = it.key().rfind(pre, 0) == 0 ? md.erase(it) : std::next(it);
+            } else md.erase(k);
+        }
+        std::stringstream set(params.str("set", ""));
+        for (std::string line; std::getline(set, line);) {
+            const size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            const std::string k = trim(line.substr(0, eq)), v = trim(line.substr(eq + 1));
+            if (k.empty()) continue;
+            json val = json::parse(v, nullptr, false);
+            md[k] = val.is_discarded() || val.is_object() || val.is_null() ? json(v) : val;
+        }
+        return md;
+    }
+};
+
+// CopyMetadata (#99): the image input's pixels with metadata merged in from the meta input.
+//   merge, meta wins     both inputs' keys; where both have one, the meta input's value
+//   merge, keep image's  both inputs' keys; where both have one, the image input's value
+//   replace              only the meta input's metadata
+//   remove all           no metadata at all
+class CopyMetadataNode : public Node, public CameraThrough {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 0 ? "image" : "meta"; }
+    int identityInput(double) override { return 0; }
+    void render(RenderArgs&, Image&) override {}
+    json metadata(double frame) override {
+        const std::string mode = params.str("mode", "merge, meta wins");
+        if (mode == "remove all") return json::object();
+        json img = input(0) ? input(0)->metadata(frame) : json::object();
+        json meta = input(1) ? input(1)->metadata(frame) : json::object();
+        if (!img.is_object()) img = json::object();
+        if (!meta.is_object()) meta = json::object();
+        if (mode == "replace") return meta;
+        json out = mode == "merge, keep image's" ? meta : img;
+        for (auto& [k, v] : (mode == "merge, keep image's" ? img : meta).items()) out[k] = v;
+        return out;
+    }
+};
+
 class PassNode : public Node, public CameraThrough {
 public:
     int identityInput(double) override { return 0; }
@@ -193,6 +258,8 @@ void registerUtilityNodes() {
     r.add("FrameHold", [] { return std::make_unique<FrameHoldNode>(); });
     r.add("TimeOffset", [] { return std::make_unique<TimeOffsetNode>(); });
     r.add("AddTimeCode", [] { return std::make_unique<AddTimeCodeNode>(); });
+    r.add("SetMetadata", [] { return std::make_unique<SetMetadataNode>(); });
+    r.add("CopyMetadata", [] { return std::make_unique<CopyMetadataNode>(); });
     r.add("Dot", [] { return std::make_unique<PassNode>(); });
     r.add("NoOp", [] { return std::make_unique<PassNode>(); });
 }

@@ -454,6 +454,24 @@ public:
         auto f = load(frame, e.scale());
         return f ? f->format : scaledFormat(comp ? comp->format : Format(), e.scale());
     }
+    // The frame's metadata (#99), as the Metadata tab lists it: input/... facts about the file and,
+    // for EXRs, its header attributes as exr/<name> (from the header alone: no pixels are decoded).
+    json metadata(double frame) override {
+        json md = json::object();
+        auto ff = fileFrame(frame);
+        if (!ff) return md;
+        const std::string p = path(*ff);
+        md["input/filename"] = p;
+        md["input/frame"] = *ff;
+        if (auto h = peek(frame, 1.0)) {
+            md["input/width"] = h->format.width;
+            md["input/height"] = h->format.height;
+            md["input/pixel_aspect"] = h->format.pixelAspect;
+            if (h->attributes.is_object())
+                for (auto& [k, v] : h->attributes.items()) md["exr/" + k] = v;
+        }
+        return md;
+    }
     json info(Engine& e, double frame) override {
         json j = json::object();
         auto ff = fileFrame(frame);
@@ -479,6 +497,8 @@ public:
             if (!ec) md["input/filesize"] = (long long)sz;
         }
         for (auto& [k, v] : f->metadata) md[(k.find('/') == std::string::npos ? "exr/" : "") + k] = v;
+        if (f->attributes.is_object())
+            for (auto& [k, v] : f->attributes.items()) md["exr/" + k] = v;
         j["channels"] = f->image->channels;
         j["metadata"] = md;
         (void)e;
@@ -582,8 +602,9 @@ public:
         o.dwaLevel = (float)params.num("dwa_level", frame, 45.0);
         o.exrBboxDataWindow = params.str("data_window", "format") == "bbox";
         o.raw = params.flag("raw", false);
-        {  // timecode from upstream (AddTimeCode), for the file's header
+        {  // timecode from upstream (AddTimeCode), and the rest of the metadata (#99), for the file's header
             const json md = in->metadata(frame);
+            if (params.str("metadata", "all") == "all" && md.is_object()) o.metadata = md;
             if (md.is_object() && md.contains("timecode") && md["timecode"].is_string()) {
                 o.timecode = md["timecode"].get<std::string>();
                 o.timecodeFps = md.value("fps", comp->fps);
