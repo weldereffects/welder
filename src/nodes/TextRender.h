@@ -15,6 +15,15 @@ struct Font;
 // The font at `file` ("" = the default); null when no font can be read. `used` gets the file used.
 std::shared_ptr<const Font> loadFont(const std::string& file, std::string* used = nullptr);
 
+// A font installed on this machine: its full name (from the font's name table, else the file name)
+// and file. The Windows, user and system font folders (Linux: /usr/share/fonts, ~/.fonts and
+// ~/.local/share/fonts; macOS: /Library/Fonts, /System/Library/Fonts, ~/Library/Fonts), sorted by
+// name; looked up once, then cached.
+struct InstalledFont {
+    std::string name, path;
+};
+const std::vector<InstalledFont>& installedFonts();
+
 struct Layout {
     double size = 100;          // the em, in layout pixels
     double tracking = 0;        // extra space between characters, in ems

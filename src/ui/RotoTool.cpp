@@ -3617,7 +3617,8 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 if (ch) itemSet("color", json::array({col[0], col[1], col[2], col[3]}));
             }
         } else {
-            if (combined) number("opacity", "opacity", 1.0, 0, 1, "%.3f");
+            // (opacity and feather: in the shape's header above, on every panel; drawn here too they were the
+            // same widgets twice, which ImGui flags as an ID conflict and neither then works: #100)
             row("closed");
             bool closed = s.value("closed", true);
             if (kit::checkbox("##closed", &closed)) {
@@ -3627,7 +3628,6 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: an open spline, drawn as a line `width` wide");
             if (!closed) number("width", "width", 10.0, 0.5f, 1000, "%.1f px", true);
             if (s.value("kind", std::string()) == "bspline") number("tension", "tension", 0.0, 0, 1, "%.2f");
-            if (combined) number("feather", "feather", 0.0, -2000, 2000, "%.1f px", true);
             row("point feather");
             if (ImGui::SmallButton("reset selected")) {
                 editSelectedPoints(app, ui, n, [](Pts& pts, const json&, const std::vector<int>& idx) {

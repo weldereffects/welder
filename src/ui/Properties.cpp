@@ -29,6 +29,7 @@
 #include "nodes/MeshEdit.h"
 #include "nodes/PrecompNode.h"
 #include "nodes/Curves.h"
+#include "nodes/TextRender.h"
 #include <thread>
 #include "core/Engine.h"
 #include <future>
@@ -1698,6 +1699,65 @@ void knobBody(Ctx& c, const KnobDef& k) {
         textEdit(c, k, getString(c.node, k.name, k.def.is_string() ? k.def.get<std::string>() : ""), avail);
     } else if (k.type == Knob::String) {
         stringEdit(c, k, getString(c.node, k.name, k.def.is_string() ? k.def.get<std::string>() : ""), k.width > 0 ? k.width : avail);
+    } else if (k.type == Knob::File && k.name == "font") {
+        // a font: pick one installed on this machine by name (#108), or browse for a font file
+        const std::string cur = p.str(k.name, k.def.is_string() ? k.def.get<std::string>() : "");
+        stringEdit(c, k, cur, avail - 56);
+        ImGui::SameLine();
+        if (ImGui::ArrowButton("##fonts", ImGuiDir_Down)) ImGui::OpenPopup("##fontlist");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fonts installed on this computer");
+        ImGui::SetNextWindowSizeConstraints(ImVec2(260, 0), ImVec2(420, 420));
+        if (ImGui::BeginPopup("##fontlist")) {
+            static char filter[96] = "";
+            if (ImGui::IsWindowAppearing()) {
+                filter[0] = 0;
+                ImGui::SetKeyboardFocusHere();
+            }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputTextWithHint("##filter", "search fonts", filter, sizeof(filter));
+            std::string f = filter;
+            std::transform(f.begin(), f.end(), f.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+            const auto& fonts = text::installedFonts();
+            if (fonts.empty()) ImGui::TextDisabled("no fonts found");
+            ImGui::BeginChild("##fontrows", ImVec2(0, 320));
+            const std::string curGeneric = std::filesystem::path(cur).generic_string();
+            for (auto& ft : fonts) {
+                if (!f.empty()) {
+                    std::string n = ft.name;
+                    std::transform(n.begin(), n.end(), n.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+                    if (n.find(f) == std::string::npos) continue;
+                }
+                const bool sel = curGeneric == ft.path;
+                if (ImGui::Selectable((ft.name + "##" + ft.path).c_str(), sel)) {
+                    const std::string path = ft.path, key = k.name;
+                    c.app.checkpoint();
+                    change(c, key, [path](json& j) { j = path; });
+                    ImGui::CloseCurrentPopup();
+                }
+                if (sel && ImGui::IsWindowAppearing()) ImGui::SetScrollHereY();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ft.path.c_str());
+            }
+            ImGui::EndChild();
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("...")) {
+            std::string name = c.node->name, key = k.name;
+            App* app = &c.app;
+            const std::string full = c.node->comp ? c.node->comp->resolvePath(cur) : cur;
+            const std::string dir = full.empty() ? "" : std::filesystem::path(full).parent_path().string();
+            openFileDialog(c.ui, "Font file", false, {".ttf", ".otf", ".ttc"},
+                           [app, name, key](const std::string& path) {
+                               app->checkpoint();
+                               app->edit([name, key, path](Comp& comp) {
+                                   if (Node* n = comp.find(name)) {
+                                       n->params.data[key] = path;
+                                       n->paramsChanged();
+                                   }
+                               });
+                           },
+                           dir);
+        }
     } else if (k.type == Knob::File) {
         stringEdit(c, k, p.str(k.name), avail - 30);
         if (!ImGui::IsItemActive()) {  // a path typed on a mapped drive: its network form

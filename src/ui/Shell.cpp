@@ -828,7 +828,8 @@ static void drawPreferences(App& app, UiState& ui) {
         app.saveSettings();
     if (kit::checkbox("Middle-drag zooms", &app.middleDragZooms,
                       "A middle-button drag zooms the node graph and the viewers (drag right or up to zoom in),\n"
-                      "for tablet pens without a scroll wheel. Off: it pans, as before. Alt+middle-drag always zooms.\n"
+                      "for tablet pens without a scroll wheel. Off: it pans, as before. Alt+middle-drag always zooms,\n"
+                      "and so does holding the middle button and the left (a pen's button with its tip down) in the node graph.\n"
                       "Alt+left-drag still pans."))
         app.saveSettings();
     if (kit::checkbox("Alt+drag cuts pipes", &app.altDragCuts,

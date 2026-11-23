@@ -146,10 +146,12 @@ struct GraphState {
     bool needsFrame = true;
     enum class Drag { None, Move, Marquee, Pan, FromInput, FromOutput, Resize, Cut, Zoom } drag = Drag::None;
     ImVec2 zoomAnchor;  // Zoom drag: the screen point that stays put
+    bool comboZoom = false;  // the Zoom came from middle + left held together (back to a pan when left is let go)
     ImVec2 cutStart;    // Alt+drag: where the cutting line started (screen)
     std::string level;  // the group shown ("" = the top level)
     ImVec2 resizeOrig;  // backdrop size when a resize started
     ImVec2 dragStartScreen;
+    bool autoPanning = false;  // a drag is scrolling the graph at its edge (the UI keeps drawing frames)
     std::map<std::string, ImVec2> moveOrig;
     bool moved = false;
     // a pipe drag started from a node's top / bottom edge: until the mouse has moved a few

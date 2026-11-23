@@ -118,6 +118,7 @@ class Worker:
         self.lock = threading.Lock()
         self.quit = False
         self.loop_time = time.time()  # the main loop's last pass: Welder restarts a worker whose loop hangs between jobs
+        self.started_by_welder = False  # Welder launched it: the last Welder to quit stops it (one started by hand stays)
 
     def _probe_splat(self):
         from .subtask import check_splat_env
@@ -135,6 +136,7 @@ class Worker:
             atomic_write_json(os.path.join(self.home, "worker.json"), {
                 "pid": os.getpid(), "time": time.time(), "started": self.started, "version": __version__,
                 "job": cur, "tasks": sorted(TASKS), "packages": self.packages, "loop": self.loop_time,
+                "started_by_welder": self.started_by_welder,
             })
             for _ in range(20):
                 if self.quit:
@@ -265,6 +267,8 @@ def main(argv=None):
     ap.add_argument("--home", default=os.environ.get("STRATA_ML_HOME") or default_home())
     ap.add_argument("--once", action="store_true", help="run queued jobs until the queue is empty, then exit")
     ap.add_argument("--log", help="append stdout/stderr to this file")
+    ap.add_argument("--started-by-welder", action="store_true",
+                    help="(set by Welder) stop when the last Welder using this worker quits")
     a = ap.parse_args(argv)
     os.makedirs(a.home, exist_ok=True)
     if a.log:
@@ -276,6 +280,7 @@ def main(argv=None):
     off = setup_environment(a.home)
     load_tasks()
     w = Worker(a.home)
+    w.started_by_welder = a.started_by_welder
     w.packages["offline"] = off
     cap = apply_vram_limit()
     if cap:

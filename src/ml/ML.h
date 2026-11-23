@@ -78,6 +78,7 @@ struct WorkerInfo {
     json packages;       // what the worker found installed
     std::vector<std::string> tasks;
     long long pid = 0;
+    bool startedByWelder = false;  // launched by Welder (not by hand): Welder stops it when the last Welder quits
     double loopAge = -1;  // seconds since its main loop last went round (-1: an older worker that doesn't say)
 };
 WorkerInfo workerInfo();
@@ -89,6 +90,10 @@ void stopWorker();
 // Welder, whose ml folder has since been replaced) so the next call launches the new code. Launches are
 // at most one a minute. False + reason when a launch fails.
 bool ensureWorkerFor(const std::string& key, std::string* err);
+// When Welder quits: if this Welder used the worker, Welder started it (not a worker run by hand) and no
+// other running Welder is using it, ask it to stop (after the job it's on), so it doesn't keep the
+// models' memory once Welder has closed.
+void releaseWorker();
 // The ML environment was set up from an older requirements.txt than this Welder's (or before setup
 // recorded it): "Update ML" (runSetup) installs what's new. Cached for a few seconds.
 bool setupOutdated();

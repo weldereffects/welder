@@ -1,6 +1,10 @@
 #include "TextRender.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstdint>
+#include <set>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -309,6 +313,126 @@ Box coverage(const Font& f, const std::string& message, const Layout& lay, const
             (*cov)[(size_t)(y - region.y1) * W + (x - region.x1)] = R->at(u, v);
         }
     return ib;
+}
+
+// ---------------------------------------------------------------- installed fonts
+namespace {
+uint32_t be32(const unsigned char* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+uint16_t be16(const unsigned char* p) { return (uint16_t)(p[0] << 8 | p[1]); }
+
+// The full name (name ID 4, else family 1 + style 2) from a TrueType / OpenType file's name table,
+// reading only the parts needed (CJK fonts run to tens of MB). "" when it can't be read.
+std::string fontName(const std::filesystem::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return "";
+    auto readAt = [&](uint64_t off, size_t n, std::vector<unsigned char>& buf) {
+        buf.assign(n, 0);
+        in.clear();
+        in.seekg((std::streamoff)off);
+        in.read((char*)buf.data(), (std::streamsize)n);
+        return (size_t)in.gcount() == n;
+    };
+    std::vector<unsigned char> b;
+    if (!readAt(0, 12, b)) return "";
+    uint64_t base = 0;
+    if (std::memcmp(b.data(), "ttcf", 4) == 0) {  // a collection: its first font
+        if (!readAt(12, 4, b)) return "";
+        base = be32(b.data());
+        if (!readAt(base, 12, b)) return "";
+    }
+    const int numTables = be16(b.data() + 4);
+    if (numTables <= 0 || numTables > 200 || !readAt(base + 12, (size_t)numTables * 16, b)) return "";
+    uint64_t nameOff = 0, nameLen = 0;
+    for (int i = 0; i < numTables; ++i)
+        if (std::memcmp(b.data() + i * 16, "name", 4) == 0) {
+            nameOff = be32(b.data() + i * 16 + 8);
+            nameLen = be32(b.data() + i * 16 + 12);
+        }
+    if (!nameOff || nameLen < 6 || nameLen > (1u << 20) || !readAt(nameOff, (size_t)nameLen, b)) return "";
+    const int count = be16(b.data() + 2), strOff = be16(b.data() + 4);
+    std::string names[5];
+    int rank[5] = {0, 0, 0, 0, 0};  // Windows English best, then any Windows, then Mac Roman
+    for (int i = 0; i < count && 6 + (size_t)i * 12 + 12 <= b.size(); ++i) {
+        const unsigned char* r = b.data() + 6 + i * 12;
+        const int platform = be16(r), encoding = be16(r + 2), lang = be16(r + 4), id = be16(r + 6);
+        const size_t len = be16(r + 8), off = (size_t)strOff + be16(r + 10);
+        if (id > 4 || off + len > b.size()) continue;
+        int rk = 0;
+        std::string s;
+        if (platform == 3 && (encoding == 1 || encoding == 10)) {  // UTF-16BE (kept to Latin-1)
+            rk = lang == 0x409 ? 3 : 2;
+            for (size_t k = 0; k + 1 < len; k += 2) {
+                const unsigned c = be16(b.data() + off + k);
+                if (c < 0x80) s += (char)c;
+                else if (c < 0x800) { s += (char)(0xC0 | c >> 6); s += (char)(0x80 | (c & 0x3F)); }
+                else { s += (char)(0xE0 | c >> 12); s += (char)(0x80 | (c >> 6 & 0x3F)); s += (char)(0x80 | (c & 0x3F)); }
+            }
+        } else if (platform == 1 && encoding == 0 && lang == 0) {
+            rk = 1;
+            for (size_t k = 0; k < len; ++k) {
+                const unsigned char c = b[off + k];
+                if (c < 0x80) s += (char)c;
+            }
+        }
+        if (rk > rank[id] && !s.empty()) {
+            rank[id] = rk;
+            names[id] = s;
+        }
+    }
+    if (!names[4].empty()) return names[4];
+    if (names[1].empty()) return "";
+    return names[2].empty() || names[2] == "Regular" ? names[1] : names[1] + " " + names[2];
+}
+}  // namespace
+
+const std::vector<InstalledFont>& installedFonts() {
+    static std::once_flag once;
+    static std::vector<InstalledFont> fonts;
+    std::call_once(once, [] {
+        namespace fs = std::filesystem;
+        std::vector<fs::path> dirs;
+        auto env = [](const char* n) -> std::string {
+            const char* v = std::getenv(n);
+            return v ? v : "";
+        };
+#ifdef _WIN32
+        const std::string win = env("WINDIR").empty() ? "C:/Windows" : env("WINDIR");
+        dirs.push_back(fs::path(win) / "Fonts");
+        if (!env("LOCALAPPDATA").empty()) dirs.push_back(fs::path(env("LOCALAPPDATA")) / "Microsoft" / "Windows" / "Fonts");
+#elif defined(__APPLE__)
+        dirs = {"/Library/Fonts", "/System/Library/Fonts", "/System/Library/Fonts/Supplemental"};
+        if (!env("HOME").empty()) dirs.push_back(fs::path(env("HOME")) / "Library" / "Fonts");
+#else
+        dirs = {"/usr/share/fonts", "/usr/local/share/fonts"};
+        if (!env("HOME").empty()) {
+            dirs.push_back(fs::path(env("HOME")) / ".fonts");
+            dirs.push_back(fs::path(env("HOME")) / ".local" / "share" / "fonts");
+        }
+#endif
+        std::set<std::string> seen;
+        for (auto& d : dirs) {
+            std::error_code ec;
+            for (auto it = fs::recursive_directory_iterator(d, fs::directory_options::skip_permission_denied, ec);
+                 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                if (!it->is_regular_file(ec)) continue;
+                std::string ext = it->path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+                if (ext != ".ttf" && ext != ".otf" && ext != ".ttc") continue;
+                std::string path = it->path().generic_string();
+                std::string name = fontName(it->path());
+                if (name.empty()) name = it->path().stem().string();
+                if (!seen.insert(name).second) continue;  // (the same font in two folders)
+                fonts.push_back({name, path});
+            }
+        }
+        std::sort(fonts.begin(), fonts.end(), [](const InstalledFont& a, const InstalledFont& b) {
+            std::string x = a.name, y = b.name;
+            for (auto& c : x) c = (char)std::tolower((unsigned char)c);
+            for (auto& c : y) c = (char)std::tolower((unsigned char)c);
+            return x < y;
+        });
+    });
+    return fonts;
 }
 
 }  // namespace strata::text

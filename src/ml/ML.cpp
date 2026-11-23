@@ -3,6 +3,7 @@
 #include "../core/CacheDir.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -26,6 +27,9 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#ifndef PROCESS_QUERY_LIMITED_INFORMATION
+#define PROCESS_QUERY_LIMITED_INFORMATION 0x1000
+#endif
 #else
 #include <fcntl.h>
 #include <signal.h>
@@ -598,6 +602,7 @@ WorkerInfo workerInfo() {
     if (j.contains("pid") && j["pid"].is_number_integer()) w.pid = j["pid"].get<long long>();
     if (j.contains("loop") && j["loop"].is_number()) w.loopAge = nowSeconds() - j["loop"].get<double>();
     if (j.contains("job") && j["job"].is_string()) w.job = j["job"];
+    w.startedByWelder = j.value("started_by_welder", false);
     if (j.contains("packages")) w.packages = j["packages"];
     if (j.contains("tasks"))
         for (auto& t : j["tasks"])
@@ -623,10 +628,10 @@ bool launchWorker(std::string* err) {
     std::string script = S(P(pkg) / "strata_ml_worker.py");
     std::string log = S(P(h) / "worker.log");
 #ifdef _WIN32
-    std::wstring cmd = L"\"" + W(py) + L"\" \"" + W(script) + L"\" --home \"" + W(h) + L"\" --log \"" + W(log) + L"\"";
+    std::wstring cmd = L"\"" + W(py) + L"\" \"" + W(script) + L"\" --home \"" + W(h) + L"\" --log \"" + W(log) + L"\" --started-by-welder";
     return spawn(cmd, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, err);
 #else
-    return spawn({py, script, "--home", h, "--log", log}, log, err);
+    return spawn({py, script, "--home", h, "--log", log, "--started-by-welder"}, log, err);
 #endif
 }
 
@@ -745,10 +750,68 @@ static void killWorkerProcess(long long pid) {
     fs::remove(P(home()) / "worker.json", ec);
 }
 
+// Each Welder that uses the worker leaves a file named by its process id in <home>/clients; the last
+// one to quit stops the worker, which would otherwise keep its models in memory (tens of GB for LTX)
+// after Welder has closed.
+static long long selfPid() {
+#ifdef _WIN32
+    return (long long)GetCurrentProcessId();
+#else
+    return (long long)::getpid();
+#endif
+}
+
+static bool pidAlive(long long pid) {
+    if (pid <= 0) return false;
+#ifdef _WIN32
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    if (!h) return GetLastError() == ERROR_ACCESS_DENIED;  // (another user's process: running)
+    DWORD code = 0;
+    const bool alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+    CloseHandle(h);
+    return alive;
+#else
+    return ::kill((pid_t)pid, 0) == 0 || errno == EPERM;
+#endif
+}
+
+static bool gClientRegistered = false;
+
+static void registerClient() {
+    if (gClientRegistered) return;
+    gClientRegistered = true;
+    std::error_code ec;
+    fs::create_directories(P(home()) / "clients", ec);
+    std::ofstream f(P(home()) / "clients" / std::to_string(selfPid()));
+}
+
+void releaseWorker() {
+    if (!gClientRegistered) return;  // this Welder never used the worker: leave it be
+    gClientRegistered = false;
+    const fs::path dir = P(home()) / "clients";
+    std::error_code ec;
+    fs::remove(dir / std::to_string(selfPid()), ec);
+    bool others = false;
+    for (auto it = fs::directory_iterator(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        long long pid = 0;
+        try {
+            pid = std::stoll(it->path().filename().string());
+        } catch (...) {
+        }
+        if (pidAlive(pid)) others = true;
+        else fs::remove(it->path(), ec);  // left by a Welder that crashed
+        ec.clear();
+    }
+    if (others) return;
+    const WorkerInfo w = workerInfo();
+    if (w.online && w.startedByWelder) stopWorker();  // (one started by hand, e.g. on another machine, keeps running)
+}
+
 bool ensureWorkerFor(const std::string& key, std::string* err) {
     static std::mutex m;
     static double lastLaunch = -1e9, lastStop = -1e9;
     std::lock_guard<std::mutex> l(m);
+    registerClient();
     const double now = nowSeconds();
     WorkerInfo w = workerInfo();
     // Online but idle, with its main loop stuck for a while: it will never take the queued job

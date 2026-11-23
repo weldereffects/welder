@@ -503,7 +503,7 @@ int main(int argc, char** argv) {
         // when something must advance every frame.
         // Keys pressed faster than frames are trickled in one per frame by ImGui; keep
         // polling while any are queued so a burst of hotkeys is never held back.
-        if (app.playing || app.editsPending() || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
+        if (app.playing || app.editsPending() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
             glfwPollEvents();
         else glfwWaitEventsTimeout(app.rendering() ? 0.05 : 0.5);
         const auto frameWorkStart = std::chrono::steady_clock::now();  // (WELDER_DEBUG_FRAMES)
@@ -1463,8 +1463,10 @@ int main(int argc, char** argv) {
             float q[4] = {0, 0, 0, 0};
             std::sscanf(tg, "%f,%f,%f,%f", &q[0], &q[1], &q[2], &q[3]);
             ImGuiIO& tio = ImGui::GetIO();
-            dragTest = frameCount < 70;
-            const int a = 20, b = 40;
+            // STRATA_TEST_DRAG_HOLD=<frames>: hold the button down that long at the end (the graph's edge scrolling)
+            const int hold = std::getenv("STRATA_TEST_DRAG_HOLD") ? std::atoi(std::getenv("STRATA_TEST_DRAG_HOLD")) : 0;
+            dragTest = frameCount < 70 + hold;
+            const int a = 20, b = 40 + hold;
             if (std::getenv("STRATA_TEST_DRAG_CTRL")) {  // with Ctrl held (roto: a point's feather)
                 if (frameCount == a - 3) {
                     tio.AddKeyEvent(ImGuiMod_Ctrl, true);
@@ -1477,11 +1479,13 @@ int main(int argc, char** argv) {
             if (frameCount == a - 2) tio.AddMousePosEvent(q[0], q[1]);
             else if (frameCount == a) tio.AddMouseButtonEvent(0, true);
             else if (frameCount > a && frameCount <= b) {
-                const float t = (float)(frameCount - a) / (b - a);
+                const float t = std::min(1.0f, (float)(frameCount - a) / (b - hold - a));
                 tio.AddMousePosEvent(q[0] + (q[2] - q[0]) * t, q[1] + (q[3] - q[1]) * t);
             } else if (frameCount == b + 2) tio.AddMouseButtonEvent(0, false);
-            else if (frameCount == 60)
+            else if (frameCount == 60 + hold)
                 for (auto& n : app.comp->nodes) {
+                    if (n->ui.contains("x") && n->ui.contains("y") && std::getenv("STRATA_TEST_DRAG_HOLD"))
+                        std::printf("DRAG node %s at %.0f %.0f\n", n->name.c_str(), n->ui["x"].get<double>(), n->ui["y"].get<double>());
                     if (n->type == "Tracker" && n->params.has("tracks"))
                         for (auto& t : n->params.data["tracks"])
                             for (auto& k : track::keysOf(t))
@@ -1850,7 +1854,7 @@ int main(int argc, char** argv) {
             ViewResult r = app.result();
             bool done = !app.rendering() && !app.editsPending() && !app.texturesPending() && (app.viewed.empty() || r.serial > 0);
             settled = done ? settled + 1 : 0;
-            if (opt.idScan && (scanning || (frameCount > 8 && settled > 4))) {
+            if (opt.idScan && !keysTest && (scanning || (frameCount > 8 && settled > 4))) {  // (after any STRATA_TEST_KEYS steps)
                 if (!scanning) {
                     scanning = true;
                     ImGui::GetIO().ConfigDebugHighlightIdConflicts = true;
@@ -1936,6 +1940,7 @@ int main(int argc, char** argv) {
     }
 
     startupDone();
+    ml::releaseWorker();  // the last Welder to quit stops the ML worker (it holds the models' memory)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

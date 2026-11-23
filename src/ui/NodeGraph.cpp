@@ -1847,7 +1847,28 @@ void drawNodeGraph(App& app, UiState& ui) {
     struct Handle { Node* node; int input; ImVec2 at; };
     std::vector<Handle> handles;  // grab points for input pipes (screen space)
     std::vector<Handle> tails;    // ... and the other end of each pipe, by its source (drag to re-source / disconnect)
-    const float grabR = 12.0f;    // screen-pixel pick radius for ports and pipe ends
+    // screen-pixel pick radius for ports and pipe ends: smaller zoomed far out, where a full-size one
+    // would cover the (tiny) nodes and grab a pipe instead of the node (#111)
+    const float grabR = std::clamp(12.0f * g.zoom / 0.5f, 5.0f, 12.0f);
+    // A node too small on screen to click easily (zoomed far out) is picked within a few pixels of it,
+    // ahead of the pipe ends and ports around it (#111).
+    auto nodeNear = [&](ImVec2 sp) -> Node* {
+        Node* best = nullptr;
+        float bestD = 1e9f;
+        for (auto it = comp.nodes.rbegin(); it != comp.nodes.rend(); ++it) {
+            Node* n = it->get();
+            if (!vis(n) || isAnnotation(n)) continue;
+            const ImVec2 p0 = S(pos(n)), s = size(n);
+            const float w = s.x * g.zoom, h = s.y * g.zoom;
+            const float padX = std::max(0.0f, (14.0f - w) / 2), padY = std::max(0.0f, (14.0f - h) / 2);
+            if (padX <= 0 && padY <= 0) continue;  // big enough: only the node itself
+            const float dx = std::max({p0.x - sp.x, 0.0f, sp.x - (p0.x + w)}), dy = std::max({p0.y - sp.y, 0.0f, sp.y - (p0.y + h)});
+            if (dx > padX || dy > padY) continue;
+            const float d = std::hypot(dx, dy);
+            if (d < bestD) { bestD = d; best = n; }
+        }
+        return best;
+    };
     // Output port: a small circle just under each node (screen space).
     auto outPort = [&](const Node* n) {
         ImVec2 o = S(outputPoint(n));
@@ -2103,7 +2124,8 @@ void drawNodeGraph(App& app, UiState& ui) {
     // What the mouse is over: an input pipe end, or an output port.
     const Handle* hoverHandle = nullptr;
     Node* hoverOut = nullptr;
-    if (hovered && g.drag == GraphState::Drag::None) {
+    Node* nearTiny = hovered && g.drag == GraphState::Drag::None && !nodeAt(mouseG) ? nodeNear(io.MousePos) : nullptr;
+    if (hovered && g.drag == GraphState::Drag::None && !nearTiny) {
         float bestD = grabR;
         for (auto& h : handles) {
             float d = std::hypot(h.at.x - io.MousePos.x, h.at.y - io.MousePos.y);
@@ -2450,13 +2472,15 @@ void drawNodeGraph(App& app, UiState& ui) {
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && (app.middleDragZooms || io.KeyAlt)) {
             g.drag = GraphState::Drag::Zoom;  // (tablets: a pen has no wheel, issue #23)
             g.zoomAnchor = io.MousePos;
+            g.comboZoom = false;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) || (io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
             g.drag = GraphState::Drag::Pan;
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             g.dragStartScreen = io.MousePos;
             g.moved = false;
             // 1) ports: an input pipe end, or an output port (also a node's bottom edge)
-            Node* hit = nodeAt(mouseG);
+            Node* exact = nodeAt(mouseG);
+            Node* hit = exact ? exact : nearTiny;  // (zoomed far out: a node just next to the mouse)
             Node* corner = hit ? nullptr : cornerAt(mouseG);
             if (dotPipe && !hit) {  // a Dot into the pipe, then carry it
                 std::string name;
@@ -2496,9 +2520,9 @@ void drawNodeGraph(App& app, UiState& ui) {
                 g.dragInput = e.bottom ? 0 : e.input;
                 g.edgeNode = e.node->name;
                 g.edgeArmed = true;
-            } else if (hoverOut || (hit && hit->type != "Dot" && hit->type != "Viewer" && !isAnnotation(hit) && mouseG.y > pos(hit).y + size(hit).y - 4)) {
+            } else if (hoverOut || (exact && exact->type != "Dot" && exact->type != "Viewer" && !isAnnotation(exact) && mouseG.y > pos(exact).y + size(exact).y - 4)) {
                 g.drag = GraphState::Drag::FromOutput;
-                g.dragNode = hoverOut ? hoverOut->name : hit->name;
+                g.dragNode = hoverOut ? hoverOut->name : exact->name;
             } else if (hit) {
                 g.lastClicked = hit->name;
                 // Clicked nodes go to the end of the selection order.
@@ -2552,6 +2576,31 @@ void drawNodeGraph(App& app, UiState& ui) {
         }
     }
 
+    // Dragging nodes, a pipe or a selection box to the edge of the graph scrolls the graph that way (#109).
+    g.autoPanning = false;
+    if ((g.drag == GraphState::Drag::Move && g.moved) || g.drag == GraphState::Drag::Marquee ||
+        ((g.drag == GraphState::Drag::FromInput || g.drag == GraphState::Drag::FromOutput) && !g.edgeArmed)) {
+        const float zone = 30.0f;
+        auto push = [&](float m, float lo, float hi) {  // -1..1: how far into (or past) the edge zone
+            if (m < lo + zone) return -std::min(1.0f, (lo + zone - m) / zone);
+            if (m > hi - zone) return std::min(1.0f, (m - (hi - zone)) / zone);
+            return 0.0f;
+        };
+        const float vx = push(io.MousePos.x, o.x, o.x + sz.x), vy = push(io.MousePos.y, o.y, o.y + sz.y);
+        if (vx != 0 || vy != 0) {
+            g.autoPanning = true;
+            const float step = 900.0f * std::min(io.DeltaTime, 0.05f);  // screen px a frame at full push
+            const ImVec2 ds(vx * step, vy * step);
+            g.pan.x += ds.x / g.zoom;
+            g.pan.y += ds.y / g.zoom;
+            if (g.drag == GraphState::Drag::Move || g.drag == GraphState::Drag::Marquee) {
+                g.dragStartScreen.x -= ds.x;  // (the drag measures from its start: keep that on the same graph spot)
+                g.dragStartScreen.y -= ds.y;
+            }
+            mouseG = G(io.MousePos);
+        }
+    }
+
     switch (g.drag) {
         case GraphState::Drag::Cut: {
             // the cutting line, and the pipes it crosses lit up; let go to cut them
@@ -2600,9 +2649,17 @@ void drawNodeGraph(App& app, UiState& ui) {
             g.pan.x += before.x - after.x;
             g.pan.y += before.y - after.y;
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle)) g.drag = GraphState::Drag::None;
+            else if (g.comboZoom && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) g.drag = GraphState::Drag::Pan;  // pen lifted: panning again
             break;
         }
         case GraphState::Drag::Pan:
+            // middle + left held together (a tablet pen's side button, then the tip down) zooms (#104)
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Middle) && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                g.drag = GraphState::Drag::Zoom;
+                g.zoomAnchor = io.MousePos;
+                g.comboZoom = true;
+                break;
+            }
             g.pan.x -= io.MouseDelta.x / g.zoom;
             g.pan.y -= io.MouseDelta.y / g.zoom;
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle) && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) g.drag = GraphState::Drag::None;
