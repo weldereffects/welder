@@ -456,6 +456,8 @@ struct UiState {
     bool updateManual = false;  // Help > Check for Updates is running: say what it found
     bool showUpdate = false;    // the "Welder x.y.z is available" dialog
     bool resetWorkspace = false;  // Workspace > Reset Workspace: the default layout on the next frame
+    int loadWorkspace = 0;        // 1-6: switch to that saved workspace before the next frame (Shift+F1-F6, #103)
+    bool openSaveWorkspace = false;  // Workspace > Save Workspace...
     bool showPrefs = false;  // Edit > Preferences (Shift+S)
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)
     bool showPerf = false;     // Viewer > Performance
@@ -500,6 +502,12 @@ struct UiState {
 };
 
 void drawMenuBar(App& app, UiState& ui);
+// Saved workspaces (#103): six slots, switched with Shift+F1-F6. Slot 1 is "Compositing", the default
+// layout until a layout is saved over it. Each is a layout .ini in <config>/workspaces.
+constexpr int kWorkspaceSlots = 6;
+std::string workspaceName(int slot);  // "" = nothing saved there (slot 1: "Compositing")
+bool workspaceSaved(int slot);
+std::string workspaceLayout(int slot);  // the saved layout ("" = none)
 void drawToolbar(App& app, UiState& ui);
 void drawViewer(App& app, UiState& ui);
 void drawTimeline(App& app, UiState& ui);

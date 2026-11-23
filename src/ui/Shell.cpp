@@ -14,6 +14,7 @@
 #include "core/NetPath.h"
 #include "PanelKit.h"
 #include "core/CacheDir.h"
+#include "core/Brand.h"
 #include "core/Crash.h"
 #include "core/Platform.h"
 #include "gpu/Gpu.h"
@@ -259,7 +260,103 @@ void drawUpdateDialog(App& app, UiState& ui) {
 
 }  // namespace
 
+// ---------------------------------------------------------------- saved workspaces (#103)
+namespace {
+fs::path workspaceFile(int slot) { return fs::path(brand::configDir()) / "workspaces" / ("workspace" + std::to_string(slot) + ".ini"); }
+
+// The file starts with "; name: <name>" (ImGui skips ';' lines when it loads the layout).
+bool readWorkspace(int slot, std::string* name, std::string* ini) {
+    std::ifstream f(workspaceFile(slot), std::ios::binary);
+    if (!f) return false;
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string text = ss.str();
+    if (name) {
+        name->clear();
+        if (text.rfind("; name: ", 0) == 0) *name = text.substr(8, text.find_first_of("\r\n") - 8);
+    }
+    if (ini) *ini = text;
+    return !text.empty();
+}
+
+bool writeWorkspace(int slot, const std::string& name, std::string* err) {
+    std::error_code ec;
+    fs::create_directories(workspaceFile(slot).parent_path(), ec);
+    size_t n = 0;
+    const char* ini = ImGui::SaveIniSettingsToMemory(&n);
+    std::string clean = name;
+    clean.erase(std::remove_if(clean.begin(), clean.end(), [](char c) { return c == '\n' || c == '\r'; }), clean.end());
+    std::ofstream f(workspaceFile(slot), std::ios::binary | std::ios::trunc);
+    f << "; name: " << clean << "\n";
+    f.write(ini, (std::streamsize)n);
+    if (!f) {
+        if (err) *err = "can't write " + workspaceFile(slot).string();
+        return false;
+    }
+    return true;
+}
+
+void drawSaveWorkspace(App& app, UiState& ui) {
+    static char name[64] = "";
+    static int slot = 1;
+    if (ui.openSaveWorkspace) {
+        ui.openSaveWorkspace = false;
+        slot = 0;
+        for (int i = 2; i <= kWorkspaceSlots && !slot; ++i)  // the first empty slot after Compositing
+            if (!workspaceSaved(i)) slot = i;
+        if (!slot) slot = 2;
+        std::snprintf(name, sizeof(name), "%s", workspaceSaved(slot) ? workspaceName(slot).c_str() : ("Workspace " + std::to_string(slot)).c_str());
+        ImGui::OpenPopup("Save Workspace");
+    }
+    if (!ImGui::BeginPopupModal("Save Workspace", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::TextDisabled("The panels' places and sizes, switched to with Shift+F1-F6");
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::BeginCombo("slot", ("Shift+F" + std::to_string(slot)).c_str())) {
+        for (int i = 1; i <= kWorkspaceSlots; ++i) {
+            const std::string label = "Shift+F" + std::to_string(i) + "   " + (workspaceSaved(i) ? workspaceName(i) : i == 1 ? std::string("Compositing (default)") : std::string("(empty)"));
+            if (ImGui::Selectable(label.c_str(), i == slot)) {
+                slot = i;
+                const std::string def = i == 1 ? "Compositing" : "Workspace " + std::to_string(i);
+                std::snprintf(name, sizeof(name), "%s", workspaceSaved(i) ? workspaceName(i).c_str() : def.c_str());
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetNextItemWidth(260);
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    const bool enter = ImGui::InputText("name", name, sizeof(name), ImGuiInputTextFlags_EnterReturnsTrue);
+    if (workspaceSaved(slot)) ImGui::TextColored(ImVec4(1, 0.75f, 0.3f, 1), "Replaces \"%s\"", workspaceName(slot).c_str());
+    if (ImGui::Button("Save") || enter) {
+        std::string err;
+        const std::string nm = name[0] ? name : "Workspace " + std::to_string(slot);
+        if (writeWorkspace(slot, nm, &err)) app.message("workspace \"" + nm + "\" saved (Shift+F" + std::to_string(slot) + ")");
+        else app.message("error: " + err);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+}  // namespace
+
+std::string workspaceName(int slot) {
+    std::string n;
+    if (readWorkspace(slot, &n, nullptr) && !n.empty()) return n;
+    return slot == 1 ? "Compositing" : workspaceSaved(slot) ? "Workspace " + std::to_string(slot) : "";
+}
+
+bool workspaceSaved(int slot) {
+    std::error_code ec;
+    return fs::is_regular_file(workspaceFile(slot), ec);
+}
+
+std::string workspaceLayout(int slot) {
+    std::string ini;
+    return readWorkspace(slot, nullptr, &ini) ? ini : "";
+}
+
 void drawMenuBar(App& app, UiState& ui) {
+    drawSaveWorkspace(app, ui);
     tickUpdates(app, ui);
     // Actions requested by hotkeys that need the file dialog live here.
     if (!ui.menuAction.empty()) {
@@ -418,6 +515,23 @@ void drawMenuBar(App& app, UiState& ui) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Workspace")) {
+        for (int i = 1; i <= kWorkspaceSlots; ++i) {
+            const bool saved = workspaceSaved(i);
+            if (!saved && i > 1) continue;
+            const std::string label = workspaceName(i) + (i == 1 && !saved ? " (default)" : "") + "##ws" + std::to_string(i);
+            if (ImGui::MenuItem(label.c_str(), ("Shift+F" + std::to_string(i)).c_str())) ui.loadWorkspace = i;
+        }
+        if (ImGui::MenuItem("Save Workspace...")) ui.openSaveWorkspace = true;
+        bool any = false;
+        for (int i = 1; i <= kWorkspaceSlots; ++i) any = any || workspaceSaved(i);
+        if (ImGui::BeginMenu("Delete Workspace", any)) {
+            for (int i = 1; i <= kWorkspaceSlots; ++i)
+                if (workspaceSaved(i) && ImGui::MenuItem((workspaceName(i) + (i == 1 ? " (back to the default)" : "") + "##del" + std::to_string(i)).c_str())) {
+                    std::error_code ec;
+                    fs::remove(fs::path(brand::configDir()) / "workspaces" / ("workspace" + std::to_string(i) + ".ini"), ec);
+                }
+            ImGui::EndMenu();
+        }
         if (ImGui::MenuItem("Reset Workspace", "Shift+F12")) ui.resetWorkspace = true;
         ImGui::Separator();
         // bring a panel to the front (a tab hidden behind others, or a floating one)

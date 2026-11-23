@@ -33,6 +33,7 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "imgui_internal.h"
+#include <cstring>
 #include "ml/ML.h"
 #include "ofx/OfxHost.h"
 #include "stb_image_write.h"
@@ -528,6 +529,23 @@ int main(int argc, char** argv) {
         if (!ui.pendingTheme.empty()) {  // Preferences > Theme
             applyTheme(ui.pendingTheme);
             ui.pendingTheme.clear();
+        }
+        if (ui.loadWorkspace) {  // Workspace > a saved workspace (Shift+F1-F6): its layout, between frames (#103)
+            const int slot = ui.loadWorkspace;
+            ui.loadWorkspace = 0;
+            const std::string ini = workspaceLayout(slot);
+            if (!ini.empty()) {
+                ui.maximized.clear();
+                resetTimelineHeight();  // (the workspace's own timeline height, once its nodes are laid out)
+                ImGui::LoadIniSettingsFromMemory(ini.data(), ini.size());
+                ImGui::MarkIniSettingsDirty();
+                focusGraph = true;
+                app.message("workspace: " + workspaceName(slot));
+            } else if (slot == 1) {
+                ui.resetWorkspace = true;  // Compositing, never saved over: the default layout
+            } else {
+                app.message("nothing saved as workspace " + std::to_string(slot) + " yet: Workspace > Save Workspace...");
+            }
         }
         ImGui::NewFrame();
         if (scanning && GImGui->DebugDrawIdConflictsId != 0) {
@@ -1239,7 +1257,7 @@ int main(int argc, char** argv) {
         }
         // STRATA_TEST_KEYS=tok;tok;...: one step every 12 frames from frame 15, then the viewers' routing is
         // printed. Tokens: "at=x,y" (move the mouse), "sel=Node" (select it), "key=[ctrl+][shift+]K"
-        // (K: a digit, a letter, "grave"), "click=x,y", "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
+        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
         bool keysTest = false;
         if (const char* tk = std::getenv("STRATA_TEST_KEYS"); tk && *tk && !opt.screenshot.empty()) {
             std::vector<std::string> toks;
@@ -1287,6 +1305,8 @@ int main(int argc, char** argv) {
                         else if (kk == "end") held = ImGuiKey_End;
                         else if (kk == "enter") held = ImGuiKey_Enter;
                         else if (kk == "delete") held = ImGuiKey_Delete;
+                        else if (kk.size() >= 2 && kk[0] == 'f' && std::atoi(kk.c_str() + 1) >= 1 && std::atoi(kk.c_str() + 1) <= 12)
+                            held = (ImGuiKey)(ImGuiKey_F1 + std::atoi(kk.c_str() + 1) - 1);
                         if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
                         if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
                     } else if (what == "click") {
@@ -1814,6 +1834,19 @@ int main(int argc, char** argv) {
             ImGui::UpdatePlatformWindows();
             ImGui::RenderPlatformWindowsDefault();
             glfwMakeContextCurrent(win);
+            // Floating properties panels stay above Welder's other windows (the main one, a node graph
+            // floated onto a second monitor...) while Welder is in front, and drop back when another
+            // program is (#105).
+            ImGuiPlatformIO& pio = ImGui::GetPlatformIO();
+            bool appFocused = false;
+            for (ImGuiViewport* v : pio.Viewports)
+                if (auto* w = (GLFWwindow*)v->PlatformHandle; w && glfwGetWindowAttrib(w, GLFW_FOCUSED)) appFocused = true;
+            for (ImGuiViewport* v : pio.Viewports) {
+                auto* vp = (ImGuiViewportP*)v;
+                auto* w = (GLFWwindow*)v->PlatformHandle;
+                if (!w || w == win || !vp->Window || !std::strstr(vp->Window->Name, "###float_")) continue;
+                if ((glfwGetWindowAttrib(w, GLFW_FLOATING) != 0) != appFocused) glfwSetWindowAttrib(w, GLFW_FLOATING, appFocused);
+            }
         }
         mark("drawing (OpenGL)");
         if (frameCount % 60 == 0) {  // OpenGL errors (out of GPU memory...) go in the crash breadcrumbs

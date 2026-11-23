@@ -137,6 +137,8 @@ public:
     std::set<std::string> panelsToExpand;   // just opened: shown expanded (even if collapsed before), the bin brought forward
     std::set<std::string> panelsCollapsed;  // panels folded in the bin: their viewer overlays and tools are off (#29)
     std::set<std::string> panelsFloating;   // panels floating in windows of their own (open, like the bin's)
+    bool floatNewPanels = false;            // the bin's lock (#105): panels opened from now on float instead
+    std::vector<std::string> panelsToFloat; // opened while locked: the properties panel floats them next frame
     std::string panelFocus;                 // the panel last opened or clicked in: its node's viewer tools win
     int maxPanels = 6;
     std::string status;                     // one-line status message

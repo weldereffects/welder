@@ -38,6 +38,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Global", "Ctrl+Shift+P", "toggle pixel aspect ratio", false},
         {"Global", "F12", "clear cached images (buffers)", true},
         {"Global", "Shift+F12", "reset the workspace (every panel back in its default place)", true},
+        {"Global", "Shift+F1-F6", "switch to a saved workspace (Workspace > Save Workspace; Shift+F1: Compositing)", true},
         {"Global", "Shift+S", "preferences", false},
         {"Global", "Ctrl+I", "new viewer", false},
         {"Global", "Space (hold)", "right-click menu", false},
@@ -318,6 +319,8 @@ void handleHotkeys(App& app, UiState& ui) {
         return;
     }
     if (key(ImGuiKey_F12, false, true)) { ui.resetWorkspace = true; return; }
+    for (int i = 0; i < kWorkspaceSlots; ++i)  // Shift+F1-F6: the saved workspaces (#103)
+        if (key((ImGuiKey)(ImGuiKey_F1 + i), false, true)) { ui.loadWorkspace = i + 1; return; }
     if (key(ImGuiKey_F12)) { app.clearCaches(); return; }
     if (key(ImGuiKey_Space) && ImGui::GetFrameCount() - ui.imageGen.sheetHoverFrame <= 1) {  // ImageGen: 1:1 take
         ui.imageGen.spaceToggle = true;

@@ -255,6 +255,9 @@ void lockTimelineHeight() {
     ImGuiDockNode* n = w->DockNode;
     ImGuiDockNode* parent = n->ParentNode;
     if (!parent || parent->SplitAxis != ImGuiAxis_Y || parent->ChildNodes[0] == nullptr || parent->ChildNodes[1] == nullptr) return;
+    // nodes not laid out yet (a workspace just loaded, #103): their sizes are still 0, and locking now
+    // would squeeze the viewer's area down to the timeline's minimum
+    if (parent->Size.y <= 0 || n->Size.y <= 0) return;
     const float minH = timelineHeight();
     ImGuiDockNode* other = parent->ChildNodes[0] == n ? parent->ChildNodes[1] : parent->ChildNodes[0];
     if (gLastNodeH <= 0 && gTimelineH <= 0 && n->Size.y > minH + 1) gTimelineH = n->Size.y;  // as saved in the layout

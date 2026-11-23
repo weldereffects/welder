@@ -3736,6 +3736,12 @@ void drawProperties(App& app, UiState& ui) {
         if (ImGui::Button("clear all")) app.panels.clear();
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Close every panel in the properties bin");
+        ImGui::SameLine();
+        kit::checkbox("float new panels", &app.floatNewPanels);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Locks the bin: nodes opened from now on get floating windows of their own instead\n"
+                              "(the panels already here stay). While Welder is in front, floating panels stay\n"
+                              "above its other windows.");
         ImGui::Separator();
     }
     if (app.panels.empty()) ImGui::TextDisabled("Double-click a node to edit it. S over the node graph: project settings.");
@@ -3774,6 +3780,8 @@ void openFloatPanel(App& app, UiState& ui, const std::string& name) {
 }
 
 void drawFloatPanels(App& app, UiState& ui) {
+    for (auto& name : app.panelsToFloat) openFloatPanel(app, ui, name);  // opened while the bin is locked (#105)
+    app.panelsToFloat.clear();
     std::vector<std::string> done;
     for (auto& f : ui.floatPanels) {
         Node* n = app.node(f.node);
