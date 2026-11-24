@@ -5,6 +5,7 @@
 //   welder info   <comp.weld>
 //   welder nk     <comp.weld> [-o shot.nk]       (a .nk script)
 //   welder python <script.py> [--comp shot.weld] [--python exe] [script args...] [-- more script args]
+//   welder mcp    [--headless] [--comp shot.weld] [--http port]   (an MCP server: core/Mcp.h)
 //   strata types
 //   strata ofx-list [plugin paths...]
 #include <chrono>
@@ -14,6 +15,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "gpu/Gpu.h"
@@ -22,6 +24,7 @@
 #include "../core/Platform.h"
 #include "../core/Engine.h"
 #include "../core/FrameList.h"
+#include "../core/Mcp.h"
 #include "../core/NkExport.h"
 #include "../core/ScriptApi.h"
 #include "../io/ImageIO.h"
@@ -40,6 +43,7 @@ void usage() {
                  "  welder nk     <comp.weld> [-o shot.nk]   (export to a .nk script)\n"
                  "  welder bench  <comp.weld> <Node> [EditedNode] [-f frame]\n"
                  "  welder python <script.py> [--comp shot.weld] [--python exe] [script args...]\n"
+                 "  welder mcp    [--headless] [--comp shot.weld] [--http port]   (MCP server for AI clients, docs/MCP.md)\n"
                  "  welder types\n"
                  "  welder ofx-list [dir ...]   (also searches $OFX_PLUGIN_PATH)\n";
 }
@@ -320,6 +324,41 @@ int cmdPython(int argc, char** argv) {
     return code;
 }
 
+// `welder mcp`: an MCP server on stdin / stdout for AI clients. By default it passes tool calls on
+// to the editor (its MCP server, Edit > Preferences); --headless (or --comp) works on a comp of
+// its own, --http serves that comp over HTTP instead of stdio.
+int cmdMcp(int argc, char** argv) {
+    std::string compPath;
+    bool headless = false;
+    int httpPort = -1;
+    for (int i = 2; i < argc; ++i) {
+        std::string s = argv[i];
+        if (s == "--headless") headless = true;
+        else if (s == "--comp" && i + 1 < argc) compPath = argv[++i], headless = true;
+        else if (s == "--http") httpPort = i + 1 < argc && argv[i + 1][0] != '-' ? std::atoi(argv[++i]) : mcp::kDefaultPort, headless = true;
+        else { usage(); return 2; }
+    }
+    if (!headless) return mcp::runStdio(nullptr);
+    CliScriptHost host;
+    if (!compPath.empty()) host.setComp(load(compPath));
+    else host.newComp(0, 0);  // (an empty comp to start from)
+    mcp::DirectRunner runner(host);
+    if (httpPort < 0) return mcp::runStdio(&runner);
+    mcp::Server server(runner);
+    mcp::HttpOptions o;
+    o.port = httpPort;
+    o.token = mcp::loadToken();
+    std::string err;
+    auto http = mcp::HttpServer::start(o, [&server](const std::string& b) { return server.handleText(b); }, &err);
+    if (!http) {
+        std::cerr << "error: " << err << "\n";
+        return 1;
+    }
+    std::cerr << "welder mcp: http://127.0.0.1:" << http->port() << "/mcp\n"
+              << "  header: Authorization: Bearer <the token in " << mcp::tokenPath() << ">\n";
+    for (;;) std::this_thread::sleep_for(std::chrono::seconds(3600));
+}
+
 int cmdInfo(const Args& a) {
     if (a.pos.empty()) { usage(); return 2; }
     auto comp = load(a.pos[0]);
@@ -345,12 +384,14 @@ int cmdInfo(const Args& a) {
 
 int main(int argc, char** argv) {
     strata::brand::aliasEnv();
+    if (argc >= 2 && std::string(argv[1]) == "mcp") mcp::takeStdout();  // (before plugins can print)
     registerBuiltinNodes();
     registerOfxPlugins();
     if (argc < 2) { usage(); return 2; }
     std::string cmd = argv[1];
     try {
         if (cmd == "python") return cmdPython(argc, argv);  // (its arguments are the script's)
+        if (cmd == "mcp") return cmdMcp(argc, argv);
         Args a = parseArgs(argc, argv, 2);
         if (cmd == "render") return cmdRender(a);
         if (cmd == "node") return cmdNode(a);

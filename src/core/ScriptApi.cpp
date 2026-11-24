@@ -1,5 +1,6 @@
 #include "ScriptApi.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -18,6 +19,7 @@
 #include "Process.h"
 #include "Schema.h"
 #include "../io/ImageIO.h"
+#include "stb_image_write.h"
 
 #ifdef _WIN32
 #include <stdlib.h>  // _putenv_s
@@ -175,6 +177,58 @@ void writeNpy(const std::string& path, const Image& img, const Box& box) {
         f.write((const char*)row.data(), (std::streamsize)(row.size() * sizeof(float)));
     }
     if (!f) fail("OSError", "cannot write " + path);
+}
+
+std::string base64(const unsigned char* d, size_t n) {
+    static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        const unsigned v = (unsigned)d[i] << 16 | (i + 1 < n ? (unsigned)d[i + 1] << 8 : 0u) | (i + 2 < n ? (unsigned)d[i + 2] : 0u);
+        out.push_back(t[(v >> 18) & 63]);
+        out.push_back(t[(v >> 12) & 63]);
+        out.push_back(i + 1 < n ? t[(v >> 6) & 63] : '=');
+        out.push_back(i + 2 < n ? t[v & 63] : '=');
+    }
+    return out;
+}
+
+// A preview PNG (8-bit sRGB, RGB): `img` over `box`, box-filtered down to tw x th.
+std::vector<unsigned char> previewPng(const Image& img, const Box& box, int tw, int th) {
+    const int r = img.ch("R") >= 0 ? img.ch("R") : (img.nch() ? 0 : -1);
+    const int g = img.ch("G") >= 0 ? img.ch("G") : r, b = img.ch("B") >= 0 ? img.ch("B") : r;
+    const int bw = box.width(), bh = box.height();
+    std::vector<unsigned char> rgb((size_t)tw * th * 3);
+    for (int ty = 0; ty < th; ++ty) {
+        // (PNG rows go top first; Welder's y counts up from the bottom)
+        const int ya = box.y2 - (int)((long long)(ty + 1) * bh / th), yb = std::max(ya + 1, box.y2 - (int)((long long)ty * bh / th));
+        for (int tx = 0; tx < tw; ++tx) {
+            const int xa = box.x1 + (int)((long long)tx * bw / tw), xb = std::max(xa + 1, box.x1 + (int)((long long)(tx + 1) * bw / tw));
+            double acc[3] = {0, 0, 0};
+            int cnt = 0;
+            for (int y = ya; y < yb; ++y)
+                for (int x = xa; x < xb; ++x) {
+                    ++cnt;
+                    if (r < 0 || !img.bounds.contains(x, y)) continue;
+                    acc[0] += img.at(x, y, r);
+                    acc[1] += img.at(x, y, g);
+                    acc[2] += img.at(x, y, b);
+                }
+            for (int k = 0; k < 3; ++k) {
+                const float v = cnt ? (float)(acc[k] / cnt) : 0.0f;
+                const float e = linearToSrgb(std::clamp(v, 0.0f, 1.0f));
+                rgb[((size_t)ty * tw + tx) * 3 + k] = (unsigned char)std::lround(std::clamp(e, 0.0f, 1.0f) * 255.0f);
+            }
+        }
+    }
+    std::vector<unsigned char> png;
+    stbi_write_png_to_func(
+        [](void* ctx, void* data, int size) {
+            auto* v = (std::vector<unsigned char>*)ctx;
+            v->insert(v->end(), (unsigned char*)data, (unsigned char*)data + size);
+        },
+        &png, tw, th, 3, rgb.data(), tw * 3);
+    return png;
 }
 
 }  // namespace
@@ -555,6 +609,38 @@ json ScriptApi::call(const std::string& method, const json& p) {
         }
         return {{"path", path}, {"width", box.width()}, {"height", box.height()}, {"channels", img->channels},
                 {"box", {box.x1, box.y1, box.x2, box.y2}}};
+    }
+    if (method == "render.png") {  // a small preview, for an AI client to look at (core/Mcp.h)
+        Node* n = node(p);
+        Engine& e = host_.engine();
+        const double f = num(p, "frame", comp().firstFrame);
+        const int maxSize = std::clamp((int)num(p, "max_size", 512), 16, 4096);
+        Format fmt = n->format(e, f);
+        Box box = fmt.box();
+        if (p.contains("box") && p["box"].is_array() && p["box"].size() == 4)
+            box = Box(p["box"][0].get<int>(), p["box"][1].get<int>(), p["box"][2].get<int>(), p["box"][3].get<int>());
+        if (box.width() <= 0 || box.height() <= 0) fail("ValueError", "empty region");
+        const double s = std::min(1.0, (double)maxSize / std::max(box.width(), box.height()));
+        const int tw = std::max(1, (int)std::lround(box.width() * s)), th = std::max(1, (int)std::lround(box.height() * s));
+        // a proxy render (Engine::setScale) unless full_res: much quicker for a big plate
+        const bool proxy = s < 1.0 && !p.value("full_res", false);
+        struct ScaleGuard {
+            Engine& e;
+            double was;
+            ~ScaleGuard() { e.setScale(was); }
+        } guard{e, e.scale()};
+        Box rbox = box;
+        if (proxy) {
+            e.setScale(s);
+            rbox = Box((int)std::floor(box.x1 * s), (int)std::floor(box.y1 * s), (int)std::ceil(box.x2 * s), (int)std::ceil(box.y2 * s));
+            if (rbox.width() <= 0 || rbox.height() <= 0) rbox = Box(rbox.x1, rbox.y1, rbox.x1 + 1, rbox.y1 + 1);
+        }
+        ImagePtr img = renderNode(e, n, f, rbox);
+        std::vector<unsigned char> png = previewPng(*img, rbox, tw, th);
+        if (png.empty()) fail("RuntimeError", "cannot encode the preview");
+        return {{"png_base64", base64(png.data(), png.size())}, {"width", tw}, {"height", th},
+                {"format", {fmt.width, fmt.height}}, {"box", {box.x1, box.y1, box.x2, box.y2}},
+                {"channels", img->channels}, {"proxy", proxy}};
     }
     if (method == "render.write") {
         Comp& c = comp();

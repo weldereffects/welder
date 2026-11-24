@@ -87,6 +87,7 @@ add_library(strata_core STATIC
   src/core/Process.cpp
   src/core/LocalSocket.cpp
   src/core/ScriptApi.cpp
+  src/core/Mcp.cpp
   src/core/Paths.cpp
   src/core/Studio.cpp
   src/core/Brand.cpp
@@ -373,6 +374,10 @@ if(Python3_FOUND)
   add_test(NAME python_api
            COMMAND welder python tests/python_api_test.py ${CMAKE_BINARY_DIR}/python-api-test --python ${Python3_EXECUTABLE}
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  # the MCP server as an AI client sees it: `welder mcp --headless` on stdio (tools/mcp_test.sh: the editor's)
+  add_test(NAME mcp
+           COMMAND ${Python3_EXECUTABLE} tests/mcp_test.py $<TARGET_FILE:welder> --headless
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   add_test(NAME ml_worker
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_worker.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
@@ -442,6 +447,7 @@ if(STRATA_BUILD_UI)
     src/ui/Properties.cpp
     src/ui/Shell.cpp
     src/ui/ScriptRunner.cpp
+    src/ui/McpService.cpp
     src/ui/ScriptEditor.cpp
     src/ui/Timeline.cpp
     src/ui/PanelKit.cpp
