@@ -96,8 +96,9 @@ std::unique_ptr<Process> Process::start(const std::vector<std::string>& args, co
     SECURITY_ATTRIBUTES sa{};
     sa.nLength = sizeof sa;
     sa.bInheritHandle = TRUE;
+    const bool inherit = logPath == "-";  // the child writes to (and reads from) our own console
     HANDLE log = INVALID_HANDLE_VALUE;
-    if (!logPath.empty())
+    if (!logPath.empty() && !inherit)
         log = CreateFileW(W(logPath).c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa,
                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
@@ -107,9 +108,14 @@ std::unique_ptr<Process> Process::start(const std::vector<std::string>& args, co
     si.hStdInput = nul;
     si.hStdOutput = log != INVALID_HANDLE_VALUE ? log : nullptr;
     si.hStdError = si.hStdOutput;
+    if (inherit) {
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        si.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+    }
     PROCESS_INFORMATION pi{};
     std::wstring cmd = W(commandLine(args));
-    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, inherit ? 0 : CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
     DWORD e = GetLastError();
     if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
     if (nul != INVALID_HANDLE_VALUE) CloseHandle(nul);
@@ -158,6 +164,7 @@ struct Process::Impl {
     pid_t pid = -1;
     int code = -1;
     bool done = false;
+    bool group = true;  // in a process group of its own (kill() signals the group)
 };
 
 std::unique_ptr<Process> Process::start(const std::vector<std::string>& args, const std::string& logPath, std::string* err) {
@@ -176,12 +183,15 @@ std::unique_ptr<Process> Process::start(const std::vector<std::string>& args, co
         if (err) *err = "fork failed";
         return nullptr;
     }
+    const bool inherit = logPath == "-";  // the child writes to (and reads from) our own terminal
     if (pid == 0) {
-        setpgid(0, 0);  // its own group, so kill() reaches its children too
+        // its own group, so kill() reaches its children too (not when it shares our terminal: a
+        // background group reading from it would be stopped)
+        if (!inherit) setpgid(0, 0);
         close(pipefd[0]);
-        int devnull = open("/dev/null", O_RDONLY);
+        int devnull = inherit ? -1 : open("/dev/null", O_RDONLY);
         if (devnull >= 0) dup2(devnull, 0);
-        int lf = logPath.empty() ? -1 : open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+        int lf = logPath.empty() || inherit ? -1 : open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
         if (lf >= 0) {
             dup2(lf, 1);
             dup2(lf, 2);
@@ -206,6 +216,7 @@ std::unique_ptr<Process> Process::start(const std::vector<std::string>& args, co
     std::unique_ptr<Process> p(new Process());
     p->d_ = std::make_unique<Impl>();
     p->d_->pid = pid;
+    p->d_->group = !inherit;
     return p;
 }
 
@@ -233,9 +244,10 @@ int Process::exitCode() {
 
 void Process::kill() {
     if (running()) {
-        ::kill(-d_->pid, SIGTERM);
+        const pid_t target = d_->group ? -d_->pid : d_->pid;
+        ::kill(target, SIGTERM);
         for (int i = 0; i < 50 && running(); ++i) usleep(100000);
-        if (running()) ::kill(-d_->pid, SIGKILL);
+        if (running()) ::kill(target, SIGKILL);
         waitpid(d_->pid, nullptr, 0);
     }
     d_->done = true;

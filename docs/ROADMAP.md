@@ -28,7 +28,8 @@
 - [ ] RotoPaint next: pen pressure (needs tablet input beyond GLFW), AI fill for larger removals (once a model with a licence that allows it is chosen), repeating a stroke over a frame range
 - [x] Expressions: a safe subset of the classic language on any knob (= in the properties), cache-aware, renamed with their nodes
 - [x] Copy nodes from Welder in the .nk clipboard format, and export whole comps as .nk (`welder nk`)
-- [ ] Python API (pybind11) and `.weld` <-> Python round trip
+- [x] Python API: the `welder` module (scripts in their own process over a local socket, any Python 3.8+), `welder python` for headless scripts (docs/PYTHON.md)
+- [ ] Python next: the editor's Script Editor, init.py and a Scripts menu, callbacks, Python buttons on nodes
 - [x] Autosave with crash recovery, atomic saves, ask before discarding unsaved changes; Viewer › Performance (UI frame times and their parts, per-node render times, caches); `welder_ui --smoke` startup / open / play / autosave check with a stall watchdog
 - [x] Proxy / render scale, disk cache (content-keyed viewer frames), cost-aware tile cache
 

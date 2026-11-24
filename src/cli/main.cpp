@@ -4,6 +4,7 @@
 //   welder node   <comp.weld> <NodeName> -o out.exr [-f frame]
 //   welder info   <comp.weld>
 //   welder nk     <comp.weld> [-o shot.nk]       (a .nk script)
+//   welder python <script.py> [--comp shot.weld] [--python exe] [script args...] [-- more script args]
 //   strata types
 //   strata ofx-list [plugin paths...]
 #include <chrono>
@@ -22,6 +23,7 @@
 #include "../core/Engine.h"
 #include "../core/FrameList.h"
 #include "../core/NkExport.h"
+#include "../core/ScriptApi.h"
 #include "../io/ImageIO.h"
 #include "../ofx/OfxHost.h"
 
@@ -37,6 +39,7 @@ void usage() {
                  "  welder info   <comp.weld>\n"
                  "  welder nk     <comp.weld> [-o shot.nk]   (export to a .nk script)\n"
                  "  welder bench  <comp.weld> <Node> [EditedNode] [-f frame]\n"
+                 "  welder python <script.py> [--comp shot.weld] [--python exe] [script args...]\n"
                  "  welder types\n"
                  "  welder ofx-list [dir ...]   (also searches $OFX_PLUGIN_PATH)\n";
 }
@@ -264,6 +267,59 @@ int cmdNk(const Args& a) {
     return 0;
 }
 
+// `welder python`: run a Python script that drives Welder through the welder module
+// (tools/python/welder), with no editor. The comp it works on is the one --comp opens, or one
+// the script opens or makes itself.
+class CliScriptHost : public ScriptHost {
+public:
+    std::unique_ptr<Comp> c;
+    std::unique_ptr<Engine> e;
+    Comp* comp() override { return c.get(); }
+    void setComp(std::unique_ptr<Comp> n) override {
+        e.reset();  // (its caches belong to the old graph)
+        c = std::move(n);
+        for (auto& w : c->warnings) std::cerr << "warning: " << w << "\n";
+    }
+    Engine& engine() override {
+        if (!e) {
+            EngineOptions o;
+            o.finalRender = true;
+            o.cacheBytes = (size_t)platform::renderCacheMB() << 20;
+            e = std::make_unique<Engine>(o);
+        }
+        return *e;
+    }
+    void changed(Node*) override { Engine::graphChanged(); }
+};
+
+int cmdPython(int argc, char** argv) {
+    std::string script, compPath, python;
+    std::vector<std::string> args;
+    bool rest = false;  // after "--": everything is the script's
+    for (int i = 2; i < argc; ++i) {
+        std::string s = argv[i];
+        if (!rest && s == "--") {
+            rest = true;
+        } else if (!rest && (s == "--comp" || s == "--python") && i + 1 < argc) {
+            (s == "--comp" ? compPath : python) = argv[++i];
+        } else if (script.empty()) {
+            script = s;
+        } else {
+            args.push_back(s);  // the script's own arguments
+        }
+    }
+    if (script.empty()) { usage(); return 2; }
+    CliScriptHost host;
+    if (!compPath.empty()) host.setComp(load(compPath));
+    std::string err;
+    int code = scripting::runScript(host, script, args, python, &err);
+    if (code < 0 && !err.empty()) {
+        std::cerr << "error: " << err << "\n";
+        return 1;
+    }
+    return code;
+}
+
 int cmdInfo(const Args& a) {
     if (a.pos.empty()) { usage(); return 2; }
     auto comp = load(a.pos[0]);
@@ -294,6 +350,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { usage(); return 2; }
     std::string cmd = argv[1];
     try {
+        if (cmd == "python") return cmdPython(argc, argv);  // (its arguments are the script's)
         Args a = parseArgs(argc, argv, 2);
         if (cmd == "render") return cmdRender(a);
         if (cmd == "node") return cmdNode(a);

@@ -10,7 +10,8 @@ namespace strata {
 
 class Process {
 public:
-    // args[0] is the program (a full path, or a name looked up in PATH).
+    // args[0] is the program (a full path, or a name looked up in PATH). logPath "-": the child
+    // shares this process's stdin / stdout / stderr (a script run from the command line).
     static std::unique_ptr<Process> start(const std::vector<std::string>& args, const std::string& logPath,
                                           std::string* err);
     ~Process();  // does not kill: call kill() first if it should stop

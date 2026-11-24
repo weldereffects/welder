@@ -77,6 +77,7 @@ fi
 mkdir -p "$STAGE/bin/fonts" && cp "$ROOT/third_party/fonts/"Roboto-*.ttf "$ROOT/third_party/fonts/LICENSE-Roboto.txt" "$STAGE/bin/fonts/"
 [ -d "$BUILD/ofx-test-plugins" ] && cp -r "$BUILD/ofx-test-plugins" "$STAGE/ofx-test-plugins" && rm -rf "$STAGE/ofx-test-plugins/.glstub"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
+cp -r "$ROOT/tools/python" "$STAGE/tools/"   # the welder module for scripts (welder python)
 # Python for the .nk importer (File > Import, pasting nodes copied in another .nk app)
 PYTHON_WIN="${PYTHON_WIN:-$ROOT/../deps/python-win}"
 [ -f "$PYTHON_WIN/python.exe" ] || "$ROOT/tools/fetch_python_win.sh" "$PYTHON_WIN" || true

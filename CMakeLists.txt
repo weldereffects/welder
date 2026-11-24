@@ -85,6 +85,8 @@ add_library(strata_core STATIC
   src/io/RasterIO.cpp
   src/io/MovieIO.cpp
   src/core/Process.cpp
+  src/core/LocalSocket.cpp
+  src/core/ScriptApi.cpp
   src/core/Paths.cpp
   src/core/Studio.cpp
   src/core/Brand.cpp
@@ -167,7 +169,7 @@ add_library(strata_core STATIC
 target_include_directories(strata_core PUBLIC src)
 target_link_libraries(strata_core PUBLIC strata_thirdparty strata_openexr Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
-  target_link_libraries(strata_core PUBLIC shell32 dbghelp mpr)
+  target_link_libraries(strata_core PUBLIC shell32 dbghelp mpr ws2_32)
 endif()
 # a pre-release label ("beta.1"): shown in the app and in the packages' names; empty for a release.
 # (Each update raises the patch number instead: 0.1.1, 0.1.2 ... see docs/RELEASING.md.)
@@ -178,6 +180,8 @@ else()
   set(WELDER_VERSION_FULL "${PROJECT_VERSION}")
 endif()
 target_compile_definitions(strata_core PUBLIC STRATA_VERSION="${WELDER_VERSION_FULL}")
+# dev builds find tools/python (the welder module for scripts) in the source tree
+set_source_files_properties(src/core/ScriptApi.cpp PROPERTIES COMPILE_DEFINITIONS WELDER_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # ---------------------------------------------------------------- GPU compute (Vulkan)
 # Shaders (src/gpu/shaders/*.comp) are compiled to SPIR-V with glslangValidator
@@ -365,6 +369,10 @@ endif()
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
+  # the scripting API end to end: a Python script driving the command-line program
+  add_test(NAME python_api
+           COMMAND welder python tests/python_api_test.py ${CMAKE_BINARY_DIR}/python-api-test --python ${Python3_EXECUTABLE}
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   add_test(NAME ml_worker
            COMMAND ${Python3_EXECUTABLE} -m unittest tests/test_ml_worker.py
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

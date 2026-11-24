@@ -100,6 +100,8 @@ cp -r "$ROOT/ml/strata_ml" "$ROOT/ml/strata_ml_worker.py" "$ROOT/ml/requirements
 find "$RES/ml" -name __pycache__ -prune -exec rm -rf {} +
 mkdir -p "$RES/tools" && cp "$ROOT/tools/nk2strata.py" "$RES/tools/"
 cp "$ROOT/tools/nk2strata.py" "$STAGE/tools/"
+cp -r "$ROOT/tools/python" "$RES/tools/"   # the welder module for scripts (welder python)
+cp -r "$ROOT/tools/python" "$STAGE/tools/"
 cp "$ROOT/assets/brand/Welder.icns" "$RES/"
 sed "s/@VERSION@/$VERSION/g" "$ROOT/tools/macos/Info.plist" > "$APP/Contents/Info.plist"
 cp "$BUILD/welder_tests" "$BUILD/welder_exr_tests" "$STAGE/"   # self-tests, outside the app
