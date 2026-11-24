@@ -23,6 +23,11 @@
 //   E / Shift+E            push the selected points' feather out / in
 //   Z / Shift+Z            smooth / cusp the selected points
 //   Delete, Ctrl+A         delete selected points / select every point
+//   double-click a shape   select all its points (any select tool)
+//   right-click            the shape menu: copy / paste points, keys, smooth / cusp,
+//                          open / close, visible / invert / lock, duplicate, delete
+//   Ctrl+C / Ctrl+V        copy the current shape's (selected) points; paste them on
+//                          the current shape at the current frame (keyed there)
 // RotoPaint adds paint tools: N brush / eraser, C clone / reveal, X blur.
 // Drag to paint; Shift+drag sizes the brush; Ctrl+click sets the clone source.
 #include <algorithm>
@@ -769,6 +774,110 @@ void deleteSelected(App& app, UiState& ui, Node* n) {
     ui.roto.curShape = -1;
 }
 
+// Copied points (Ctrl+C in the viewer, or the right-click menus): one shape's points at a frame, in
+// its own space, and which of them were copied. Ctrl+V puts them on the current shape at the
+// current frame - the same shape on another frame (copy a key to another time) or another shape
+// with as many points. Shared by every roto node, so points go from a Roto to a Power Roto.
+struct PointClip {
+    bool set = false;
+    Pts pts;               // all of the shape's points
+    std::vector<int> idx;  // the ones copied (all of them for a whole shape)
+    std::string shape;
+    double frame = 0;
+};
+PointClip gPointClip;
+
+// The shape copy / paste works on: the current one, else the only one with points selected.
+int clipShape(const RotoState& r, const json& items) {
+    auto ok = [&](int i) { return i >= 0 && i < (int)items.size() && !roto::isStroke(items[i]) && !roto::isLayer(items[i]); };
+    if (ok(r.curShape)) return r.curShape;
+    const std::set<int> s = selItemsOf(r);
+    return s.size() == 1 && ok(*s.begin()) ? *s.begin() : -1;
+}
+
+bool copyPoints(App& app, UiState& ui, Node* n) {
+    RotoState& r = ui.roto;
+    const json& items = itemsOf(n);
+    const int si = clipShape(r, items);
+    if (si < 0) return false;
+    PointClip c;
+    c.pts = roto::pointsAt(items[si], app.frame);
+    for (auto& [s, p] : r.sel)
+        if (s == si && p < (int)c.pts.size()) c.idx.push_back(p);
+    if (c.idx.empty())  // (a current shape with nothing picked: all of it)
+        for (int i = 0; i < (int)c.pts.size(); ++i) c.idx.push_back(i);
+    c.set = true;
+    c.shape = items[si].value("name", std::string());
+    c.frame = app.frame;
+    gPointClip = c;
+    char b[160];
+    std::snprintf(b, sizeof b, "copied %s of %s at frame %g", c.idx.size() == c.pts.size() ? "all points" : (std::to_string(c.idx.size()) + " points").c_str(),
+                  c.shape.c_str(), c.frame);
+    app.message(b);
+    return true;
+}
+
+// Why the copied points can't go on item `si` ("" when they can).
+std::string pasteProblem(const json& items, int si, double frame) {
+    if (!gPointClip.set) return "nothing copied";
+    if (si < 0 || si >= (int)items.size() || roto::isStroke(items[si]) || roto::isLayer(items[si])) return "pick a shape to paste onto";
+    if (roto::pointsAt(items[si], frame).size() != gPointClip.pts.size())
+        return "the copied shape has " + std::to_string(gPointClip.pts.size()) + " points, this one " +
+               std::to_string(roto::pointsAt(items[si], frame).size());
+    return "";
+}
+
+bool pastePoints(App& app, UiState& ui, Node* n) {
+    RotoState& r = ui.roto;
+    const json& items = itemsOf(n);
+    if (!gPointClip.set) return false;
+    const int si = clipShape(r, items);
+    const double frame = app.frame;
+    if (std::string why = pasteProblem(items, si, frame); !why.empty()) {
+        app.message("paste points: " + why);
+        return true;
+    }
+    if (lockedItem(items, items[si])) {
+        app.message("paste points: " + items[si].value("name", std::string()) + " is locked");
+        return true;
+    }
+    Pts pts = roto::pointsAt(items[si], frame);
+    for (int i : gPointClip.idx)
+        if (i < (int)pts.size()) pts[i] = gPointClip.pts[i];
+    // an animated shape always gets a key here (with autokey off, an edit between keys would move
+    // every key by the difference instead)
+    const bool ak = r.autokey || roto::animated(items[si]);
+    app.checkpoint();
+    editShapes(app, n->name, [si, pts, frame, ak](json& sh) {
+        if (si < (int)sh.size()) roto::setPointsAt(sh[si], frame, pts, ak);
+    });
+    r.curShape = si;
+    r.sel.clear();
+    for (int i : gPointClip.idx) r.sel.insert({si, i});
+    char b[160];
+    std::snprintf(b, sizeof b, "pasted %zu points from %s (frame %g) at frame %g", gPointClip.idx.size(), gPointClip.shape.c_str(), gPointClip.frame, frame);
+    app.message(b);
+    return true;
+}
+
+// The topmost shape at a screen position (near one of its points or its outline, else inside a
+// closed one), -1 for none. Strokes, locked shapes and ones not alive here are left out.
+template <class DispList>
+int shapeAtScreen(const DispList& ds, ImVec2 m) {
+    for (int si = (int)ds.size() - 1; si >= 0; --si) {
+        const auto& d = ds[si];
+        if (d.stroke || !d.alive || d.locked) continue;
+        for (const ImVec2& c : d.ctrlS)
+            if (dist(m, c) < 10) return si;
+        const size_t np = d.poly.size();
+        for (size_t k = 0; np >= 2 && k + 1 < np + (d.closed ? 1 : 0); ++k)
+            if (distToSeg(m, d.poly[k], d.poly[(k + 1) % np]) < 10) return si;
+    }
+    for (int si = (int)ds.size() - 1; si >= 0; --si)
+        if (!ds[si].stroke && ds[si].alive && !ds[si].locked && ds[si].closed && ds[si].poly.size() >= 3 && insidePoly(ds[si].poly, m)) return si;
+    return -1;
+}
+
 // Write a (possibly animated) number inside an item's transform.
 void setTransformValue(json& s, const char* key, int idx, double frame, double value, bool autokey) {
     json& t = s["transform"];
@@ -1415,19 +1524,7 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
     int hoverShape = -1;
     if ((r.tool == Tool::Select || r.tool == Tool::SelectPoints || r.tool == Tool::SelectSplines) && r.drag == Drag::None &&
         ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
-        const ImVec2 m = ImGui::GetIO().MousePos;
-        for (int si = (int)ds.size() - 1; si >= 0 && hoverShape < 0; --si) {
-            const Disp& d = ds[si];
-            if (d.stroke || !d.alive || d.locked) continue;
-            for (const ImVec2& c : d.ctrlS)
-                if (dist(m, c) < 10) hoverShape = si;
-            const size_t np = d.poly.size();
-            for (size_t k = 0; hoverShape < 0 && np >= 2 && k + 1 < np + (d.closed ? 1 : 0); ++k)
-                if (distToSeg(m, d.poly[k], d.poly[(k + 1) % np]) < 10) hoverShape = si;
-        }
-        for (int si = (int)ds.size() - 1; si >= 0 && hoverShape < 0; --si)
-            if (!ds[si].stroke && ds[si].alive && !ds[si].locked && ds[si].closed && ds[si].poly.size() >= 3 && insidePoly(ds[si].poly, m))
-                hoverShape = si;
+        hoverShape = shapeAtScreen(ds, ImGui::GetIO().MousePos);
     }
     for (size_t i = 0; i < ds.size(); ++i) {
         const Disp& d = ds[i];
@@ -1820,6 +1917,21 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                             if (!r.orig.count(si) && si < (int)items.size() && !ds[si].stroke) r.orig[si] = roto::pointsAt(items[si], frame);
                     break;
                 }
+                // 2b. a double-click on a shape (a point, its outline or inside it): all its points, with
+                // any of the select tools (Select Points too, which single clicks on a curve pass by)
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !io.KeyCtrl && !io.KeyAlt) {
+                    if (const int ds2 = shapeAtScreen(ds, mouse); ds2 >= 0) {
+                        if (!io.KeyShift) r.sel.clear();
+                        for (int pi = 0; pi < (int)ds[ds2].ctrlS.size(); ++pi) r.sel.insert({ds2, pi});
+                        r.curShape = ds2;
+                        r.drag = Drag::Points;
+                        for (auto& [si, pi] : r.sel) {
+                            if (roto::isStroke(items[si])) r.origStroke[si] = items[si].value("points", json::array());
+                            else r.orig[si] = roto::pointsAt(items[si], frame);
+                        }
+                        break;
+                    }
+                }
                 // 3. a point (topmost item first; strokes have no editable points)
                 int hs = -1, hp = -1;
                 for (int si = (int)ds.size() - 1; si >= 0 && hs < 0; --si) {
@@ -1915,6 +2027,19 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
                 break;
             }
         }
+    }
+
+    // ---- right-click: the shape menu (the shape under the mouse, picked first if it isn't already)
+    static int ctxShape = -1;
+    if (hovered && inViewport && !overToolbar && !io.KeyAlt && r.drag == Drag::None && !r.drawing &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !paintTool(r.tool)) {
+        ctxShape = shapeAtScreen(ds, mouse);
+        if (ctxShape >= 0 && !selItems.count(ctxShape)) {
+            r.sel.clear();
+            for (int pi = 0; pi < (int)ds[ctxShape].ctrlS.size(); ++pi) r.sel.insert({ctxShape, pi});
+        }
+        if (ctxShape >= 0) r.curShape = ctxShape;
+        ImGui::OpenPopup("##rotoShapeMenu");
     }
 
     // ---- dragging
@@ -2285,6 +2410,139 @@ void drawRotoViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1,
         r.orig.clear();
         r.origStroke.clear();
     }
+
+    if (ImGui::BeginPopup("##rotoShapeMenu")) {
+        const int si = ctxShape >= 0 && ctxShape < (int)items.size() && !roto::isStroke(items[ctxShape]) ? ctxShape : -1;
+        auto setField = [&](int i, const char* key, json v) {
+            app.checkpoint();
+            const std::string k = key;
+            editShapes(app, n->name, [i, k, v](json& sh) {
+                if (i < (int)sh.size()) sh[i][k] = v;
+            });
+        };
+        if (si >= 0) {
+            const json& s = items[si];
+            ImGui::TextDisabled("%s", s.value("name", std::string()).c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Select all its points")) {
+                r.sel.clear();
+                for (int pi = 0; pi < (int)ds[si].ctrlS.size(); ++pi) r.sel.insert({si, pi});
+                r.curShape = si;
+            }
+            if (ImGui::MenuItem("Copy points", "Ctrl+C")) copyPoints(app, ui, n);
+            const std::string why = pasteProblem(items, si, frame);
+            if (ImGui::MenuItem("Paste points", "Ctrl+V", false, why.empty())) {
+                r.curShape = si;
+                pastePoints(app, ui, n);
+            }
+            if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why.c_str());
+            else if (gPointClip.set && ImGui::IsItemHovered())
+                ImGui::SetTooltip("The points copied from %s at frame %g, keyed here at frame %g", gPointClip.shape.c_str(), gPointClip.frame, frame);
+            ImGui::Separator();
+            const bool keyed = roto::hasKeyAt(s, frame);
+            if (ImGui::MenuItem("Set key", nullptr, false, !keyed)) {
+                app.checkpoint();
+                editShapes(app, n->name, [si, frame](json& sh) {
+                    if (si < (int)sh.size()) roto::setKey(sh[si], frame);
+                });
+            }
+            if (ImGui::MenuItem("Delete key", nullptr, false, keyed)) {
+                app.checkpoint();
+                editShapes(app, n->name, [si, frame](json& sh) {
+                    if (si < (int)sh.size()) roto::deleteKey(sh[si], frame);
+                });
+            }
+            ImGui::Separator();
+            const std::string kind = s.value("kind", std::string());
+            if (kind != "bspline") {
+                if (ImGui::MenuItem("Smooth points", "Z"))
+                    editSelectedPoints(app, ui, n, [](Pts& pts, const json& sh, const std::vector<int>& idx) {
+                        for (int i : idx)
+                            if (i < (int)pts.size()) {
+                                if (sh.value("kind", std::string()) == "xspline") pts[i].s = -1;
+                                else roto::smoothPoint(pts, sh.value("closed", true), i);
+                            }
+                    });
+                if (ImGui::MenuItem("Cusp points", "Shift+Z"))
+                    editSelectedPoints(app, ui, n, [](Pts& pts, const json& sh, const std::vector<int>& idx) {
+                        for (int i : idx)
+                            if (i < (int)pts.size()) {
+                                if (sh.value("kind", std::string()) == "xspline") pts[i].s = 0;
+                                else roto::cuspPoint(pts, i);
+                            }
+                    });
+            }
+            const bool closed = s.value("closed", true);
+            if (ImGui::MenuItem(closed ? "Open the curve" : "Close the curve")) {
+                const double w = r.newWidth;
+                app.checkpoint();
+                editShapes(app, n->name, [si, closed, w](json& sh) {
+                    if (si >= (int)sh.size()) return;
+                    sh[si]["closed"] = !closed;
+                    if (closed && !sh[si].contains("width")) sh[si]["width"] = w;  // opened: a line this wide
+                });
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Visible", nullptr, s.value("visible", true))) setField(si, "visible", !s.value("visible", true));
+            if (ImGui::MenuItem("Invert", nullptr, s.value("invert", false))) setField(si, "invert", !s.value("invert", false));
+            if (ImGui::MenuItem("Lock", nullptr, false)) {
+                setField(si, "locked", true);
+                r.sel.clear();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Duplicate")) {
+                std::string base = s.value("name", std::string("Shape"));
+                while (!base.empty() && std::isdigit((unsigned char)base.back())) base.pop_back();
+                const std::string nm = uniqueName(items, base.empty() ? "Shape" : base);
+                app.checkpoint();
+                editShapes(app, n->name, [si, nm](json& sh) {
+                    if (si >= (int)sh.size()) return;
+                    json c = sh[si];
+                    c["name"] = nm;
+                    sh.insert(sh.begin() + si + 1, c);
+                });
+                r.sel.clear();
+                for (int pi = 0; pi < (int)ds[si].ctrlS.size(); ++pi) r.sel.insert({si + 1, pi});
+                r.curShape = si + 1;
+            }
+            if (ImGui::MenuItem("Delete selected points", "Delete")) deleteSelected(app, ui, n);
+            if (ImGui::MenuItem("Delete shape")) {
+                app.checkpoint();
+                editShapes(app, n->name, [si](json& sh) {
+                    if (si < (int)sh.size()) sh.erase(sh.begin() + si);
+                });
+                r.sel.clear();
+                r.curShape = -1;
+            }
+        } else {
+            ImGui::TextDisabled("%s", n->name.c_str());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Select all points", "Ctrl+A")) {
+                r.sel.clear();
+                for (int i = 0; i < (int)ds.size(); ++i)
+                    if (!ds[i].stroke && ds[i].alive && !ds[i].locked)
+                        for (int pi = 0; pi < (int)ds[i].ctrlS.size(); ++pi) r.sel.insert({i, pi});
+            }
+            if (ImGui::MenuItem("Deselect", "Esc", false, !r.sel.empty())) r.sel.clear();
+            if (ImGui::MenuItem("Paste points", "Ctrl+V", false, pasteProblem(items, clipShape(r, items), frame).empty())) pastePoints(app, ui, n);
+            bool anyLocked = false;
+            for (auto& it : items) anyLocked |= it.value("locked", false);
+            if (ImGui::MenuItem("Unlock all", nullptr, false, anyLocked)) {
+                app.checkpoint();
+                editShapes(app, n->name, [](json& sh) {
+                    for (auto& it : sh) it.erase("locked");
+                });
+            }
+        }
+        ImGui::Separator();
+        bool always = app.rotoShowPoints == 1;
+        if (ImGui::MenuItem("Points always visible", nullptr, always)) {
+            app.rotoShowPoints = always ? 0 : 1;
+            app.saveSettings();
+        }
+        ImGui::MenuItem("Label points", nullptr, &r.labelPoints);
+        ImGui::EndPopup();
+    }
 }
 
 bool rotoHotkeys(App& app, UiState& ui) {
@@ -2334,6 +2592,10 @@ bool rotoHotkeys(App& app, UiState& ui) {
         }
         return true;
     }
+    // Ctrl+C / Ctrl+V: the current shape's points (the selected ones) copied, and pasted onto the
+    // current shape at the current frame (a key at another time, or another shape with as many points)
+    if (pressed(ImGuiKey_C, true) && copyPoints(app, ui, n)) return true;
+    if (pressed(ImGuiKey_V, true) && pastePoints(app, ui, n)) return true;
     if (r.sel.empty()) return false;
     if (pressed(ImGuiKey_Escape)) { r.sel.clear(); return true; }
     if (powerNode(n)) {
@@ -3186,6 +3448,12 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 std::snprintf(renameBuf, sizeof renameBuf, "%s", items[cs].value("name", std::string()).c_str());
             }
             if (ImGui::MenuItem("Duplicate")) duplicate(cs);
+            if (!roto::isLayer(items[cs]) && !roto::isStroke(items[cs])) {
+                if (ImGui::MenuItem("Copy points", "Ctrl+C")) copyPoints(app, ui, n);
+                const std::string why = pasteProblem(items, cs, frame);
+                if (ImGui::MenuItem("Paste points", "Ctrl+V", false, why.empty())) pastePoints(app, ui, n);
+                if (!why.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", why.c_str());
+            }
             if (ImGui::BeginMenu("Move to layer")) {
                 const std::string cur = items[cs].value("parent", std::string()), me = items[cs].value("name", std::string());
                 if (ImGui::MenuItem("(none)", nullptr, cur.empty())) setItem(cs, "parent", nullptr);

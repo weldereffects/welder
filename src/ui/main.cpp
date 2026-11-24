@@ -1257,7 +1257,8 @@ int main(int argc, char** argv) {
         }
         // STRATA_TEST_KEYS=tok;tok;...: one step every 12 frames from frame 15, then the viewers' routing is
         // printed. Tokens: "at=x,y" (move the mouse), "sel=Node" (select it), "key=[ctrl+][shift+]K"
-        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
+        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "dclick=x,y" (double),
+        // "rclick=x,y" (right), "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
         bool keysTest = false;
         if (const char* tk = std::getenv("STRATA_TEST_KEYS"); tk && *tk && !opt.screenshot.empty()) {
             std::vector<std::string> toks;
@@ -1309,7 +1310,7 @@ int main(int argc, char** argv) {
                             held = (ImGuiKey)(ImGuiKey_F1 + std::atoi(kk.c_str() + 1) - 1);
                         if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
                         if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
-                    } else if (what == "click") {
+                    } else if (what == "click" || what == "dclick" || what == "rclick") {
                         float x = 0, y = 0;
                         std::sscanf(arg.c_str(), "%f,%f", &x, &y);
                         tio.AddMousePosEvent(x, y);
@@ -1334,6 +1335,10 @@ int main(int argc, char** argv) {
                                             it.contains("width") ? it["width"].dump().c_str() : "-", (int)it.value("locked", false),
                                             it.value("parent", std::string("-")).c_str());
                             }
+                    } else if (what == "rotosel") {  // the roto selection: current shape, (item, point)s, a menu open
+                        std::string sl;
+                        for (auto& [si, pi] : ui.roto.sel) sl += " " + std::to_string(si) + "." + std::to_string(pi);
+                        std::printf("KEYS rotosel cur %d popup %d sel%s\n", ui.roto.curShape, (int)ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId), sl.c_str());
                     } else if (what == "rototool") {  // the active Roto's tool, by its toolbar name
                         Node* rn = app.node(ui.roto.node);
                         if (!rn || !rotoSetToolByName(app, ui, rn, arg)) std::printf("KEYS no roto tool %s\n", arg.c_str());
@@ -1425,6 +1430,14 @@ int main(int argc, char** argv) {
                     tio.AddMouseButtonEvent(0, true);
                 } else if (what == "click" && k == 4) {
                     tio.AddMouseButtonEvent(0, false);
+                } else if (what == "dclick" && (k == 2 || k == 4)) {  // two quick clicks
+                    tio.AddMouseButtonEvent(0, true);
+                } else if (what == "dclick" && (k == 3 || k == 5)) {
+                    tio.AddMouseButtonEvent(0, false);
+                } else if (what == "rclick" && k == 2) {
+                    tio.AddMouseButtonEvent(1, true);
+                } else if (what == "rclick" && k == 4) {
+                    tio.AddMouseButtonEvent(1, false);
                 } else if (what == "circle" && dragging) {
                     if (k == 1) tio.AddMouseButtonEvent(0, true);
                     else if (k >= 2 && k <= 10) {  // (the first and last positions meet)
