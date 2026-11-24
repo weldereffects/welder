@@ -392,6 +392,18 @@ worker started by hand reads the model folders Welder uses from
 * Welder sends the plate as scene-linear (linear Rec.709) EXR frames and reads back
   scene-linear EXRs, so values above 1 survive. It doesn't convert log or wide-gamut
   plates for CorridorKey beyond that: linearise them first, as the working space does.
+* **key folder** (for network rendering and handing comps between artists): the key
+  lives in this machine's ML cache, which render nodes and other machines can't see.
+  Pick a folder they can all reach (the **...** button; a mapped drive is stored as
+  its `\\server\share` path) and each finished key is saved there by itself (**save
+  when keyed**), or press **Save Key to Folder** for a key you already have: half-float
+  EXRs (`key.#####.exr`, straight RGBA, linear) and a `manifest.json` naming the key
+  they're from. A machine without the key in its cache reads it from the folder; one
+  with neither (or a folder holding an older key) stops the render with an error
+  instead of passing the unkeyed plate through. Use one folder per CorridorKey node.
+* The plates CorridorKey reads are staged as uncompressed EXRs inside the job's folder
+  in Welder's cache folder (Preferences), on the machine that runs the key, and
+  deleted when it's done: a fast local disk there is quickest.
 * **Needs:** an NVIDIA RTX 30-series or newer (CUDA), and `venv-corridorkey` (the
   panel says **Update ML** when it's missing).
 * **It isn't part of Welder.** Its licence can't be bundled with Welder's AGPL, so

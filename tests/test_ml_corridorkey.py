@@ -319,5 +319,41 @@ class CorridorKeyDownload(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(dest, "_code.zip")))
 
 
+class CorridorKeyFrameIO(unittest.TestCase):
+    """The thread pool that writes the plates and reads the cutouts: order kept, errors not lost."""
+
+    def test_map_keeps_order_and_submit_raises(self):
+        from strata_ml.tasks.corridorkey import _Pool
+        import time as _time
+
+        def slow(x):
+            _time.sleep(0.01 * ((7 * x) % 5))
+            return x * x
+
+        with _Pool(4) as pool:
+            self.assertEqual(list(pool.map(slow, range(40))), [x * x for x in range(40)])
+
+        def bad(x):
+            if x == 13:
+                raise RuntimeError("frame 13")
+
+        with self.assertRaises(RuntimeError):
+            with _Pool(3) as pool:
+                for i in range(30):
+                    pool.submit(bad, i)
+
+    @unittest.skipUnless(HAVE, "needs numpy and OpenCV with OpenEXR")
+    def test_uncompressed_plates_read_back(self):
+        from strata_ml.tasks.corridorkey import exr_flags
+        d = tempfile.mkdtemp()
+        try:
+            a = np.random.rand(8, 6, 3).astype(np.float32) * 4.0
+            path = os.path.join(d, "p.exr")
+            self.assertTrue(cv2.imwrite(path, a, exr_flags(cv2)))
+            np.testing.assert_array_equal(cv2.imread(path, cv2.IMREAD_UNCHANGED), a)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

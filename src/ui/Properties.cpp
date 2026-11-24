@@ -1769,11 +1769,13 @@ void knobBody(Ctx& c, const KnobDef& k) {
         }
         ImGui::SameLine();
         const bool pick = ImGui::Button("...");
-        if (pick && c.node->type == "Precomp") {
+        if (pick && (c.node->type == "Precomp" || k.name == "bake_path")) {  // folders (Precomp, TrackMask / CorridorKey bakes)
             std::string name = c.node->name, key = k.name;
             App* app = &c.app;
             const std::string cur = c.node->comp ? c.node->comp->resolvePath(p.str(k.name)) : p.str(k.name);
-            openFolderDialog(c.ui, key == "local_path" ? "Local precomp folder" : "Network precomp folder",
+            openFolderDialog(c.ui, key == "local_path"   ? "Local precomp folder"
+                                   : key == "bake_path" ? (c.node->type == "CorridorKey" ? "Key folder" : "Bake folder")
+                                                        : "Network precomp folder",
                              [app, name, key](const std::string& path) {
                                  app->checkpoint();
                                  app->edit([name, key, path](Comp& comp) {
@@ -2491,6 +2493,26 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         else if (!sp.error.empty()) ImGui::TextColored(ImVec4(1, .4f, .4f, 1), "copy: %s", sp.error.c_str());
         return;
     }
+    if (k.info == "corridorkey_folder") {  // CorridorKey: is the key in its key folder (for other machines)?
+        const auto st = mlnodes::corridorKeyFolderStatus(c.node);
+        const ImVec4 ok(0.55f, 0.85f, 0.5f, 1), busy(1, .8f, .4f, 1), bad(1, .4f, .4f, 1);
+        if (st.dir.empty()) {
+            ImGui::TextDisabled("no key folder: the key stays in this machine's ML cache");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Render nodes and other machines can't see this machine's ML cache. Set a key folder on a share "
+                                  "they can all reach to render this comp elsewhere");
+        } else if (st.saving)
+            ImGui::TextColored(busy, "saving to the key folder...");
+        else if (!st.error.empty())
+            ImGui::TextColored(bad, "save failed: %s", st.error.c_str());
+        else if (st.total == 0)
+            ImGui::TextDisabled("nothing keyed yet");
+        else if (st.saved >= st.total)
+            ImGui::TextColored(ok, "%d frames in the key folder%s", st.saved, st.local ? "" : " (read from there)");
+        else
+            ImGui::TextColored(busy, "%d of %d frames in the key folder", st.saved, st.total);
+        return;
+    }
     if (k.info == "tracker_xform") {  // Tracker: the transform it applies on this frame (read-only, like the classic knobs)
         track::Solve sh;
         track::trackerTransform(c.node->params.data, c.app.frame, &sh);
@@ -2982,6 +3004,12 @@ void buttonAction(Ctx& c, const std::string& action) {
             f << text;
             app->message("wrote " + path);
         });
+        return;
+    }
+    if (action == "corridorkey_save") {
+        std::string err;
+        if (!mlnodes::saveCorridorKeyToFolder(c.node, &err)) c.app.message(c.node->name + ": " + err);
+        else c.app.message(c.node->name + ": saving the key to " + mlnodes::corridorKeyFolderStatus(c.node).dir);
         return;
     }
     if (action == "trackmask_bake") {

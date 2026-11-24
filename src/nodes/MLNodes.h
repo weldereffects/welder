@@ -26,6 +26,7 @@
 
 #include "../core/Engine.h"
 #include "../core/Node.h"
+#include "../ml/ML.h"
 #include "Cam3D.h"
 #include "Geo.h"
 
@@ -86,9 +87,28 @@ protected:
     // The same from a given job's result.
     bool fillFromKey(RenderArgs& a, Image& out, const std::string& key, const std::string& output,
                      const std::vector<std::pair<int, int>>& chanMap, std::optional<int> outFrame = std::nullopt);
+    // The same from a frame already in hand (top row first, like the worker's), e.g. one saved to a folder.
+    bool fillFromImage(RenderArgs& a, Image& out, const ml::NpyImage& img, const std::string& output,
+                       const std::vector<std::pair<int, int>>& chanMap);
 };
 
 bool isML(const Node* n);
+
+// CorridorKey's key folder ("key folder" knob): the finished key's frames as half-float EXRs (key.#####.exr,
+// straight RGBA, linear Rec.709, as the worker wrote them) with a manifest naming the result they're from,
+// so another machine (a render node, another artist) that opens the comp shows the key without the job
+// that made it. Saved by itself when a key finishes (with a folder set), or with Save Key to Folder.
+struct CorridorKeyFolderStatus {
+    std::string dir;     // the folder (resolved; "" = none set)
+    int total = 0;       // frames in the current result (0 when this machine doesn't have it)
+    int saved = 0;       // of the current result's frames, how many are in the folder
+    bool local = false;  // this machine has the result's job
+    bool saving = false; // a save is running
+    std::string error;   // the last save's error
+};
+CorridorKeyFolderStatus corridorKeyFolderStatus(Node* n);
+// Save the node's current result to its key folder, in the background. False + reason when it can't start.
+bool saveCorridorKeyToFolder(Node* n, std::string* err);
 
 // TrackMask: which result shows on frame f ("main" = the track, "preview", "" = none), and whether
 // the track is from the current clicks.

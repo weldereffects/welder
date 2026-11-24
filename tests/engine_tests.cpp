@@ -5653,6 +5653,75 @@ Connections:  {
         }
         ml::setHome("");
     });
+    test("ML CorridorKey key folder (#77): Save Key to Folder, another machine reads it, a missing key is an error", [] {
+        namespace fs = std::filesystem;
+        auto home = fs::temp_directory_path() / "strata_mlhome_ckf";
+        fs::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 64, H = 48, w = W / 2, h = H / 2;
+        std::vector<float> k((size_t)w * h * 4);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                float* p = &k[((size_t)y * w + x) * 4];
+                p[0] = 0.8f, p[1] = 0.4f, p[2] = 0.2f, p[3] = y < h / 2 ? 0.0f : 0.5f;  // rows top first
+            }
+        auto d = home / "jobs" / "ckf-a";
+        fs::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}, {"progress", 1}, {"message", "ok"}}.dump();
+        std::ofstream(d / "result.json") << json{{"outputs", {{"rgba", {{"frames", {1, 2}}, {"width", w}, {"height", h}}}}}}.dump();
+        CHECK(ml::writeNpy((d / "out" / "rgba.1.npy").string(), k.data(), w, h, 4, true));
+        CHECK(ml::writeNpy((d / "out" / "rgba.2.npy").string(), k.data(), w, h, 4, true));
+        const fs::path share = home / "share" / "ck", other = home / "share" / "ck_other";
+        auto ckNode = [](const char* name, const char* key, const std::string& folder) {
+            json params = {{"ml", {{"main", {{"result", key}}}}}};
+            if (!folder.empty()) params["bake_path"] = folder;
+            return json{{"name", name}, {"type", "CorridorKey"}, {"inputs", {"K"}}, {"params", params}};
+        };
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.1, 0.6, 0.1, 1}}}}},
+                                   ckNode("CK", "ckf-a", share.string()), ckNode("NOFOLDER", "ckf-a", ""),
+                                   ckNode("FARM", "ckf-b", other.string()), ckNode("LOST", "ckf-c", ""),
+                                   ckNode("STALE", "ckf-d", share.string())}),
+                      W, H);
+        auto st = mlnodes::corridorKeyFolderStatus(c->find("CK"));
+        CHECK(st.dir == share.string() && st.local && st.total == 2 && st.saved == 0);
+        CHECK(!mlnodes::corridorKeyFolderStatus(c->find("NOFOLDER")).dir.size());
+        std::string err;
+        CHECK(!mlnodes::saveCorridorKeyToFolder(c->find("NOFOLDER"), &err) && !err.empty());
+        CHECK(mlnodes::saveCorridorKeyToFolder(c->find("CK"), &err));
+        for (int i = 0; i < 400 && mlnodes::corridorKeyFolderStatus(c->find("CK")).saving; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        st = mlnodes::corridorKeyFolderStatus(c->find("CK"));
+        CHECK(!st.saving && st.error.empty());
+        CHECK(st.saved == 2 && st.total == 2);
+        CHECK(fs::exists(share / "key.00001.exr") && fs::exists(share / "key.00002.exr") && fs::exists(share / "manifest.json"));
+        // another machine: the comp names a key its ML cache doesn't have; the folder (copied, as from a share) does
+        fs::create_directories(other);
+        for (const char* f : {"key.00001.exr", "key.00002.exr"}) fs::copy_file(share / f, other / f, fs::copy_options::overwrite_existing);
+        {
+            std::ifstream in(share / "manifest.json");
+            json m = json::parse(in);
+            CHECK(m.value("result", std::string()) == "ckf-a");
+            m["result"] = "ckf-b";
+            std::ofstream(other / "manifest.json") << m.dump();
+        }
+        auto r = render(*c, "FARM", 2);
+        CHECK_NEAR(px(r, 10, 2, "A"), 0.5, 2e-3);
+        CHECK_NEAR(px(r, 10, 2, "R"), 0.4, 2e-3);  // premultiplied, as from the local job
+        CHECK_NEAR(px(r, 10, H - 2, "A"), 0, 1e-3);
+        auto fst = mlnodes::corridorKeyFolderStatus(c->find("FARM"));
+        CHECK(!fst.local && fst.saved == 2 && fst.total == 2);
+        // neither the cache nor a folder has it, or the folder holds another key: an error, not the plate as if keyed
+        for (const char* n : {"LOST", "STALE"}) {
+            bool threw = false;
+            try {
+                render(*c, n);
+            } catch (const RenderError&) { threw = true; }
+            CHECK(threw);
+        }
+        ml::setHome("");
+        fs::remove_all(home);
+    });
     test("TrackMask: an older save's clicks load as one object, to the worker's coordinates, the matte in alpha (grow / soften / invert), current vs old frames", [] {
         auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm";
         std::filesystem::remove_all(home);

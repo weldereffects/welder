@@ -185,14 +185,18 @@ def write_inputs(ctx, p, src, hint, work):
     w, h = work_size(src.width, src.height, int(p.get("max_size", 0) or 0))
     in_dir = os.path.join(work, "plate")
     os.makedirs(in_dir, exist_ok=True)
-    exr = [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT]
-    for i, f in enumerate(frames):
-        ctx.progress(0.01 + 0.07 * i / max(1, len(frames)), f"writing frame {f}")
-        rgb = np.nan_to_num(src.rgb(f).astype(np.float32))
+    exr = exr_flags(cv2)
+
+    def put(i, rgb):
         if rgb.shape[1] != w or rgb.shape[0] != h:
             rgb = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
         if not cv2.imwrite(os.path.join(in_dir, f"plate_{i:06d}.exr"), np.ascontiguousarray(rgb[..., ::-1]), exr):
             raise RuntimeError("couldn't write the plate for CorridorKey (OpenCV without OpenEXR?)")
+
+    with _Pool() as pool:  # OpenCV lets go of the GIL while it scales and writes: a few frames at once
+        for i, f in enumerate(frames):
+            ctx.progress(0.01 + 0.07 * i / max(1, len(frames)), f"writing frame {f}")
+            pool.submit(put, i, np.nan_to_num(src.rgb(f).astype(np.float32)))
     first_hint, hint_dir = None, None
     mode = str(p.get("hint_frames", "every frame"))
     if hint is not None and mode != "none":
@@ -215,6 +219,57 @@ def write_inputs(ctx, p, src, hint, work):
         if mode != "first frame":
             hint_dir = hdir
     return frames, (w, h), first_hint, hint_dir, in_dir
+
+
+def exr_flags(cv2):
+    """Float EXR, uncompressed: the plates are read once, by CorridorKey on this machine, so compressing them
+    only costs time (OpenCV builds without the compression flag: their default)."""
+    flags = [cv2.IMWRITE_EXR_TYPE, cv2.IMWRITE_EXR_TYPE_FLOAT]
+    if hasattr(cv2, "IMWRITE_EXR_COMPRESSION") and hasattr(cv2, "IMWRITE_EXR_COMPRESSION_NO"):
+        flags += [cv2.IMWRITE_EXR_COMPRESSION, cv2.IMWRITE_EXR_COMPRESSION_NO]
+    return flags
+
+
+class _Pool:
+    """A few threads for frame I/O, with at most a few frames waiting (memory), errors raised in the caller."""
+
+    def __init__(self, workers=None):
+        from concurrent.futures import ThreadPoolExecutor
+        self.n = max(1, min(8, workers or (os.cpu_count() or 4)))
+        self.ex = ThreadPoolExecutor(max_workers=self.n)
+        self.pending = []
+
+    def submit(self, fn, *args):
+        self.pending.append(self.ex.submit(fn, *args))
+        while len(self.pending) > 2 * self.n:
+            self.pending.pop(0).result()
+
+    def map(self, fn, items):
+        """fn over items in order, a few at once; yields the results in order."""
+        futs = []
+        it = iter(items)
+        for x in it:
+            futs.append(self.ex.submit(fn, x))
+            if len(futs) >= 2 * self.n:
+                break
+        while futs:
+            r = futs.pop(0).result()
+            for x in it:
+                futs.append(self.ex.submit(fn, x))
+                break
+            yield r
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, e, tb):
+        try:
+            if et is None:
+                while self.pending:
+                    self.pending.pop(0).result()
+        finally:
+            self.ex.shutdown(wait=True, cancel_futures=True)
+        return False
 
 
 class _Tee:
@@ -323,14 +378,19 @@ def run_core(ctx, p):
         if len(paths) < n:
             raise RuntimeError(f"CorridorKey wrote {len(paths)} of {n} frames")
         import cv2
-        for i, path in enumerate(paths[:n]):
-            ctx.progress(0.9 + 0.1 * i / n, f"reading frame {frames[i]}")
+
+        def get(path):
             bgra = cv2.imread(path, cv2.IMREAD_UNCHANGED)
             if bgra is None or bgra.ndim != 3 or bgra.shape[2] != 4:
                 raise RuntimeError(f"couldn't read CorridorKey's output {os.path.basename(path)}")
             rgba = np.nan_to_num(bgra[..., [2, 1, 0, 3]].astype(np.float32))
             rgba[..., 3] = np.clip(rgba[..., 3], 0.0, 1.0)
-            ctx.write_frame("rgba", frames[i], rgba, channels=["R", "G", "B", "A"], dtype=np.float16)
+            return rgba
+
+        with _Pool() as pool:  # decoded a few at once, saved in order
+            for i, rgba in enumerate(pool.map(get, paths[:n])):
+                ctx.progress(0.9 + 0.1 * i / n, f"reading frame {frames[i]}")
+                ctx.write_frame("rgba", frames[i], rgba, channels=["R", "G", "B", "A"], dtype=np.float16)
         return ctx.result(message=f"keyed {n} frames" + (f" at {w}x{h}" if (w, h) != (src.width, src.height) else ""),
                           model=MODEL_ID, width=w, height=h, straight=True,
                           window=[int(cfg.hann_chunk), int(cfg.hann_stride)], low_vram=bool(cfg.low_vram))

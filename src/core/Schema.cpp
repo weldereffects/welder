@@ -2356,7 +2356,16 @@ std::vector<NodeDef> build() {
                              "How many frames CorridorKey looks at together (more: steadier, more GPU memory). "
                              "0: the most that fit your GPU (24 GB: 48 at 1080p, 8 at 4K)"),
                          Tip(B("low_vram", "low VRAM", false), "With a set number of frames at once: slower, much less GPU memory, "
-                                                                "same result (0 frames at once picks this by itself)")}),
+                                                                "same result (0 frames at once picks this by itself)"),
+                         Div("key folder"),
+                         InfoRow("corridorkey_folder", ""),
+                         Tip(File("bake_path", "key folder"),
+                             "A folder for the finished key (half-float EXRs and a manifest), e.g. on a network share: render "
+                             "nodes and other artists who open this comp read the key from here, without keying again. "
+                             "One folder per CorridorKey node. Relative paths start at the comp's folder"),
+                         Tip(B("auto_save", "save when keyed", true), "Save each finished key to the key folder by itself"),
+                         Btn("corridorkey_save", "Save Key to Folder",
+                             "Copy the current key into the key folder now (frames already there are skipped)")}),
                  "CorridorKey 2.0 by Corridor Digital: AI green / blue screen keying that looks at the whole clip, for a steady matte "
                  "and real colour in hair, motion blur and glass. Optional hint input: a rough matte. Downloaded from Corridor Digital "
                  "under its own licence (CorridorKey is free to use on commercial work; not for resale). Needs an NVIDIA RTX 30-series "
@@ -2438,7 +2447,7 @@ std::vector<NodeDef> build() {
                          Btn("trackmask_to_splines", "Convert to Splines",
                              "The tracked mattes as animated Bezier shapes, keyed on the comp's frames"),
                          Div("bake"),
-                         Tip(S("bake_path", "bake folder", ""),
+                         Tip(File("bake_path", "bake folder"),
                              "Where Bake Masks to Disk writes (empty: the ML folder's trackmask_bakes/<node name>)"),
                          Tip(B("use_baked", "use baked frames", true),
                              "Show frames from the bake where it was made from the same anchors, settings and inputs"),

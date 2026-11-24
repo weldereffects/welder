@@ -1,6 +1,7 @@
 #include "MLNodes.h"
 
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cstdio>
 #include <cmath>
@@ -9,6 +10,8 @@
 #include <list>
 #include <map>
 #include <mutex>
+#include <set>
+#include <thread>
 
 #include "../core/Comp.h"
 #include "MatteToSpline.h"
@@ -73,7 +76,14 @@ bool MLNode::fillFromKey(RenderArgs& a, Image& out, const std::string& key, cons
     int f = outFrame ? *outFrame : (int)std::lround(a.frame);
     if (!outFrame && std::fabs(a.frame - f) > 1e-6) return false;
     auto img = ml::outputFrame(key, output, f);
-    if (!img || img->w <= 0 || img->h <= 0) return false;
+    if (!img) return false;
+    return fillFromImage(a, out, *img, output, chanMap);
+}
+
+bool MLNode::fillFromImage(RenderArgs& a, Image& out, const ml::NpyImage& frame, const std::string& output,
+                           const std::vector<std::pair<int, int>>& chanMap) {
+    const ml::NpyImage* img = &frame;
+    if (img->w <= 0 || img->h <= 0) return false;
     Format fmt = format(a.engine, a.frame);
     const double W = fmt.width, H = fmt.height;
     const double sx = img->w / W, sy = img->h / H;
@@ -540,6 +550,225 @@ public:
 };
 
 // ================================================================= CorridorKey
+// The key folder (MLNodes.h: CorridorKeyFolderStatus): key.#####.exr (half float, R G B A: the worker's
+// "rgba" output as it is, top row first in the file as in any EXR) and manifest.json
+// {"version": 1, "result": <job key>, "frames": [...]}. A frame counts only while the manifest names the
+// result the node shows, so keying again with other settings doesn't show the old key from the folder.
+namespace ckfolder {
+
+std::string file(const std::string& dir, int f) {
+    char b[32];
+    std::snprintf(b, sizeof b, "key.%05d.exr", f);
+    return ml::pathString(ml::fsPath(dir) / b);
+}
+
+struct Manifest {
+    std::string result;
+    std::set<int> frames;
+};
+
+std::mutex& lock() {  // the manifests (read-modify-write) and the save state
+    static std::mutex m;
+    return m;
+}
+
+// Read again when the file changes (a save on another machine), else from a small cache.
+std::shared_ptr<const Manifest> manifest(const std::string& dir, bool reload = false) {
+    static std::mutex m;
+    static std::map<std::string, std::pair<std::filesystem::file_time_type, std::shared_ptr<const Manifest>>> cache;
+    static std::map<std::string, double> checked;  // a network folder: don't ask it for the time on every tile
+    const auto path = ml::fsPath(dir) / "manifest.json";
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    {
+        std::lock_guard<std::mutex> l(m);
+        auto it = cache.find(dir);
+        if (!reload && it != cache.end() && now - checked[dir] < 1.0) return it->second.second;
+    }
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(path, ec);
+    std::lock_guard<std::mutex> l(m);
+    checked[dir] = now;
+    auto it = cache.find(dir);
+    if (!reload && it != cache.end() && !ec && it->second.first == t) return it->second.second;
+    auto mf = std::make_shared<Manifest>();
+    if (!ec) {
+        std::ifstream in(path);
+        json j = json::parse(in, nullptr, false);  // a damaged manifest: nothing saved
+        if (j.is_object()) {
+            mf->result = j.value("result", std::string());
+            if (j.contains("frames") && j["frames"].is_array())
+                for (auto& v : j["frames"])
+                    if (v.is_number_integer()) mf->frames.insert(v.get<int>());
+        }
+    }
+    cache[dir] = {ec ? std::filesystem::file_time_type() : t, mf};
+    return mf;
+}
+
+bool saveManifest(const std::string& dir, const Manifest& mf) {
+    const auto path = ml::fsPath(dir) / "manifest.json";
+    const auto tmp = ml::fsPath(dir) / ".manifest.json.writing";
+    {
+        std::ofstream o(tmp);
+        if (!o) return false;
+        o << json{{"version", 1}, {"result", mf.result}, {"frames", std::vector<int>(mf.frames.begin(), mf.frames.end())}}.dump(1);
+        if (!o) return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {  // Windows shares: rename over an existing file can fail
+        std::filesystem::remove(path, ec);
+        std::filesystem::rename(tmp, path, ec);
+    }
+    if (!ec) manifest(dir, true);
+    return !ec;
+}
+
+// The frames of the result's "rgba" output (empty when this machine doesn't have the job).
+std::vector<int> resultFrames(const std::string& key) {
+    std::vector<int> out;
+    auto r = ml::jobResult(key);
+    if (!r || !r->contains("outputs")) return out;
+    const json& o = (*r)["outputs"];
+    if (!o.is_object() || !o.contains("rgba") || !o["rgba"].contains("frames")) return out;
+    for (auto& v : o["rgba"]["frames"])
+        if (v.is_number_integer()) out.push_back(v.get<int>());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// Write the result's frame f into the folder (and the manifest). Throws on failure.
+void saveFrame(const std::string& dir, const std::string& key, int f) {
+    auto img = ml::outputFrame(key, "rgba", f);
+    if (!img || img->w <= 0 || img->h <= 0) return;  // not a frame of the key
+    Image out(Box(0, 0, img->w, img->h), {"R", "G", "B", "A"});
+    const int C = std::min(4, img->c);
+    for (int y = 0; y < img->h; ++y) {
+        const int row = img->h - 1 - y;  // npy rows are top first, Welder's bottom first
+        for (int x = 0; x < img->w; ++x) {
+            float* px = out.px(x, y);
+            for (int c = 0; c < 4; ++c) px[c] = c < C ? img->at(x, row, c) : (c == 3 ? 1.0f : 0.0f);
+        }
+    }
+    ExrWriteOptions o;
+    o.type = ExrPixelType::Half;
+    o.compression = "zip";
+    const auto pp = ml::fsPath(file(dir, f));
+    const auto tmp = pp.parent_path() / ("." + pp.filename().string() + ".writing");
+    writeExr(ml::pathString(tmp), out, Format{img->w, img->h}, o);
+    std::error_code ec;
+    std::filesystem::rename(tmp, pp, ec);
+    if (ec) {
+        std::filesystem::remove(pp, ec);
+        std::filesystem::rename(tmp, pp, ec);
+    }
+    if (ec) throw RenderError("can't write " + ml::pathString(pp) + ": " + ec.message());
+    std::lock_guard<std::mutex> l(lock());
+    Manifest mf = *manifest(dir, true);
+    if (mf.result != key) mf = Manifest{key, {}};  // another key's frames: theirs no longer count
+    mf.frames.insert(f);
+    if (!saveManifest(dir, mf)) throw RenderError("can't write the manifest in " + dir);
+}
+
+// A saved frame of the result, decoded (top row first, like the worker's). A few kept, so tiles of
+// the same frame don't decode it again.
+std::shared_ptr<const ml::NpyImage> savedFrame(const std::string& dir, const std::string& key, int f) {
+    if (dir.empty() || key.empty()) return nullptr;
+    const auto mf = manifest(dir);
+    if (mf->result != key || !mf->frames.count(f)) return nullptr;
+    const std::string path = file(dir, f);
+    const std::string id = path + "|" + key;  // a frame of a given key is the same whenever it's saved: no need to ask a share for times
+    static std::mutex m;
+    static std::list<std::pair<std::string, std::shared_ptr<const ml::NpyImage>>> lru;
+    {
+        std::lock_guard<std::mutex> l(m);
+        for (auto it = lru.begin(); it != lru.end(); ++it)
+            if (it->first == id) {
+                lru.splice(lru.begin(), lru, it);
+                return it->second;
+            }
+    }
+    std::shared_ptr<Image> img;
+    Format fmt;
+    try {
+        auto ex = readExr(path);
+        img = ex.image;
+        fmt = ex.format;
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+    if (!img || fmt.width <= 0 || fmt.height <= 0) return nullptr;
+    auto out = std::make_shared<ml::NpyImage>();
+    out->w = fmt.width;
+    out->h = fmt.height;
+    out->c = 4;
+    out->data.assign((size_t)out->w * out->h * 4, 0.0f);
+    const int ci[4] = {img->ch("R"), img->ch("G"), img->ch("B"), img->ch("A")};
+    for (int row = 0; row < out->h; ++row) {
+        const int y = out->h - 1 - row;
+        for (int x = 0; x < out->w; ++x)
+            for (int c = 0; c < 4; ++c)
+                out->data[((size_t)row * out->w + x) * 4 + c] = ci[c] >= 0 ? img->at(x, y, ci[c]) : (c == 3 ? 1.0f : 0.0f);
+    }
+    std::lock_guard<std::mutex> l(m);
+    lru.push_front({id, out});
+    while (lru.size() > 6) lru.pop_back();
+    return out;
+}
+
+// Background saves, one per folder at a time.
+struct Save {
+    bool running = false;
+    std::string error;
+};
+std::map<std::string, Save>& saves() {
+    static std::map<std::string, Save> s;
+    return s;
+}
+
+bool startSave(const std::string& dir, const std::string& key, std::string* err) {
+    if (dir.empty()) {
+        if (err) *err = "set the key folder first";
+        return false;
+    }
+    std::vector<int> frames = resultFrames(key);
+    if (key.empty() || frames.empty()) {
+        if (err) *err = "this machine doesn't have the key: run Key first";
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> l(lock());
+        Save& s = saves()[dir];
+        if (s.running) {
+            if (err) *err = "already saving to " + dir;
+            return false;
+        }
+        s = Save{true, ""};
+    }
+    std::thread([dir, key, frames] {
+        std::string e;
+        try {
+            std::error_code ec;
+            std::filesystem::create_directories(ml::fsPath(dir), ec);
+            const auto mf = manifest(dir, true);
+            for (int f : frames) {
+                if (mf->result == key && mf->frames.count(f)) {
+                    std::error_code ec2;
+                    if (std::filesystem::exists(ml::fsPath(file(dir, f)), ec2)) continue;  // already there
+                }
+                saveFrame(dir, key, f);
+            }
+        } catch (const std::exception& ex) {
+            e = ex.what();
+        }
+        std::lock_guard<std::mutex> l(lock());
+        saves()[dir] = Save{false, e};
+    }).detach();
+    return true;
+}
+
+}  // namespace ckfolder
+
 // CorridorKey 2.0 (Corridor Digital): an AI green / blue screen keyer that sees the whole clip, so
 // the matte holds steady and soft edges keep their real colour. The worker writes "rgba": the
 // despilled foreground (straight, linear) and its matte. An optional hint input (a rough matte,
@@ -553,10 +782,34 @@ public:
     std::string slotLabel(const std::string&) const override { return "Key"; }
     int identityInput(double) override { return result("main").empty() ? 0 : -1; }
     ChannelSet channels(Engine& e, double f) override { return inputChannels(e, input(0), f, {}); }
+    // The key folder, resolved (relative paths: from the comp's folder); "" = none.
+    std::string keyFolder() const {
+        const std::string p = params.str("bake_path", "");
+        if (p.empty()) return "";
+        return comp ? comp->resolvePath(p) : p;
+    }
+    // A key that finishes is saved to the key folder by itself (when there is one).
+    void resultAttached(const std::string&, const std::string& key) override {
+        if (!keyFolder().empty() && params.flag("auto_save", true)) ckfolder::startSave(keyFolder(), key, nullptr);
+    }
     void render(RenderArgs& a, Image& out) override {
         copyInput(a, out, input(0));
         Image k(a.region, {"R", "G", "B", "A"});
-        if (!fillFromOutput(a, k, "main", "rgba", {{0, 0}, {1, 1}, {2, 2}, {3, 3}})) return;
+        const std::vector<std::pair<int, int>> map = {{0, 0}, {1, 1}, {2, 2}, {3, 3}};
+        bool have = fillFromOutput(a, k, "main", "rgba", map);
+        const std::string key = result("main");
+        if (!have && !key.empty()) {
+            const int f = (int)std::lround(a.frame);
+            const std::string dir = keyFolder();
+            if (std::fabs(a.frame - f) < 1e-6)
+                if (auto img = ckfolder::savedFrame(dir, key, f)) have = fillFromImage(a, k, *img, "rgba", map);
+            // The comp says it has a key, but neither this machine's ML cache nor the key folder has it (a render
+            // node, another artist's machine, a cleared cache): an error, never the unkeyed plate passed as keyed.
+            if (!have && !ml::jobResult(key) && (dir.empty() || ckfolder::manifest(dir)->result != key))
+                throw RenderError(name + ": the key isn't on this machine. On the machine that keyed it, set a key folder that "
+                                         "both can reach (a network share) and Save Key to Folder; or press Key again here");
+        }
+        if (!have) return;
         const std::string view = params.str("view", "keyed");
         const bool premult = params.flag("premultiply", true);
         const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B"), A = out.ch("A");
@@ -1578,6 +1831,45 @@ public:
 };
 
 }  // namespace
+
+CorridorKeyFolderStatus corridorKeyFolderStatus(Node* n) {
+    CorridorKeyFolderStatus st;
+    auto* ck = dynamic_cast<CorridorKeyNode*>(n);
+    if (!ck) return st;
+    st.dir = ck->keyFolder();
+    const std::string key = ck->result("main");
+    const std::vector<int> frames = key.empty() ? std::vector<int>() : ckfolder::resultFrames(key);
+    st.local = !frames.empty();
+    if (!st.dir.empty()) {
+        const auto mf = ckfolder::manifest(st.dir);
+        if (!key.empty() && mf->result == key) {
+            st.saved = (int)mf->frames.size();
+            st.total = st.local ? (int)frames.size() : st.saved;
+            if (st.local) {
+                st.saved = 0;
+                for (int f : frames) st.saved += mf->frames.count(f) ? 1 : 0;
+            }
+        } else
+            st.total = (int)frames.size();
+        std::lock_guard<std::mutex> l(ckfolder::lock());
+        auto it = ckfolder::saves().find(st.dir);
+        if (it != ckfolder::saves().end()) {
+            st.saving = it->second.running;
+            st.error = it->second.error;
+        }
+    } else
+        st.total = (int)frames.size();
+    return st;
+}
+
+bool saveCorridorKeyToFolder(Node* n, std::string* err) {
+    auto* ck = dynamic_cast<CorridorKeyNode*>(n);
+    if (!ck) {
+        if (err) *err = "not a CorridorKey node";
+        return false;
+    }
+    return ckfolder::startSave(ck->keyFolder(), ck->result("main"), err);
+}
 
 std::string trackMaskSource(Node* n, double f, bool* current) {
     if (current) *current = false;
