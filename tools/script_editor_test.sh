@@ -6,7 +6,10 @@
 #   2. tests/python_api_test.py, the whole API, inside the editor
 #   3. a script that fails: its traceback reaches the output and the exit code is kept
 #   4. a script that hangs: Stop ends it, and the editor keeps going
-#   5. a screenshot of the Script Editor (with WELDER_SHOT=<png>)
+#   5. callbacks: an init.py stand-in (--callbacks-script) whose welder.on() handlers see a
+#      script's changes, a save, and a node's Python button; each callback is one undo step
+#   6. welder.on() from the Script Editor says where callbacks belong
+#   7. a screenshot of the Script Editor (with WELDER_SHOT=<png>)
 #
 #   tools/script_editor_test.sh [build dir]       (needs xvfb-run without a display)
 set -euo pipefail
@@ -55,6 +58,49 @@ check "its exit code" "$out" "SCRIPT exit=1"
 printf 'import time\nprint("waiting", flush=True)\ntime.sleep(600)\n' > "$WORK/hangs.py"
 out=$(WELDER_TEST_SCRIPT_STOP=2 "${RUN[@]}" "$UI" --run-script "$WORK/hangs.py" --quit-after-script 2>&1 || true)
 check "Stop ends a script that hangs" "$out" "hangs.py: stopped after"
+
+cat > "$WORK/callbacks.py" <<'PY'
+import welder
+
+@welder.on("knob_changed", type="Grade", knob="mix")
+def mix(ev):
+    print("CB mix", ev.node.name, ev.value, flush=True)
+    ev.node["label"] = "mix %s" % ev.value
+
+@welder.on("node_created")
+def made(ev):
+    print("CB created", ev.node.name, ev.type, flush=True)
+
+@welder.on("comp_saved")
+def saved(ev):
+    print("CB saved", ev.path.endswith("cb.weld"), flush=True)
+
+@welder.on("node_created", type="Grade")
+def broken(ev):
+    raise RuntimeError("a handler that fails")
+
+welder.run_callbacks()
+PY
+cat > "$WORK/sets.py" <<PY
+import welder
+c = welder.comp()
+g = c.create("Grade", name="G")
+g.add_button("Half", "import welder\nn = welder.this_node()\nprint('BUTTON on', n.name)\nn['mix'] = 0.5\n")
+print("buttons", [b["label"] for b in g.buttons()])
+c.save("$WORK/cb.weld")
+PY
+out=$(WELDER_TEST_PRESS_BUTTON=G:Half WELDER_TEST_DUMP_PARAMS=1 "${RUN[@]}" "$UI" --callbacks-script "$WORK/callbacks.py" \
+      --run-script "$WORK/sets.py" --quit-after-script 2>&1 || true)
+check "a node created: its callback" "$out" "CB created G Grade"
+check "a save: its callback" "$out" "CB saved True"
+check "a failing callback's traceback" "$out" "RuntimeError: a handler that fails"
+check "a Python button runs with this_node()" "$out" "BUTTON on G"
+check "the button's knob change: its callback" "$out" "CB mix G 0.5"
+check "undo takes back the callback, not the button" "$out" 'SCRIPT params G {"mix":0.5}'
+
+printf 'import welder\nwelder.on("comp_saved", print)\n' > "$WORK/on.py"
+out=$("${RUN[@]}" "$UI" --run-script "$WORK/on.py" --quit-after-script 2>&1 || true)
+check "callbacks belong in init.py" "$out" "callbacks run from init.py"
 
 if [ -n "${WELDER_SHOT:-}" ]; then
   "${RUN[@]}" "$UI" --run-script "$WORK/build.py" --screenshot "$WELDER_SHOT" > /dev/null 2>&1 || true

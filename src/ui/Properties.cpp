@@ -3333,6 +3333,8 @@ void nodeTab(Ctx& c) {
     knob(c, a);
     knob(c, b);
     gDef = saved;
+    ImGui::Separator();
+    editPythonButtons(c.app, n);  // (ScriptEditor.cpp)
 }
 
 static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
@@ -3660,6 +3662,7 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
         KnobDef k{key, key, Knob::Json, val, 0, 1, {}, ""};
         knob(c, k);
     }
+    drawPythonButtons(app, n);  // (ScriptEditor.cpp)
     ImGui::EndTabItem();
     }  // main tab
     if (tabBar) {

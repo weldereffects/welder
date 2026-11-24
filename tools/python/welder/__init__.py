@@ -25,13 +25,16 @@ import contextlib
 import json
 import os
 import socket
+import sys
 import tempfile
 import threading
+import traceback
 
 __all__ = [
     "WelderError", "Comp", "Node", "Knob",
     "comp", "open", "new", "message", "batch", "info", "connected",
     "selected", "select", "frame", "set_frame", "view", "viewed", "show_panel",
+    "this_node", "on", "run_callbacks", "Event", "EVENTS",
 ]
 
 
@@ -199,6 +202,107 @@ def viewed():
 def show_panel(node):
     """Open a node's properties panel."""
     _call("editor.show_panel", {"node": _name(node)})
+
+
+def this_node():
+    """The node whose Python button is running this code (None anywhere else)."""
+    n = os.environ.get("WELDER_THIS_NODE")
+    return Node(n) if n else None
+
+
+# ---------------------------------------------------------------------- callbacks
+# init.py registers handlers with welder.on(), then calls welder.run_callbacks(), which waits for
+# the editor's events and calls them. Each callback's changes are one undo step.
+
+EVENTS = ("comp_opened", "comp_saved", "knob_changed", "node_created", "node_deleted",
+          "frame_changed", "selection_changed")
+
+_handlers = []  # (event, fn, node, knob, type)
+
+
+class Event:
+    """What happened, for a callback. Always .name (the event); then as it applies:
+    .node (a Node), .type (its type), .knob (a Knob), .value (the knob as stored now),
+    .path (comp_opened, comp_saved), .frame (frame_changed), .nodes (selection_changed)."""
+
+    def __init__(self, d):
+        self.name = d.get("event")
+        self.path = d.get("path") or None
+        self.frame = d.get("frame")
+        self.type = d.get("type")
+        self.value = d.get("value")
+        self.node = Node(d["node"]) if d.get("node") else None
+        self.knob = Knob(self.node, d["knob"]) if self.node is not None and d.get("knob") else None
+        self.nodes = [Node(n) for n in d.get("nodes", [])] if "nodes" in d else None
+        self._data = d
+
+    def __repr__(self):
+        return "<welder.Event %s>" % json.dumps(self._data)
+
+
+def on(event, fn=None, node=None, knob=None, type=None):  # noqa: A002
+    """Call fn(event) when `event` happens in the editor. As a decorator:
+
+        @welder.on("knob_changed", node="Grade1", knob="mix")
+        def mix_changed(event):
+            print(event.node.name, event.knob.name, "is now", event.value)
+
+    node= / type= keep the events of one node or one node type, knob= of one knob. Events:
+    comp_opened, comp_saved, knob_changed, node_created, node_deleted, frame_changed,
+    selection_changed. Only init.py (Scripts > Restart Callbacks) gets events: it calls
+    welder.run_callbacks() once its handlers are registered."""
+    if event not in EVENTS:
+        raise _error("ValueError", "no event called %r (there are %s)" % (event, ", ".join(EVENTS)))
+
+    def register(f):
+        p = {"event": event}
+        for k, v in (("node", _name(node) if node is not None else None), ("knob", knob), ("type", type)):
+            if v:
+                p[k] = v
+        _call("editor.watch", p)
+        _handlers.append((event, f, p.get("node"), knob, type))
+        return f
+
+    return register(fn) if fn is not None else register
+
+
+def _matches(h, ev):
+    event, _fn, node, knob, typ = h
+    if event != ev.get("event"):
+        return False
+    if node and ev.get("node") != node:
+        return False
+    if typ and ev.get("type") != typ:
+        return False
+    if knob and ev.get("knob") != knob:
+        return False
+    return True
+
+
+def run_callbacks():
+    """Wait for the editor's events and call the handlers registered with welder.on(), until
+    Welder quits or the callbacks are stopped (the end of init.py). A handler that raises
+    prints its traceback; the others go on."""
+    while True:
+        try:
+            d = _call("events.next", {"timeout": 1.0})
+        except ConnectionError:
+            return
+        if d is None:
+            continue
+        ev = Event(d)
+        for h in list(_handlers):
+            if _matches(h, d):
+                try:
+                    h[1](ev)
+                except Exception:  # noqa: BLE001 (one bad handler must not end the others)
+                    print("callback %s for %s failed:" % (getattr(h[1], "__name__", "?"), ev.name), file=sys.stderr)
+                    traceback.print_exc()
+                finally:
+                    try:
+                        _api().flush()
+                    except Exception:  # noqa: BLE001
+                        traceback.print_exc()
 
 
 # ---------------------------------------------------------------------- comps
@@ -423,6 +527,19 @@ class Node:
 
     def delete(self):
         _call("node.delete", {"node": self._name})
+
+    # -- Python buttons (on the node's panel)
+    def buttons(self):
+        """The node's Python buttons, as [{"label": ..., "code": ...}, ...]."""
+        return self.info().get("buttons", [])
+
+    def add_button(self, label, code):
+        """Add a button to the node's panel that runs `code` (Python source), with
+        welder.this_node() as this node. A button with that label already is replaced."""
+        _call("node.add_button", {"node": self._name, "label": str(label), "code": str(code)})
+
+    def remove_button(self, label):
+        _call("node.remove_button", {"node": self._name, "label": str(label)})
 
     # -- knobs
     def knobs(self):

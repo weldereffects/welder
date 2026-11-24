@@ -3286,6 +3286,7 @@ bool App::newComp() {
     edit([this, j](Comp&) {
         comp = Comp::fromJson(j, fs::current_path());
         ++compRevision_;
+        ++compLoads;
         selection.clear();
         panels.clear();
         viewed.clear();
@@ -3343,6 +3344,7 @@ void App::adoptComp(std::shared_ptr<Comp> loaded) {
     edit([this, loaded](Comp&) mutable {
         comp.reset(new Comp());
         ++compRevision_;
+        ++compLoads;
         std::swap(*comp, *loaded);  // move the loaded comp in
         for (auto& n : comp->nodes) {
             n->comp = comp.get();
@@ -3423,6 +3425,7 @@ bool App::save(const std::string& path, std::string* err) {
     fs::remove(autosavePath(compPath), ec);
     lastAutosave_ = steadySeconds();
     addRecent(compPath);
+    ++compSaves;
     message("saved " + compPath);
     return true;
 }

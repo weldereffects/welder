@@ -531,6 +531,12 @@ void drawDialogs(App& app, UiState& ui);
 // Python (ScriptEditor.cpp): the Script Editor window and the Scripts menu.
 void drawScriptEditor(App& app, UiState& ui);
 void drawScriptsMenu(App& app, UiState& ui);
+// A node's Python button (its ui "python_buttons"): runs its code, welder.this_node() = the node.
+bool runPythonButton(App& app, const std::string& node, const std::string& label);
+// The node's Python buttons, a row on its panel (nothing when it has none).
+void drawPythonButtons(App& app, Node* n);
+// The Node tab's editor for them: add, rename, edit and remove.
+void editPythonButtons(App& app, Node* n);
 
 // Shared actions
 // I / O: set the in / out point at the current frame, or take it off when it is already there.

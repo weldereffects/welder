@@ -108,6 +108,17 @@ raises(ValueError, lambda: comp.create("NoSuchType"), "unknown type is a ValueEr
 raises(ValueError, lambda: comp["Flat"].set_input(0, comp["Soft"]), "loops are refused")
 raises(ValueError, lambda: comp.create("Grade", name="Flat"), "duplicate names are refused")
 
+grade = comp["Grade1"]
+grade.add_button("Half", "welder.this_node()['mix'] = 0.5")
+grade.add_button("Full", "welder.this_node()['mix'] = 1")
+grade.add_button("Half", "welder.this_node()['mix'] = 0.4")
+check([b["label"] for b in grade.buttons()] == ["Half", "Full"] and "0.4" in grade.buttons()[0]["code"], "Python buttons")
+grade.remove_button("Full")
+check([b["label"] for b in grade.buttons()] == ["Half"], "remove a button")
+raises(KeyError, lambda: grade.remove_button("Nope"), "a missing button is a KeyError")
+check(welder.this_node() is None or isinstance(welder.this_node(), welder.Node), "this_node outside a button")
+raises(ValueError, lambda: welder.on("no_such_event", print), "unknown events are refused")
+
 comp.delete("Soft")
 check("Soft" not in comp and comp["Write1"].inputs in ([], [None]), "delete disconnects")
 print("all scripting API checks passed")

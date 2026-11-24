@@ -30,7 +30,8 @@
 - [x] Copy nodes from Welder in the .nk clipboard format, and export whole comps as .nk (`welder nk`)
 - [x] Python API: the `welder` module (scripts in their own process over a local socket, any Python 3.8+), `welder python` for headless scripts (docs/PYTHON.md)
 - [x] Python in the editor: Script Editor (run / stop / output, one undo step per run), Scripts menu, init.py, the interpreter in Preferences
-- [ ] Python next: callbacks (comp opened / saved, knob changed), Python buttons on nodes, an MCP server for AI assistants on the same commands
+- [x] Python callbacks (init.py's `welder.on()`: comp opened / saved, knob changed, nodes made / deleted, frame, selection; one undo step each) and Python buttons on nodes
+- [ ] Python next: an MCP server for AI assistants on the same commands
 - [x] Autosave with crash recovery, atomic saves, ask before discarding unsaved changes; Viewer › Performance (UI frame times and their parts, per-node render times, caches); `welder_ui --smoke` startup / open / play / autosave check with a stall watchdog
 - [x] Proxy / render scale, disk cache (content-keyed viewer frames), cost-aware tile cache
 
