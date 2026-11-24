@@ -562,6 +562,9 @@ std::vector<NodeDef> build() {
                   F("chroma", "chroma", 1.5, 0, 6, "Strength on colour noise (usually the worst part)"),
                   F("spatial_size", "search size (px)", 4, 0, 12, "How far it looks for similar patches: larger is smoother and slower"),
                   F("detail", "keep detail", 0.2, 0, 1, "Gives back part of the finest texture"),
+                  F("low_frequency", "low frequency", 1, 0, 3,
+                    "Strength on large, blotchy noise (often in the blue channel), cleaned at 1/2, 1/4 and 1/8 size; 0 cleans at full size only"),
+                  Tip(I("scales", "scales", 3, 0, 5), "How many smaller sizes are cleaned: each one reaches noise twice as large"),
                   Div("temporal"), I("temporal_frames", "frames each side", 2, 0, 4),
                   F("temporal", "temporal strength", 1, 0.05, 4, "How different a neighbouring frame may be and still be averaged in"),
                   B("motion_compensated", "motion compensated", true), When(F("vector_detail", "vector detail", 0.25, 0.05, 1), "motion_compensated=true"),
@@ -574,7 +577,7 @@ std::vector<NodeDef> build() {
                   F("coarse", "coarse", 1, 0, 2, "Coarse, blotchy noise; lower keeps more of it (and more texture)"),
                   Div("sharpen"), F("sharpen", "sharpen", 0, 0, 3), F("sharpen_size", "size", 1.5, 0.3, 20)},
                  "Noise reduction: neighbouring frames lined up with optical flow and averaged where they match, then "
-                 "similar patches averaged in the frame. The noise level is measured from the image (or from a sample box you drag over a flat area). "
+                 "similar patches averaged in the frame, at several sizes so blotchy low-frequency noise goes too. The noise level is measured from the image (or from a sample box you drag over a flat area). "
                  "Fine / medium / coarse set how much noise of each size is removed; sharpen restores crispness. Output noise: what it "
                  "removed (a clean plate for CADGrain's degrain input, or a grain sample)."});
     d.push_back({"VectorGenerator", "Time",

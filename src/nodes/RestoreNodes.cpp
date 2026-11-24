@@ -2,8 +2,9 @@
 //
 //   Denoise        noise reduction: motion-compensated temporal averaging (neighbouring
 //                  frames aligned with optical flow, each pixel weighted by how well it
-//                  matches) followed by spatial non-local means; luma and chroma separately,
-//                  the noise level measured from the image. Output: the clean image, or the
+//                  matches) followed by spatial non-local means at several scales (so blotchy,
+//                  low-frequency noise goes too); luma and chroma separately, the noise level
+//                  measured from the image. Output: the clean image, or the
 //                  noise it took out.
 //   MorphDissolve  a transition that morphs one clip into the other: both are warped
 //                  towards each other along the optical flow while they cross-dissolve
@@ -128,6 +129,178 @@ float noiseSigma(const std::vector<float>& p, int W, int H) {
     return flat[flat.size() / 2] / (0.6745f * 0.9428f);
 }
 
+// ---- the image pyramid for the multi-scale spatial pass
+// Half size: a [1 2 1] filter each way, then every other pixel (edges clamped).
+std::vector<float> down2(const std::vector<float>& p, int W, int H) {
+    const int w = (W + 1) / 2, h = (H + 1) / 2;
+    std::vector<float> o((size_t)w * h);
+    parallelFor(h, [&](int b, int e) {
+        for (int y = b; y < e; ++y) {
+            const int ys[3] = {std::max(0, 2 * y - 1), std::min(H - 1, 2 * y), std::min(H - 1, 2 * y + 1)};
+            for (int x = 0; x < w; ++x) {
+                const int xs[3] = {std::max(0, 2 * x - 1), std::min(W - 1, 2 * x), std::min(W - 1, 2 * x + 1)};
+                static const float k[3] = {0.25f, 0.5f, 0.25f};
+                float v = 0;
+                for (int j = 0; j < 3; ++j)
+                    for (int i = 0; i < 3; ++i) v += k[j] * k[i] * p[(size_t)ys[j] * W + xs[i]];
+                o[(size_t)y * w + x] = v;
+            }
+        }
+    });
+    return o;
+}
+YCC down2(const YCC& a) {
+    YCC o;
+    o.w = (a.w + 1) / 2;
+    o.h = (a.h + 1) / 2;
+    o.y = down2(a.y, a.w, a.h);
+    o.cb = down2(a.cb, a.w, a.h);
+    o.cr = down2(a.cr, a.w, a.h);
+    return o;
+}
+// Back up to W x H (bilinear, pixel centres lined up with down2's).
+std::vector<float> up2(const std::vector<float>& p, int w, int h, int W, int H) {
+    std::vector<float> o((size_t)W * H);
+    parallelFor(H, [&](int b, int e) {
+        for (int y = b; y < e; ++y) {
+            const float sy = std::clamp(y * 0.5f, 0.0f, (float)h - 1);
+            const int y0 = (int)sy, y1 = std::min(h - 1, y0 + 1);
+            const float fy = sy - y0;
+            for (int x = 0; x < W; ++x) {
+                const float sx = std::clamp(x * 0.5f, 0.0f, (float)w - 1);
+                const int x0 = (int)sx, x1 = std::min(w - 1, x0 + 1);
+                const float fx = sx - x0;
+                auto at = [&](int xx, int yy) { return p[(size_t)yy * w + xx]; };
+                o[(size_t)y * W + x] = (at(x0, y0) * (1 - fx) + at(x1, y0) * fx) * (1 - fy) + (at(x0, y1) * (1 - fx) + at(x1, y1) * fx) * fy;
+            }
+        }
+    });
+    return o;
+}
+YCC up2(const YCC& a, int W, int H) {
+    YCC o;
+    o.w = W;
+    o.h = H;
+    o.y = up2(a.y, a.w, a.h, W, H);
+    o.cb = up2(a.cb, a.w, a.h, W, H);
+    o.cr = up2(a.cr, a.w, a.h, W, H);
+    return o;
+}
+
+// One non-local means pass (3x3 luma patches over a (2R+1)^2 search; the same weights,
+// widened, for Cb and Cr). ws: how many frames the temporal pass averaged at each pixel
+// (the noise left is sigma / sqrt(ws)). On the GPU when it's big enough to be worth it.
+YCC nlmPass(const YCC& in, const std::vector<float>& ws, int R, float sY, float sYc, float sCb, float sCr, float lumaS,
+            float chromaS) {
+    const int W = in.w, H = in.h;
+    YCC sp = in;
+    if (R <= 0 || (lumaS <= 0 && chromaS <= 0)) return sp;
+    if (gpu::available() && (double)W * H * (2 * R + 1) * (2 * R + 1) > 2e6) {
+        struct Push {
+            int w, h, R;
+            float sY, sYc, sCb, sCr, lumaS, chromaS;
+        } pc{W, H, R, sY, sYc, sCb, sCr, lumaS, chromaS};
+        std::vector<float> res((size_t)3 * W * H);
+        const size_t pb = (size_t)W * H * sizeof(float);
+        if (gpu::run("nlm", {{in.y.data(), pb}, {in.cb.data(), pb}, {in.cr.data(), pb}, {ws.data(), pb}},
+                     {{res.data(), res.size() * sizeof(float)}}, &pc, sizeof pc, (uint32_t)(W + 15) / 16, (uint32_t)(H + 15) / 16)) {
+            const size_t n = (size_t)W * H;
+            std::copy(res.begin(), res.begin() + n, sp.y.begin());
+            std::copy(res.begin() + n, res.begin() + 2 * n, sp.cb.begin());
+            std::copy(res.begin() + 2 * n, res.end(), sp.cr.begin());
+            return sp;
+        }
+    }
+    parallelFor(H, [&](int b, int e2) {
+        for (int y = b; y < e2; ++y)
+            for (int x = 0; x < W; ++x) {
+                size_t q = (size_t)y * W + x;
+                const float iw = 1.0f / std::sqrt(ws[q]);
+                const float s = sY * iw, sc = sYc * iw;
+                const float hY = std::max(1e-6f, lumaS * s), hB = std::max(1e-6f, chromaS * std::max(sCb * iw, sc)),
+                            hR = std::max(1e-6f, chromaS * std::max(sCr * iw, sc));
+                float own[9];
+                for (int j = -1, k = 0; j <= 1; ++j)
+                    for (int i = -1; i <= 1; ++i, ++k) own[k] = in.y[(size_t)std::clamp(y + j, 0, H - 1) * W + std::clamp(x + i, 0, W - 1)];
+                float sumW = 0, sumB = 0, sumR = 0, vy = 0, vb = 0, vr = 0, maxW = 0, maxB = 0, maxR = 0;
+                for (int dy = -R; dy <= R; ++dy)
+                    for (int dx = -R; dx <= R; ++dx) {
+                        int xx = x + dx, yy = y + dy;
+                        if ((dx | dy) == 0 || xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+                        float d2 = 0;
+                        for (int j = -1, k = 0; j <= 1; ++j)
+                            for (int i = -1; i <= 1; ++i, ++k) {
+                                float dd = own[k] - in.y[(size_t)std::clamp(yy + j, 0, H - 1) * W + std::clamp(xx + i, 0, W - 1)];
+                                d2 += dd * dd;
+                            }
+                        d2 *= (1.0f / 9);
+                        const float base = std::max(0.0f, d2 - 2 * s * s);
+                        const float w = std::exp(-base / (hY * hY));
+                        const float baseC = std::max(0.0f, d2 - 2 * sc * sc);
+                        const float wb = std::exp(-baseC / (hB * hB)), wr = std::exp(-baseC / (hR * hR));  // chroma: a wider net
+                        size_t p = (size_t)yy * W + xx;
+                        sumW += w;
+                        vy += w * in.y[p];
+                        sumB += wb;
+                        vb += wb * in.cb[p];
+                        sumR += wr;
+                        vr += wr * in.cr[p];
+                        maxW = std::max(maxW, w);
+                        maxB = std::max(maxB, wb);
+                        maxR = std::max(maxR, wr);
+                    }
+                // the pixel itself counts as much as its best match (not 1), so a noise
+                // spike whose patch matches nothing still gets averaged away. "Nothing" includes
+                // weights too small to be normal floats: the GPU flushes those to zero.
+                if (maxW < 1e-30f) maxW = 1;
+                if (maxB < 1e-30f) maxB = 1;
+                if (maxR < 1e-30f) maxR = 1;
+                sumW += maxW;
+                vy += maxW * in.y[q];
+                sumB += maxB;
+                vb += maxB * in.cb[q];
+                sumR += maxR;
+                vr += maxR * in.cr[q];
+                if (lumaS > 0 && sumW > 0) sp.y[q] = vy / sumW;
+                if (chromaS > 0) {
+                    if (sumB > 0) sp.cb[q] = vb / sumB;
+                    if (sumR > 0) sp.cr[q] = vr / sumR;
+                }
+            }
+    });
+    return sp;
+}
+
+// The noise in a plane as the patch comparison sees it: the 3x3 patch difference between
+// pixels two apart, in the direction they match best (along an edge, not across it), its
+// lower fifth over the plane. On the smaller levels the noise is blotchy, much of it coarser than
+// the 3x3 high-pass noiseSigma measures; this measures what the patches will actually differ by.
+float patchSigma(const std::vector<float>& p, int W, int H) {
+    if (W < 12 || H < 12) return 0;
+    std::vector<float> v;
+    const int step = std::max(1, (int)std::sqrt((double)W * H / 50000.0));
+    static const int off[4][2] = {{2, 0}, {0, 2}, {2, 2}, {2, -2}};
+    for (int y = 4; y < H - 4; y += step)
+        for (int x = 4; x < W - 4; x += step) {
+            float best = 1e30f;
+            for (const auto& o : off) {
+                float d2 = 0;
+                for (int j = -1; j <= 1; ++j)
+                    for (int i = -1; i <= 1; ++i) {
+                        float dd = p[(size_t)(y + j) * W + x + i] - p[(size_t)(y + j + o[1]) * W + x + i + o[0]];
+                        d2 += dd * dd;
+                    }
+                best = std::min(best, d2 / 9);
+            }
+            v.push_back(best);
+        }
+    if (v.empty()) return 0;
+    // the lower fifth (texture pushes the rest up); white noise of sigma 1 puts it at 2 * 0.3775
+    const size_t k = v.size() / 5;
+    std::nth_element(v.begin(), v.begin() + k, v.end());
+    return std::sqrt(v[k] / (2 * 0.3775f));
+}
+
 class DenoiseNode : public Node {
 public:
     bool timeDependent() const override { return true; }
@@ -173,11 +346,12 @@ private:
         if (cur->ch("R") < 0) return out;  // nothing to clean
         YCC c = toYCC(*cur);
         // the noise, measured (or set by hand)
-        float sY = noiseSigma(c.y, W, H), sC = 0.5f * (noiseSigma(c.cb, W, H) + noiseSigma(c.cr, W, H));
+        // (Cb and Cr apart: the blue channel is usually much the noisier)
+        float sY = noiseSigma(c.y, W, H), sCb = noiseSigma(c.cb, W, H), sCr = noiseSigma(c.cr, W, H);
         const std::string level = params.str("noise_level", "auto");
         if (level == "manual") {
             sY = (float)params.num("noise_luma", f, 0.02);
-            sC = (float)params.num("noise_chroma", f, 0.02);
+            sCb = sCr = (float)params.num("noise_chroma", f, 0.02);
         } else if (level == "sample box") {  // measured where the user says the picture is flat
             const double sc = e.scale();
             auto b = params.vec<4>("sample_box", f, {0, 0, 0, 0});
@@ -186,7 +360,8 @@ private:
             sb = sb.intersect(Box(1, 1, W - 1, H - 1));
             if (sb.width() >= 6 && sb.height() >= 6) {
                 sY = boxSigma(c.y, W, sb);
-                sC = 0.5f * (boxSigma(c.cb, W, sb) + boxSigma(c.cr, W, sb));
+                sCb = boxSigma(c.cb, W, sb);
+                sCr = boxSigma(c.cr, W, sb);
             }
         }
         const float lumaS = (float)params.num("luma", f, 1), chromaS = (float)params.num("chroma", f, 1.5);
@@ -279,78 +454,66 @@ private:
                 }
         });
 
-        // ---- spatial: non-local means on luma (patches 3x3), chroma averaged more widely
+        // ---- spatial: non-local means on luma (patches 3x3), chroma averaged more widely, at
+        // several scales. One pass at full size only reaches noise a few pixels across; real
+        // plates (debayered, compressed, the blue channel above all) also carry blotchy noise
+        // tens of pixels wide, which is left behind however hard that pass is pushed (issue #78).
+        // So the frame is also cleaned at 1/2, 1/4, 1/8 size, each level with the noise measured
+        // at that level, and rebuilt coarse to fine: each level keeps its own detail band and
+        // takes everything coarser from the cleaned level below.
         const int R = std::clamp((int)std::lround(params.num("spatial_size", f, 4) * e.scale()), 0, 12);
-        YCC sp = acc;
-        bool onGpu = false;
-        if (R > 0 && (lumaS > 0 || chromaS > 0) && gpu::available() && (double)W * H * (2 * R + 1) * (2 * R + 1) > 2e6) {
-            struct Push {
-                int w, h, R;
-                float sY, sC, lumaS, chromaS;
-            } pc{W, H, R, sY, sC, lumaS, chromaS};
-            std::vector<float> res((size_t)3 * W * H);
-            const size_t pb = (size_t)W * H * sizeof(float);
-            onGpu = gpu::run("nlm", {{acc.y.data(), pb}, {acc.cb.data(), pb}, {acc.cr.data(), pb}, {wsum.data(), pb}},
-                             {{res.data(), res.size() * sizeof(float)}}, &pc, sizeof pc, (uint32_t)(W + 15) / 16, (uint32_t)(H + 15) / 16);
-            if (onGpu) {
-                const size_t n = (size_t)W * H;
-                std::copy(res.begin(), res.begin() + n, sp.y.begin());
-                std::copy(res.begin() + n, res.begin() + 2 * n, sp.cb.begin());
-                std::copy(res.begin() + 2 * n, res.end(), sp.cr.begin());
+        const float lowS = (float)std::max(0.0, params.num("low_frequency", f, 1));
+        int levels = std::clamp((int)params.num("scales", f, 3), 0, 5);
+        levels += (int)std::lround(std::log2(std::max(1e-3, e.scale())));  // the same sizes in a proxy
+        YCC sp = acc, fine = acc;
+        if (R > 0 && (lumaS > 0 || chromaS > 0)) {
+            // the pyramid of the temporal result, of this frame alone (where the noise is measured)
+            // and of the temporal weights
+            std::vector<YCC> G{acc}, Gc{c};
+            std::vector<std::vector<float>> Ws{wsum};
+            levels = lowS > 0 ? std::max(0, levels) : 0;
+            for (int l = 0; l < levels && G.back().w >= 32 && G.back().h >= 32; ++l) {
+                G.push_back(down2(G.back()));
+                Gc.push_back(down2(Gc.back()));
+                Ws.push_back(down2(Ws.back(), G[l].w, G[l].h));
             }
-        }
-        if (!onGpu && R > 0 && (lumaS > 0 || chromaS > 0)) {
-            // what the temporal pass left of the noise (it averaged ~wsum frames)
-            parallelFor(H, [&](int b, int e2) {
-                for (int y = b; y < e2; ++y)
-                    for (int x = 0; x < W; ++x) {
-                        size_t q = (size_t)y * W + x;
-                        const float s = sY / std::sqrt(wsum[q]), sc2 = sC / std::sqrt(wsum[q]);
-                        const float hY = std::max(1e-6f, lumaS * s), hC = std::max(1e-6f, chromaS * std::max(sc2, s));
-                        float sumW = 0, sumWC = 0, vy = 0, vb = 0, vr = 0, maxW = 0, maxWC = 0;
-                        for (int dy = -R; dy <= R; ++dy)
-                            for (int dx = -R; dx <= R; ++dx) {
-                                int xx = x + dx, yy = y + dy;
-                                if ((dx | dy) == 0 || xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
-                                float d2 = 0;
-                                for (int j = -1; j <= 1; ++j)
-                                    for (int i = -1; i <= 1; ++i) {
-                                        int ax = std::clamp(x + i, 0, W - 1), ay = std::clamp(y + j, 0, H - 1);
-                                        int bx = std::clamp(xx + i, 0, W - 1), by = std::clamp(yy + j, 0, H - 1);
-                                        float dd = acc.y[(size_t)ay * W + ax] - acc.y[(size_t)by * W + bx];
-                                        d2 += dd * dd;
-                                    }
-                                d2 *= (1.0f / 9);
-                                const float base = std::max(0.0f, d2 - 2 * s * s);
-                                const float w = std::exp(-base / (hY * hY));
-                                const float wc = std::exp(-base / (hC * hC));  // chroma: a wider net
-                                size_t p = (size_t)yy * W + xx;
-                                sumW += w;
-                                vy += w * acc.y[p];
-                                sumWC += wc;
-                                vb += wc * acc.cb[p];
-                                vr += wc * acc.cr[p];
-                                maxW = std::max(maxW, w);
-                                maxWC = std::max(maxWC, wc);
-                            }
-                        // the pixel itself counts as much as its best match (not 1), so a noise
-                        // spike whose patch matches nothing still gets averaged away
-                        if (maxW <= 0) maxW = 1;
-                        if (maxWC <= 0) maxWC = 1;
-                        sumW += maxW;
-                        vy += maxW * acc.y[q];
-                        sumWC += maxWC;
-                        vb += maxWC * acc.cb[q];
-                        vr += maxWC * acc.cr[q];
-                        if (lumaS > 0 && sumW > 0) sp.y[q] = vy / sumW;
-                        if (chromaS > 0 && sumWC > 0) {
-                            sp.cb[q] = vb / sumWC;
-                            sp.cr[q] = vr / sumWC;
-                        }
+            // the noise at each level: measured there relative to full size (a white noise drops
+            // fast, a blotchy one hardly) and applied to the full-size level (auto, sample box or
+            // manual)
+            const float mY0 = std::max(1e-6f, noiseSigma(c.y, W, H));
+            const float mB0 = std::max(1e-6f, noiseSigma(c.cb, W, H)), mR0 = std::max(1e-6f, noiseSigma(c.cr, W, H));
+            // Luma is held to no more than half the level above (filtering lowers noise, and on a
+            // small level texture reads as noise, which would wash the picture out); the luma
+            // distance that steers colour, and colour itself, take the measurement as it is, up
+            // to twice full size: colour smoothed over a little texture is hard to see, blotches aren't.
+            const size_t L = G.size();
+            std::vector<float> qy(L, sY), qyc(L, sY), qb(L, sCb), qr(L, sCr), cap(L, sY);
+            for (size_t l = 1; l < L; ++l) {
+                const YCC& m = Gc[l];
+                const float py = sY * patchSigma(m.y, m.w, m.h) / mY0;
+                cap[l] = std::min(py, 0.5f * cap[l - 1]);
+                qyc[l] = std::min(py, 2 * sY) * lowS;
+                qy[l] = cap[l] * lowS;
+                qb[l] = std::min(sCb * patchSigma(m.cb, m.w, m.h) / mB0, 2 * sCb) * lowS;
+                qr[l] = std::min(sCr * patchSigma(m.cr, m.w, m.h) / mR0, 2 * sCr) * lowS;
+            }
+            YCC rec;  // the cleaned level below, rebuilt
+            for (int l = (int)L - 1; l >= 0; --l) {
+                YCC d = nlmPass(G[l], Ws[l], std::max(l > 0 ? 2 : 1, R), qy[l], qyc[l], qb[l], qr[l], lumaS, chromaS);
+                if (l == 0) fine = d;
+                if (l + 1 < (int)G.size()) {  // own detail band + the cleaned level below
+                    YCC lowD = up2(down2(d), d.w, d.h), lowR = up2(rec, d.w, d.h);
+                    for (size_t q = 0; q < d.y.size(); ++q) {
+                        d.y[q] += lowR.y[q] - lowD.y[q];
+                        d.cb[q] += lowR.cb[q] - lowD.cb[q];
+                        d.cr[q] += lowR.cr[q] - lowD.cr[q];
                     }
-            });
+                }
+                rec = std::move(d);
+            }
+            sp = std::move(rec);
         }
-        // ---- back to RGB: detail returns part of what the spatial pass smoothed
+        // ---- back to RGB: detail returns part of the finest texture the spatial pass smoothed
         const float detail = (float)std::clamp(params.num("detail", f, 0.2), 0.0, 1.0);
         const float amount = (float)std::clamp(params.num("amount", f, 1), 0.0, 1.0);
         const bool showNoise = params.str("output", "denoised") == "noise";
@@ -359,7 +522,9 @@ private:
             for (int y = b; y < e2; ++y)
                 for (int x = 0; x < W; ++x) {
                     size_t q = (size_t)y * W + x;
-                    float Y = sp.y[q] + detail * (acc.y[q] - sp.y[q]);
+                    // detail gives back only what the full-size pass took (the finest texture),
+                    // never the blotchy noise the coarser levels removed
+                    float Y = sp.y[q] + detail * (acc.y[q] - fine.y[q]);
                     float cb = sp.cb[q], cr = sp.cr[q];
                     float r = cr + Y, bl = cb + Y, g = (Y - 0.299f * r - 0.114f * bl) / 0.587f;
                     float* o = out->data.data() + q * nc;

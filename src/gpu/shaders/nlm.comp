@@ -1,5 +1,6 @@
 // Denoise's spatial pass (RestoreNodes.cpp): non-local means on the luma plane
-// (3x3 patches over a (2R+1)^2 search), the same weights widened for chroma.
+// (3x3 patches over a (2R+1)^2 search), the same weights widened for Cb and Cr (each with its
+// own noise level). Run once per level of the multi-scale pass.
 #version 450
 layout(local_size_x = 16, local_size_y = 16) in;
 
@@ -11,7 +12,7 @@ layout(std430, set = 0, binding = 4) writeonly buffer Out { float o[]; };  // y,
 
 layout(push_constant) uniform P {
     int w, h, R;
-    float sY, sC, lumaS, chromaS;
+    float sY, sYc, sCb, sCr, lumaS, chromaS;
 } p;
 
 float at(int x, int y) { return py[clamp(y, 0, p.h - 1) * p.w + clamp(x, 0, p.w - 1)]; }
@@ -20,12 +21,14 @@ void main() {
     int x = int(gl_GlobalInvocationID.x), y = int(gl_GlobalInvocationID.y);
     if (x >= p.w || y >= p.h) return;
     int q = y * p.w + x;
-    float s = p.sY / sqrt(wsum[q]), sc2 = p.sC / sqrt(wsum[q]);
-    float hY = max(1e-6, p.lumaS * s), hC = max(1e-6, p.chromaS * max(sc2, s));
+    float iw = 1.0 / sqrt(wsum[q]);
+    float s = p.sY * iw, sc = p.sYc * iw;  // sYc: the luma noise the colour weights allow for
+    float hY = max(1e-6, p.lumaS * s), hB = max(1e-6, p.chromaS * max(p.sCb * iw, sc)),
+          hR = max(1e-6, p.chromaS * max(p.sCr * iw, sc));
     float own[9];
     for (int j = -1; j <= 1; ++j)
         for (int i = -1; i <= 1; ++i) own[(j + 1) * 3 + (i + 1)] = at(x + i, y + j);
-    float sumW = 0, sumWC = 0, vy = 0, vb = 0, vr = 0, maxW = 0, maxWC = 0;
+    float sumW = 0, sumB = 0, sumR = 0, vy = 0, vb = 0, vr = 0, maxW = 0, maxB = 0, maxR = 0;
     for (int dy = -p.R; dy <= p.R; ++dy)
         for (int dx = -p.R; dx <= p.R; ++dx) {
             int xx = x + dx, yy = y + dy;
@@ -39,27 +42,31 @@ void main() {
             d2 *= 1.0 / 9.0;
             float base = max(0.0, d2 - 2.0 * s * s);
             float w = exp(-base / (hY * hY));
-            float wc = exp(-base / (hC * hC));
+            float baseC = max(0.0, d2 - 2.0 * sc * sc);
+            float wb = exp(-baseC / (hB * hB)), wr = exp(-baseC / (hR * hR));
             int pp = yy * p.w + xx;
             sumW += w;
             vy += w * py[pp];
-            sumWC += wc;
-            vb += wc * pcb[pp];
-            vr += wc * pcr[pp];
+            sumB += wb;
+            vb += wb * pcb[pp];
+            sumR += wr;
+            vr += wr * pcr[pp];
             maxW = max(maxW, w);
-            maxWC = max(maxWC, wc);
+            maxB = max(maxB, wb);
+            maxR = max(maxR, wr);
         }
     // the pixel itself weighs as much as its best match (see RestoreNodes.cpp)
-    if (maxW <= 0.0) maxW = 1.0;
-    if (maxWC <= 0.0) maxWC = 1.0;
+    if (maxW < 1e-30) maxW = 1.0;
+    if (maxB < 1e-30) maxB = 1.0;
+    if (maxR < 1e-30) maxR = 1.0;
     sumW += maxW;
     vy += maxW * py[q];
-    sumWC += maxWC;
-    vb += maxWC * pcb[q];
-    vr += maxWC * pcr[q];
+    sumB += maxB;
+    vb += maxB * pcb[q];
+    sumR += maxR;
+    vr += maxR * pcr[q];
     int n = p.w * p.h;
     o[q] = (p.lumaS > 0.0 && sumW > 0.0) ? vy / sumW : py[q];
-    bool c = p.chromaS > 0.0 && sumWC > 0.0;
-    o[n + q] = c ? vb / sumWC : pcb[q];
-    o[2 * n + q] = c ? vr / sumWC : pcr[q];
+    o[n + q] = (p.chromaS > 0.0 && sumB > 0.0) ? vb / sumB : pcb[q];
+    o[2 * n + q] = (p.chromaS > 0.0 && sumR > 0.0) ? vr / sumR : pcr[q];
 }

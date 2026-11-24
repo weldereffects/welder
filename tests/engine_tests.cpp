@@ -7602,8 +7602,93 @@ Connections:  {
         std::printf("  rms error: noisy %.4f, spatial %.4f, temporal + spatial %.4f\n", before, spatial, both);
         CHECK(spatial < before * 0.6);
         CHECK(both < before * 0.45);
+        {  // issue #78: blotchy, low-frequency noise (mostly blue) is taken out too, not just the fine grain
+            std::mt19937 rng2(11);
+            std::normal_distribution<float> n1(0, 1), fine(0, 0.02f);
+            std::vector<float> wn((size_t)W * H), lo((size_t)W * H);
+            for (auto& v : wn) v = n1(rng2);
+            const int rad = 6;  // blobs ~13 px across, unit sd
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    float s2 = 0;
+                    for (int j = -rad; j <= rad; ++j)
+                        for (int i = -rad; i <= rad; ++i) s2 += wn[(size_t)std::clamp(y + j, 0, H - 1) * W + std::clamp(x + i, 0, W - 1)];
+                    lo[(size_t)y * W + x] = s2 / (2 * rad + 1);
+                }
+            Image flat = clean;  // the same noise over a flat grey too (a sky, a wall)
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    float* p = flat.px(x, y);
+                    p[0] = 0.4f, p[1] = 0.36f, p[2] = 0.28f;
+                }
+            ExrWriteOptions o;
+            o.type = ExrPixelType::Float;
+            for (const Image* base : {&clean, &flat}) {
+                Image b = *base;
+                for (int y = 0; y < H; ++y)
+                    for (int x = 0; x < W; ++x) {
+                        float* p = b.px(x, y);
+                        const float l = lo[(size_t)y * W + x];
+                        p[0] += 0.01f * l + fine(rng2);
+                        p[1] += 0.01f * l + fine(rng2);
+                        p[2] += 0.05f * l + fine(rng2);
+                    }
+                writeExr((dir / (base == &clean ? "blotchy.exr" : "blotchy_flat.exr")).string(), b, fmt, o);
+            }
+            // the colour error that's left, blurred (its low-frequency part): (B - G) against the clean image
+            auto lowErr = [&](const ImagePtr& im, const Image& ref) {
+                double s = 0;
+                long n = 0;
+                for (int y = 12; y < H - 12; y += 2)
+                    for (int x = 12; x < W - 12; x += 2) {
+                        double m = 0;
+                        for (int j = -4; j <= 4; ++j)
+                            for (int i = -4; i <= 4; ++i)
+                                m += (px(im, x + i, y + j, "B") - px(im, x + i, y + j, "G")) - (ref.at(x + i, y + j, 2) - ref.at(x + i, y + j, 1));
+                        m /= 81;
+                        s += m * m;
+                        ++n;
+                    }
+                return std::sqrt(s / n);
+            };
+            for (const char* file : {"blotchy.exr", "blotchy_flat.exr"}) {
+                const Image& ref = std::string(file) == "blotchy.exr" ? clean : flat;
+                json bn = json::array({
+                    {{"name", "R"}, {"type", "Read"}, {"params", {{"file", (dir / file).string()}}}},
+                    {{"name", "Multi"}, {"type", "Denoise"}, {"inputs", {"R"}}, {"params", {{"temporal_frames", 0}}}},
+                    {{"name", "Strong"}, {"type", "Denoise"}, {"inputs", {"R"}}, {"params", {{"temporal_frames", 0}, {"low_frequency", 2}}}},
+                    {{"name", "Single"}, {"type", "Denoise"}, {"inputs", {"R"}}, {"params", {{"temporal_frames", 0}, {"scales", 0}}}},
+                    // the old pass with everything turned up (the report)
+                    {{"name", "Pushed"}, {"type", "Denoise"}, {"inputs", {"R"}},
+                     {"params", {{"temporal_frames", 0}, {"scales", 0}, {"luma", 4}, {"chroma", 6}, {"spatial_size", 12}, {"detail", 0}}}},
+                });
+                auto cb = comp(bn, W, H);
+                auto in = render(*cb, "R", 1), mu = render(*cb, "Multi", 1), st = render(*cb, "Strong", 1), si = render(*cb, "Single", 1),
+                     pu = render(*cb, "Pushed", 1);
+                const double eIn = lowErr(in, ref), eMu = lowErr(mu, ref), eSt = lowErr(st, ref), eSi = lowErr(si, ref), ePu = lowErr(pu, ref);
+                std::printf("  %s: low-frequency colour error: noisy %.4f, one size %.4f (all turned up %.4f), multi-scale %.4f (low frequency 2: %.4f)\n",
+                            file, eIn, eSi, ePu, eMu, eSt);
+                if (&ref == &clean)
+                    std::printf("  %s: rms: noisy %.4f, one size %.4f, multi-scale %.4f\n", file, rmse(in), rmse(si), rmse(mu));
+                if (&ref == &flat) {
+                    CHECK(eMu < eIn * 0.35);
+                    CHECK(eMu < ePu * 0.6);
+                } else {
+                    CHECK(eMu < eSi * 0.75);
+                    CHECK(eSt < eSi * 0.5);
+                    CHECK(rmse(mu) < rmse(si));
+                }
+                // low frequency 0: exactly the old single-size pass
+                cb->find("Multi")->params.data["low_frequency"] = 0;
+                cb->find("Multi")->paramsChanged();
+                auto off = render(*cb, "Multi", 1);
+                double worst = 0;
+                for (size_t i = 0; i < off->data.size(); ++i) worst = std::max(worst, (double)std::fabs(off->data[i] - si->data[i]));
+                CHECK(worst < 1e-6);
+            }
+        }
         if (gpu::available()) {  // the GPU's spatial pass matches the CPU's
-            c->find("DNs")->params.data["spatial_size"] = 6;  // big enough to be sent to the GPU
+            c->find("DNs")->params.data["spatial_size"] = 8;  // big enough to be sent to the GPU (full size and 1/2)
             c->find("DNs")->paramsChanged();
             gpu::setEnabled(false);
             auto cpu = render(*c, "DNs", 3);
