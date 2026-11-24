@@ -391,6 +391,8 @@ void App::loadSettings() {
         if (in) {
             json j = json::parse(in);
             diskCacheGB = j.value("disk_cache_gb", diskCacheGB);
+            pythonInterpreter = j.value("python_interpreter", pythonInterpreter);
+            runInitScript = j.value("python_run_init", runInitScript);
             playbackCacheGB = j.value("playback_cache_gb", playbackCacheGB);
             askMatchProject = j.value("ask_match_project", askMatchProject);
             rightAnglePipes = j.value("graph_right_angle_pipes", rightAnglePipes);
@@ -449,6 +451,8 @@ void App::saveSettings() {
     } catch (...) {
     }
     j["disk_cache_gb"] = diskCacheGB;
+    j["python_interpreter"] = pythonInterpreter;
+    j["python_run_init"] = runInitScript;
     j["playback_cache_gb"] = playbackCacheGB;
     j["ask_match_project"] = askMatchProject;
     j["graph_right_angle_pipes"] = rightAnglePipes;
@@ -575,6 +579,13 @@ void App::restore(const std::string& snap) {
 
 void App::checkpoint() {
     undo_.push_back(snapshot());
+    if (undo_.size() > 100) undo_.erase(undo_.begin());
+    redo_.clear();
+    dirty = true;
+}
+
+void App::pushUndoState(const std::string& before) {
+    undo_.push_back(before);
     if (undo_.size() > 100) undo_.erase(undo_.begin());
     redo_.clear();
     dirty = true;

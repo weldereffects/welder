@@ -8,6 +8,8 @@ works, with whatever packages it has (numpy, PySide6, your pipeline's libraries)
 welder python build_shot.py --comp shot.weld 1001 1100
 ```
 
+In the editor, **Scripts › Script Editor** runs Python on the open comp (see [In the editor](#in-the-editor)).
+
 `--comp` opens a comp first (the script can also open or make its own). Everything after the
 script's name is the script's own `sys.argv[1:]`; `--` passes on arguments that look like
 Welder's own. The script's exit code is `welder python`'s.
@@ -33,6 +35,26 @@ comp.save("shot_v002.weld")
 Knob values are the comp file's ([FILE_FORMAT.md](FILE_FORMAT.md)): numbers, lists for vectors
 and colours, strings for files and choices.
 
+## In the editor
+
+* **Scripts › Script Editor**: type a script and press **Run** (Ctrl+Enter). With lines selected,
+  only those run. What the script prints, and its traceback if it fails, appear underneath.
+  **Stop** ends a script that hangs. The text is kept between sessions.
+* **A run is one undo step**: Ctrl+Z after a script takes back everything it changed. A script that
+  opens or starts another comp can't be undone (as File › Open can't).
+* **Scripts menu**: every `.py` in the scripts folder (**Scripts › Open Scripts Folder**:
+  `~/.config/welder/scripts`, `%APPDATA%\Welder\scripts` on Windows), with a submenu per
+  subfolder, plus the folders in `WELDER_SCRIPT_PATH` (separated by `:`, or `;` on Windows).
+  Files whose names start with `_` are left out, so they can be modules the others import.
+* **`init.py`** in the settings folder runs when the editor starts (Edit › Preferences › Python
+  turns that off).
+* **Which Python**: Edit › Preferences › Python (a venv's python works), else `$WELDER_PYTHON`,
+  else the one that comes with Welder, else `python3` from `PATH`.
+* `welder_ui shot.weld --run-script setup.py` runs a script once the comp is open.
+
+While a script edits the comp, the viewer waits; its renders run beside the editor without
+holding it up. A script can open another comp only when the open one has no unsaved changes.
+
 ## The module
 
 | Call | What it does |
@@ -43,6 +65,9 @@ and colours, strings for files and choices.
 | `welder.message(text)` | A status line (printed on the command line) |
 | `welder.batch()` | Context manager: send knob changes and connections in one round trip |
 | `welder.connected()` | True when Welder started this Python |
+| `welder.selected()`, `welder.select(nodes, add=False)` | The node graph's selection (editor only) |
+| `welder.frame()`, `welder.set_frame(f)` | The editor's current frame (editor only) |
+| `welder.view(node)`, `welder.viewed()`, `welder.show_panel(node)` | The active viewer, a properties panel (editor only) |
 
 **Comp**: `nodes(type=None, group=None)`, `node(name)` or `comp[name]`, `name in comp`,
 iteration, `create(type, name=None, inputs=(), position=None, group=None, **knobs)`,
@@ -102,11 +127,12 @@ commands are `app.info`, `message`, `comp.open`, `comp.new`, `comp.save`, `comp.
 `comp.set`, `comp.nodes`, `comp.types`, `node.create`, `node.delete`, `node.rename`,
 `node.info`, `node.set_input`, `node.set_position`, `knob.list`, `knob.get`, `knob.set`,
 `knob.set_key`, `knob.set_expression`, `knob.keys`, `knob.clear_animation`, `render.info`,
-`render.sample`, `render.image`, `render.write` and `batch`; `src/core/ScriptApi.cpp` has their
-arguments.
+`render.sample`, `render.image`, `render.write` and `batch`, and in the editor `editor.selected`,
+`editor.select`, `editor.frame`, `editor.set_frame`, `editor.view`, `editor.viewed` and
+`editor.show_panel`; `src/core/ScriptApi.cpp` and `src/ui/ScriptRunner.cpp` have their
+arguments. The editor passes the address in a file rather than in the environment
+(`tools/python/_welder_run.py`), so the token never shows on a command line.
 
 ## Coming next
 
-The editor's Script Editor panel (run, stop, output; one undo step per run), `init.py` at
-startup, a Scripts menu, callbacks (comp opened / saved, knob changed) and Python buttons on
-nodes.
+Callbacks (comp opened / saved, knob changed) and Python buttons on nodes.

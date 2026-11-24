@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include "Panels.h"
+#include "ScriptRunner.h"
 #include "core/NetPath.h"
 #include "PanelKit.h"
 #include "core/CacheDir.h"
@@ -536,6 +537,10 @@ void drawMenuBar(App& app, UiState& ui) {
         if (ImGui::MenuItem("Reset Workspace", "Shift+F12")) ui.resetWorkspace = true;
         ImGui::Separator();
         // bring a panel to the front (a tab hidden behind others, or a floating one)
+        if (ImGui::MenuItem("Script Editor")) {
+            ui.showScriptEditor = true;
+            ImGui::SetWindowFocus("Script Editor");
+        }
         for (const char* w : {"Viewer", "Node Graph", "Properties", "Curve Editor", "Dope Sheet", "Messages", "Timeline", "Nodes"})
             if (ImGui::MenuItem(w)) {
                 if (!ui.maximized.empty() && ui.maximized != w) ui.maximized.clear();
@@ -543,6 +548,7 @@ void drawMenuBar(App& app, UiState& ui) {
             }
         ImGui::EndMenu();
     }
+    drawScriptsMenu(app, ui);
     if (ImGui::BeginMenu("Help")) {
         if (ImGui::MenuItem("User Manual")) {
             // the manual next to the app (packages), inside a macOS app, or beside a dev build
@@ -988,6 +994,32 @@ static void drawPreferences(App& app, UiState& ui) {
                       "File > Convert network drive paths to UNC does it for a whole script.")) {
         netpath::enabled() = app.uncPaths;
         app.saveSettings();
+    }
+    ImGui::SeparatorText("Python");
+    {
+        kit::rowLabel("interpreter", "The Python that runs scripts (the Script Editor, the Scripts menu, init.py): a path to\n"
+                                     "python / python.exe, for instance a venv's. Empty: WELDER_PYTHON, else the Python that\n"
+                                     "comes with Welder, else python3 from PATH. Any Python 3.8 or newer works.");
+        static char buf[1024];
+        if (ImGui::GetActiveID() != ImGui::GetID("##python")) std::snprintf(buf, sizeof buf, "%s", app.pythonInterpreter.c_str());
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 26);
+        if (ImGui::InputTextWithHint("##python", "automatic", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue) ||
+            ImGui::IsItemDeactivatedAfterEdit()) {
+            app.pythonInterpreter = buf;
+            app.saveSettings();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##python"))
+            openFileDialog(ui, "Python interpreter", false, {}, [&app](const std::string& p) {
+                app.pythonInterpreter = p;
+                std::snprintf(buf, sizeof buf, "%s", p.c_str());
+                app.saveSettings();
+            });
+        const std::string found = ScriptRunner::interpreter(app);
+        ImGui::TextDisabled("%s", found.empty() ? "no Python found" : ("uses: " + found).c_str());
+        if (kit::checkbox("Run init.py at startup", &app.runInitScript,
+                          ("Run " + (fs::path(brand::configDir()) / "init.py").string() + " when Welder starts, if it exists").c_str()))
+            app.saveSettings();
     }
     ImGui::SeparatorText("Updates");
     ImGui::BeginDisabled(update::disabledByEnv());
@@ -1636,6 +1668,7 @@ void drawDialogs(App& app, UiState& ui) {
     drawMatchProject(app, ui);
     drawMetadata(app, ui);
     drawPerformance(app, ui);
+    drawScriptEditor(app, ui);
     drawPreferences(app, ui);
     drawUpdateDialog(app, ui);
     if (!ui.lastCrash.empty() && !ImGui::IsPopupOpen("Welder closed unexpectedly")) ImGui::OpenPopup("Welder closed unexpectedly");

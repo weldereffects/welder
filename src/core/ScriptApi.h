@@ -36,6 +36,9 @@ public:
     virtual void setComp(std::unique_ptr<Comp> c) = 0;     // comp.open / comp.new
     // comp.save: writes the comp to `path` (made absolute) and makes it the comp's file.
     virtual void saveComp(const std::string& path);
+    // comp.open / comp.new (by default: load or make one and setComp). Returns load warnings.
+    virtual json openComp(const std::string& path);
+    virtual void newComp(int width, int height);
     virtual Engine& engine() = 0;                          // for renders and pixel reads
     // After a command changed the comp (n: the node whose params changed, or null for the graph).
     virtual void changed(Node* n) { (void)n; }
@@ -60,6 +63,11 @@ public:
     // Handle one request line and return the response line.
     std::string handleLine(const std::string& line);
     static int protocolVersion() { return 1; }
+    // What a command does, for hosts that run commands on more than one thread (the editor):
+    // a read (no change), a render (reads, can take long), an edit of the comp, or a command
+    // that replaces the comp (comp.open, comp.new).
+    enum class Kind { Read, Render, Edit, Replace };
+    static Kind kind(const std::string& method);
 
 private:
     ScriptHost& host_;
@@ -80,11 +88,14 @@ public:
     std::string address() const;  // "<port>:<token>", the WELDER_API value
     // Serve requests through `api` while keepGoing() is true (checked a few times a second).
     void serve(ScriptApi& api, const std::function<bool()>& keepGoing);
+    // The same with a handler of its own: a request line in, the response line out.
+    using Handler = std::function<std::string(const std::string&)>;
+    void serve(const Handler& handle, const std::function<bool()>& keepGoing);
     void stop();
 
 private:
     ScriptServer() = default;
-    bool serveConnection(ScriptApi& api, LocalConnection& c, const std::function<bool()>& keepGoing);
+    bool serveConnection(const Handler& handle, LocalConnection& c);
     std::unique_ptr<LocalServer> srv_;
     std::string token_;
     std::atomic<bool> stop_{false};

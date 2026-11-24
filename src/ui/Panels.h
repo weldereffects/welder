@@ -462,6 +462,7 @@ struct UiState {
     std::string lastCrash;     // the report the previous run left when it crashed (shown once)
     bool showPerf = false;     // Viewer > Performance
     bool showMetadata = false; // Viewer > Metadata: the viewed frame's metadata (#99)
+    bool showScriptEditor = false;  // Scripts > Script Editor (ScriptEditor.cpp)
     float frameMs[240] = {};   // the UI's work per frame, the last 240 frames (a ring)
     int frameIdx = 0;
     double frameStamp[240] = {};  // when each was drawn (s)
@@ -527,6 +528,9 @@ void drawProperties(App& app, UiState& ui);
 void openFloatPanel(App& app, UiState& ui, const std::string& name);  // issue #25
 void drawMessages(App& app, UiState& ui);
 void drawDialogs(App& app, UiState& ui);
+// Python (ScriptEditor.cpp): the Script Editor window and the Scripts menu.
+void drawScriptEditor(App& app, UiState& ui);
+void drawScriptsMenu(App& app, UiState& ui);
 
 // Shared actions
 // I / O: set the in / out point at the current frame, or take it off when it is already there.

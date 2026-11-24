@@ -31,6 +31,7 @@ import threading
 __all__ = [
     "WelderError", "Comp", "Node", "Knob",
     "comp", "open", "new", "message", "batch", "info", "connected",
+    "selected", "select", "frame", "set_frame", "view", "viewed", "show_panel",
 ]
 
 
@@ -157,6 +158,47 @@ def info():
 def message(text):
     """Show a line in Welder's status bar (printed on the command line)."""
     _call("message", {"text": str(text)}, defer=True)
+
+
+# ---------------------------------------------------------------------- the editor
+# (These need the Welder editor: a script run with `welder python` gets a RuntimeError.)
+
+def selected():
+    """The nodes selected in the node graph."""
+    return [Node(n) for n in _call("editor.selected")]
+
+
+def select(nodes, add=False):
+    """Select these nodes in the node graph (add=True keeps the current selection)."""
+    if isinstance(nodes, (str, Node)):
+        nodes = [nodes]
+    _call("editor.select", {"nodes": [_name(n) for n in nodes], "add": bool(add)})
+
+
+def frame():
+    """The editor's current frame."""
+    return _call("editor.frame")
+
+
+def set_frame(f):
+    """Go to frame f."""
+    _call("editor.set_frame", {"frame": float(f)})
+
+
+def view(node):
+    """Show a node in the active viewer."""
+    _call("editor.view", {"node": _name(node)})
+
+
+def viewed():
+    """The node the active viewer shows (None when none)."""
+    n = _call("editor.viewed")
+    return Node(n) if n else None
+
+
+def show_panel(node):
+    """Open a node's properties panel."""
+    _call("editor.show_panel", {"node": _name(node)})
 
 
 # ---------------------------------------------------------------------- comps

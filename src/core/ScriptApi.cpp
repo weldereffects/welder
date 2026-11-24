@@ -58,6 +58,33 @@ void ScriptHost::saveComp(const std::string& path) {
     c->baseDir = fs::path(abs).parent_path();
 }
 
+json ScriptHost::openComp(const std::string& path) {
+    std::unique_ptr<Comp> c;
+    try {
+        c = Comp::loadFile(path);
+    } catch (const std::exception& e) {
+        throw ScriptError("OSError", "cannot open " + path + ": " + e.what());
+    }
+    json warnings = c->warnings;
+    setComp(std::move(c));
+    return warnings;
+}
+
+void ScriptHost::newComp(int width, int height) {
+    auto c = Comp::fromJson(json::object({{"strata", 1}, {"nodes", json::array()}}), fs::current_path());
+    if (width > 0) c->format.width = width;
+    if (height > 0) c->format.height = height;
+    setComp(std::move(c));
+}
+
+ScriptApi::Kind ScriptApi::kind(const std::string& m) {
+    if (m.rfind("render.", 0) == 0) return Kind::Render;
+    if (m == "comp.open" || m == "comp.new") return Kind::Replace;
+    static const std::set<std::string> reads = {"app.info", "comp.info", "comp.nodes", "comp.types", "node.info",
+                                                "knob.list", "knob.get", "knob.keys"};
+    return reads.count(m) ? Kind::Read : Kind::Edit;
+}
+
 // ------------------------------------------------------------ helpers
 
 namespace {
@@ -223,23 +250,9 @@ json ScriptApi::call(const std::string& method, const json& p) {
         host_.message(str(p, "text"));
         return nullptr;
     }
-    if (method == "comp.open") {
-        const std::string path = str(p, "path");
-        std::unique_ptr<Comp> c;
-        try {
-            c = Comp::loadFile(path);
-        } catch (const std::exception& e) {
-            fail("OSError", "cannot open " + path + ": " + e.what());
-        }
-        json warnings = c->warnings;
-        host_.setComp(std::move(c));
-        return {{"warnings", warnings}};
-    }
+    if (method == "comp.open") return {{"warnings", host_.openComp(str(p, "path"))}};
     if (method == "comp.new") {
-        auto c = Comp::fromJson(json::object({{"strata", 1}, {"nodes", json::array()}}), fs::current_path());
-        if (p.contains("width")) c->format.width = (int)num(p, "width", 1920);
-        if (p.contains("height")) c->format.height = (int)num(p, "height", 1080);
-        host_.setComp(std::move(c));
+        host_.newComp((int)num(p, "width", 0), (int)num(p, "height", 0));
         return nullptr;
     }
     if (method == "comp.save") {
@@ -652,15 +665,18 @@ void ScriptServer::stop() {
 }
 
 void ScriptServer::serve(ScriptApi& api, const std::function<bool()>& keepGoing) {
+    serve([&api](const std::string& line) { return api.handleLine(line); }, keepGoing);
+}
+
+void ScriptServer::serve(const Handler& handle, const std::function<bool()>& keepGoing) {
     while (!stop_ && keepGoing()) {
         auto c = srv_->accept(100);
         if (!c) continue;
-        serveConnection(api, *c, keepGoing);
+        serveConnection(handle, *c);  // (until the script closes it or exits)
     }
 }
 
-bool ScriptServer::serveConnection(ScriptApi& api, LocalConnection& c, const std::function<bool()>& keepGoing) {
-    (void)keepGoing;  // (a connection ends when the script closes it or exits)
+bool ScriptServer::serveConnection(const Handler& handle, LocalConnection& c) {
     std::string line;
     // the first request proves the client was started by us
     if (!c.readLine(line, 1 << 16)) return false;
@@ -677,7 +693,7 @@ bool ScriptServer::serveConnection(ScriptApi& api, LocalConnection& c, const std
         return false;
     }
     while (!stop_ && c.readLine(line))
-        if (!c.writeLine(api.handleLine(line))) break;
+        if (!c.writeLine(handle(line))) break;
     return true;
 }
 

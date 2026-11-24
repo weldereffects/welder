@@ -19,6 +19,11 @@ def check(cond, what):
     print("ok  ", what)
 
 
+def names(c):
+    # (the editor gives every comp a Viewer: leave it out)
+    return [n.name for n in c.nodes() if n.type != "Viewer"]
+
+
 def close(a, b, eps=1e-4):
     return abs(a - b) <= eps
 
@@ -33,7 +38,7 @@ check(comp.frame_range == (1, 10) and comp.fps == 25 and comp.width == 320, "com
 
 const = comp.create("Constant", name="Flat", color=[0.5, 0.25, 0.125, 1])
 grade = comp.create("Grade", inputs=[const], gain=[2, 2, 2, 1])
-check([n.name for n in comp] == ["Flat", "Grade1"], "create and list nodes")
+check(names(comp) == ["Flat", "Grade1"], "create and list nodes")
 check(grade.type == "Grade" and grade.inputs == [const] and const.outputs == [grade], "inputs and outputs")
 check("Flat" in comp and "Nope" not in comp, "membership")
 
@@ -85,7 +90,7 @@ check(res["frames"] == 2 and os.path.exists(os.path.join(out, "py_api.0002.exr")
 
 path = comp.save(os.path.join(out, "py_api.weld"))
 comp = welder.open(path)
-check(comp.path == path and [n.name for n in comp] == ["Flat", "Grade1", "Soft", "Write1"], "save and reopen")
+check(comp.path == path and names(comp) == ["Flat", "Grade1", "Soft", "Write1"], "save and reopen")
 check(close(comp["Grade1"]["gain"].get(3)[0], 2.0), "keys survive a save")
 
 

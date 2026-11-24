@@ -151,6 +151,13 @@ public:
     uint64_t compRevision() const { return compRevision_; }
     // Record the current state for undo (call at the start of a gesture).
     void checkpoint();
+    // The same in two halves, for changes that come in over time (a Python script): the state
+    // before, then once it is over, one undo step back to it.
+    std::string undoState() const { return snapshot(); }
+    void pushUndoState(const std::string& before);
+    // Renders reading the comp give way at the next applyEdits (an edit made outside the edit queue,
+    // a script's, waits for the lock), without marking the comp modified.
+    void yieldComp() { viewEdit([](Comp&) {}); }
     void undo();
     void redo();
     bool canUndo() const { return !undo_.empty(); }
@@ -256,6 +263,8 @@ public:
     double diskCacheMinMs = 120;
     void setDiskCacheGB(double gb);  // 0 turns it off
     double diskCacheGB = 20;         // the setting (STRATA_DISK_CACHE_GB overrides it)
+    std::string pythonInterpreter;   // Preferences > Python: the Python scripts run with ("" = found automatically)
+    bool runInitScript = true;       // run <config>/init.py when the editor starts
 
     // ------------------------------------------------------------ settings
     std::string settingsPath;  // settings.json in the config folder

@@ -2,8 +2,11 @@
 //
 //   welder_ui [comp.weld | script.nk] [--frame N] [--view Node] [--select Node]
 //             [--props Node,Node] [--size 1600x900] [--screenshot out.png] [--ofx-path dir]
-//             [--graph-level Group]
+//             [--graph-level Group] [--run-script script.py [--quit-after-script]]
 //
+// --run-script runs a Python script on the comp once the editor is up (as Scripts > Run Script
+// File would); --quit-after-script then undoes it (checking it was one undo step), reports on
+// stdout and quits (tools/script_editor_test.sh).
 // --screenshot renders the window once the viewer has finished rendering,
 // writes a PNG and exits (used for automated checks).
 // --idscan <px> instead sweeps the mouse over the window in <px> steps and
@@ -23,6 +26,7 @@
 
 #include "GL.h"
 #include "Panels.h"
+#include "ScriptRunner.h"
 #include "nodes/Scene3D.h"
 #include "Tablet.h"
 #include "core/Crash.h"
@@ -54,7 +58,8 @@ using namespace strata::ui;
 namespace {
 
 struct Options {
-    std::string file, view, select, props, screenshot, ofxPath, level;
+    std::string file, view, select, props, screenshot, ofxPath, level, runScript;
+    bool quitAfterScript = false;
     double frame = -1;
     int width = 1600, height = 960;
     bool resetWorkspace = false;  // --reset-workspace: start with the default layout (forgets the saved one)
@@ -74,6 +79,8 @@ Options parse(int argc, char** argv) {
         else if (a == "--select") o.select = next();
         else if (a == "--props") o.props = next();
         else if (a == "--graph-level") o.level = next();
+        else if (a == "--run-script") o.runScript = next();
+        else if (a == "--quit-after-script") o.quitAfterScript = true;
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--reset-workspace" || a == "--reset-layout") o.resetWorkspace = true;
         else if (a == "--safe-mode" || a == "--safe") o.safeMode = true;
@@ -447,6 +454,8 @@ int main(int argc, char** argv) {
     app.applyEdits();
     if (opt.file.empty() && opt.screenshot.empty() && !opt.smoke) app.checkAutosave();  // an untitled comp left by a crash
     if (opt.smoke) smoke::start(opt.smokeItems);
+    if (interactive && !opt.smoke && opt.runScript.empty()) ui::ScriptRunner::instance().runStartup(app);  // <config>/init.py
+    bool scriptStarted = false;  // --run-script
     ui.updateAutoCheck = interactive && !opt.smoke;  // (Shell.cpp: at most every 12 hours, if allowed)
     if (const char* tr = std::getenv("STRATA_TEST_RECOVERY"); tr && *tr && !opt.screenshot.empty())  // screenshots: the offer
         app.recovery = {tr, app.compPath, 7};
@@ -504,7 +513,7 @@ int main(int argc, char** argv) {
         // when something must advance every frame.
         // Keys pressed faster than frames are trickled in one per frame by ImGui; keep
         // polling while any are queued so a burst of hotkeys is never held back.
-        if (app.playing || app.editsPending() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
+        if (app.playing || app.editsPending() || ui::ScriptRunner::instance().running() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
             glfwPollEvents();
         else glfwWaitEventsTimeout(app.rendering() ? 0.05 : 0.5);
         const auto frameWorkStart = std::chrono::steady_clock::now();  // (WELDER_DEBUG_FRAMES)
@@ -1834,6 +1843,35 @@ int main(int argc, char** argv) {
         // resolution if it must; letting go renders full quality
         app.setGesture(ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle));
         app.applyEdits();
+        ui::ScriptRunner::instance().pump(app);  // a Python script's requests (ScriptRunner.h)
+        if (!opt.runScript.empty() && !scriptStarted) {
+            scriptStarted = true;
+            ui.showScriptEditor = true;
+            if (!ui::ScriptRunner::instance().runFile(app, opt.runScript) && opt.quitAfterScript) {
+                std::printf("SCRIPT could not start\n%s", ui::ScriptRunner::instance().output().c_str());
+                ui.requestQuit = true;
+            }
+        } else if (scriptStarted && opt.quitAfterScript && ui::ScriptRunner::instance().running()) {
+            // WELDER_TEST_SCRIPT_STOP=<s>: press Stop after s seconds (the test of a script that hangs)
+            static const double stopAfter = std::getenv("WELDER_TEST_SCRIPT_STOP") ? std::atof(std::getenv("WELDER_TEST_SCRIPT_STOP")) : 0;
+            static const auto t0 = std::chrono::steady_clock::now();
+            if (stopAfter > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > stopAfter)
+                ui::ScriptRunner::instance().stop();
+        } else if (scriptStarted && opt.quitAfterScript && !ui::ScriptRunner::instance().running() && !ui.requestQuit) {
+            const size_t before = app.comp ? app.comp->nodes.size() : 0;
+            const bool couldUndo = app.canUndo();
+            app.undo();
+            for (int i = 0; i < 500 && app.editsPending(); ++i) {  // (a render may hold the comp for a moment)
+                app.applyEdits();
+                if (app.editsPending()) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::printf("SCRIPT exit=%d nodes=%zu undo=%d after_undo_nodes=%zu dirty=%d\n", ui::ScriptRunner::instance().lastExitCode(),
+                        before, (int)couldUndo, app.comp ? app.comp->nodes.size() : 0, (int)app.dirty);
+            std::printf("SCRIPT output:\n%s\n", ui::ScriptRunner::instance().output().c_str());
+            std::fflush(stdout);
+            app.dirty = false;
+            ui.requestQuit = true;
+        }
         mark("applying edits");
 
         int fbw, fbh;
@@ -1986,6 +2024,7 @@ int main(int argc, char** argv) {
     }
 
     startupDone();
+    ui::ScriptRunner::instance().shutdown(app);  // a script still running is stopped
     ml::releaseWorker();  // the last Welder to quit stops the ML worker (it holds the models' memory)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -441,6 +441,8 @@ if(STRATA_BUILD_UI)
     src/ui/NodeGraph.cpp
     src/ui/Properties.cpp
     src/ui/Shell.cpp
+    src/ui/ScriptRunner.cpp
+    src/ui/ScriptEditor.cpp
     src/ui/Timeline.cpp
     src/ui/PanelKit.cpp
     src/ui/FileBrowser.cpp
