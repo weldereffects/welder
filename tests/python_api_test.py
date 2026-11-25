@@ -44,6 +44,8 @@ check("Flat" in comp and "Nope" not in comp, "membership")
 
 px = grade.sample(10, 10)
 check(close(px["R"], 1.0) and close(px["G"], 0.5) and close(px["B"], 0.25), "sample through Grade")
+ds = grade.deep_samples(10, 10)
+check(len(ds) == 1 and close(ds[0]["R"], 1.0) and ds[0]["Z"] == float("inf") and ds[0]["ZBack"] == float("inf"), "deep samples of a flat node: one, infinitely far")
 
 grade["mix"].set_key(1, 0.0)
 grade["mix"].set_key(9, 1.0)

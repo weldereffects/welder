@@ -1,4 +1,5 @@
 #include "ScriptApi.h"
+#include "Deep.h"
 
 #include <algorithm>
 #include <chrono>
@@ -663,6 +664,22 @@ json ScriptApi::call(const std::string& method, const json& p) {
         json vals = json::array();  // (a list, in channel order: a JSON object would sort them)
         for (int c = 0; c < img->nch(); ++c) vals.push_back(img->at(x, y, c));
         return {{"channels", img->channels}, {"values", vals}};
+    }
+    if (method == "render.deep_samples") {  // one pixel's deep samples (a flat node: one sample)
+        Node* n = node(p);
+        Engine& e = host_.engine();
+        const double f = num(p, "frame", comp().firstFrame);
+        const int x = (int)std::floor(num(p, "x", 0)), y = (int)std::floor(num(p, "y", 0));
+        e.resetCancel();
+        DeepPtr d = e.requestDeep(n, f, Box(x, y, x + 1, y + 1));
+        json samples = json::array();
+        const int nc = d->nch();
+        for (int k = 0; k < d->count(x, y); ++k) {
+            json v = json::array();
+            for (int c = 0; c < nc; ++c) v.push_back(d->sample(x, y)[k * nc + c]);
+            samples.push_back(v);
+        }
+        return {{"channels", d->channels}, {"samples", samples}, {"deep", n->isDeep()}};
     }
     if (method == "render.image") {
         Node* n = node(p);

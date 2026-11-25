@@ -110,7 +110,7 @@ rpc("notifications/initialized", notify=True)
 check(rpc("ping")["result"] == {}, "ping")
 
 tools = {t["name"]: t for t in rpc("tools/list")["result"]["tools"]}
-for t in ["get_comp", "create_node", "connect", "set_knobs", "view_image", "sample_pixels", "render", "save_comp", "fill_track_gaps"]:
+for t in ["get_comp", "create_node", "connect", "set_knobs", "view_image", "sample_pixels", "sample_deep", "render", "save_comp", "fill_track_gaps"]:
     check(t in tools and tools[t]["inputSchema"]["type"] == "object", "tool " + t)
 check(("undo" in tools) == editor and ("show_in_editor" in tools) == editor, "editor tools only in the editor")
 check(tools["get_comp"]["annotations"]["readOnlyHint"] and not tools["create_node"]["annotations"]["readOnlyHint"],
@@ -133,6 +133,10 @@ check(grade["inputs"] == ["Flat"] and grade["position"][1] > flat["position"][1]
 px, _ = call("sample_pixels", node=grade["name"], points=[[10, 10], [300, 170]])
 v = px["samples"][0]["values"]
 check(close(v["R"], 1.0) and close(v["G"], 0.5) and close(v["B"], 0.25), "sample_pixels through the Grade")
+dz, _ = call("create_node", type="DeepFromImage", inputs=[grade["name"]], knobs={"z_from": "constant", "z": 4, "volume": 1})
+ds, _ = call("sample_deep", node=dz["name"], x=10, y=10)
+check(ds["deep"] and len(ds["samples"]) == 1 and close(ds["samples"][0]["Z"], 4) and close(ds["samples"][0]["ZBack"], 5), "sample_deep")
+call("delete_nodes", nodes=[dz["name"]])
 
 # a Tracker whose second track was lost for frames 3-4: filled from the first
 keys = [[f, 10.0 + 2 * f, 20.0, 0.99, 1 if f == 1 else 0] for f in range(1, 7)]

@@ -2036,6 +2036,14 @@ std::vector<NodeDef> build() {
                  {Fmt("format", "output format"),
                   Width(C("resize", "resize type", "width", {"none", "width", "height", "fit", "fill", "distort"}), 90), B("center", "center", true)},
                  "Fits deep samples to another format (each pixel takes the samples under its centre)."});
+    d.push_back({"DeepSample", "Deep",
+                 {XY("pos", "position", json::array({0, 0}), 0, 4096), InfoRow("metadata", "")},
+                 "Lists the deep samples of one pixel (depth, colour, alpha and how much of each shows)."});
+    d.push_back({"DeepToPoints", "Deep",
+                 {Tip(I("density", "every n pixels", 2, 1, 16), "1: a point for every sample of every pixel; 2: every other pixel..."),
+                  F("alpha_threshold", "alpha threshold", 0.01, 0, 1), I("max_points", "max points", 500000, 1000, 5000000),
+                  InfoRow("status", "")},
+                 "Shows deep samples as a point cloud in the 3D viewer, placed through the camera input."});
     d.push_back({"DeepWrite", "Deep",
                  {Width(C("channels", "channels", "all", {"all", "rgba"}), 90), File("file", "file"),
                   Width(CS("colorspace", "Output Transform", "default", {"default", "working"}), 200),

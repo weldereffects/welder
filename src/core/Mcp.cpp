@@ -373,6 +373,25 @@ const std::vector<Tool>& tools() {
              }
              return json{{"node", n}, {"frame", f}, {"samples", out}};
          }},
+        {"sample_deep", "Read deep samples",
+         "Every deep sample (colour, alpha, Z front and ZBack back depth, as distances; null = infinitely far) of one "
+         "pixel [x, y] of a node, front to back. A deep node (DeepRead, DeepMerge, ScanlineRender...) gives all its samples; a flat node gives "
+         "one sample per pixel.",
+         R"J({"type":"object","properties":{"node":{"type":"string"},"frame":{"type":"number"},"x":{"type":"number"},"y":{"type":"number"}},
+            "required":["node","x","y"]})J",
+         Kind::Render, false,
+         [](ScriptApi& api, const json& a, bool) {
+             const std::string n = sarg(a, "node");
+             const double f = frameArg(api, a);
+             json r = api.call("render.deep_samples", {{"node", n}, {"frame", f}, {"x", a.value("x", 0.0)}, {"y", a.value("y", 0.0)}});
+             json out = json::array();
+             for (auto& smp : r["samples"]) {
+                 json v = json::object();
+                 for (size_t c = 0; c < r["channels"].size(); ++c) v[r["channels"][c].get<std::string>()] = smp[c];
+                 out.push_back(v);
+             }
+             return json{{"node", n}, {"frame", f}, {"deep", r["deep"]}, {"samples", out}};
+         }},
         {"render", "Render Write nodes",
          "Render Write nodes to their files: `writes` (default: every enabled Write) over `frames` (\"1001-1100\", "
          "\"1-100x2\", \"1,5,9\"; default: the comp's range).",

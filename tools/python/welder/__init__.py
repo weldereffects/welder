@@ -601,6 +601,13 @@ class Node:
         r = _call("render.sample", _frame({"node": self._name, "x": x, "y": y}, frame))
         return dict(zip(r["channels"], r["values"]))
 
+    def deep_samples(self, x, y, frame=None):
+        """The deep samples of pixel (x, y), front to back, as a list of {channel: value} (Z and ZBack are
+        distances). A flat node gives one sample per pixel that has colour or alpha."""
+        r = _call("render.deep_samples", _frame({"node": self._name, "x": x, "y": y}, frame))
+        inf = float("inf")  # (JSON has no infinity: an infinitely far depth comes as null)
+        return [{c: (inf if v is None else v) for c, v in zip(r["channels"], s)} for s in r["samples"]]
+
     def render(self, path, frame=None, box=None):
         """Render this node at `frame` to an image file (.exr, .tif, .png, .npy...)."""
         p = _frame({"node": self._name, "path": os.path.abspath(os.fspath(path))}, frame)

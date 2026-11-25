@@ -16,6 +16,7 @@
 #include "MLNodes.h"
 #include "Splat.h"
 #include "NodeUtils.h"
+#include "DeepNodes.h"
 #include "PointMesh.h"
 #include "MeshEdit.h"
 
@@ -150,7 +151,7 @@ bool isTransformable(const Node* n) {
 bool is3D(const Node* n) {
     return n && (isGeoFlow(n) || n->type == "Axis" || n->type == "Camera" || n->type == "ScanlineRender" ||
                  n->type == "Project3D" || n->type == "ReadSplat" || n->type == "SplatRender" ||
-                 n->type == "GaussianSplat" || n->type == "Reconstruct" || n->type == "NeRF");
+                 n->type == "GaussianSplat" || n->type == "Reconstruct" || n->type == "NeRF" || n->type == "DeepToPoints");
 }
 
 // ================================================================= primitives
@@ -778,6 +779,8 @@ SceneData viewerScene(Comp& comp, Node* n, double f, Engine* e) {
                 p.dense = true;
                 s.points.push_back(std::move(p));
             }
+        if (x->type == "DeepToPoints")
+            if (auto dp = deepPointsOf(x, f, e)) s.points.push_back(*dp);
         if (auto* ss = dynamic_cast<splat::SplatSource*>(x)) {
             std::string err;
             if (auto sp = ss->splats(f, &err)) {

@@ -143,7 +143,8 @@ iteration, `create(type, name=None, inputs=(), position=None, group=None, **knob
 `set_input(i, node_or_None)`, `connect_knob(knob, value_node)`, `outputs`, `position`,
 `disabled`, `delete()`, `buttons()`, `add_button(label, code)`, `remove_button(label)`, `knobs()`, `node[knob]` (a Knob), `node[knob] = value`, `info()`,
 and pixels: `format(frame)`, `channels(frame)`, `sample(x, y, frame)` (a dict by channel; y
-counts up from the bottom row), `render(path, frame, box=None)` (.exr, .tif, .png, .npy...),
+counts up from the bottom row), `deep_samples(x, y, frame)` (a deep pixel's samples front to back, each a dict
+by channel with Z / ZBack as distances), `render(path, frame, box=None)` (.exr, .tif, .png, .npy...),
 `image(frame, box=None)` (a numpy array, height x width x channels, top row first, and the
 channel names; needs numpy).
 A Tracker also has `fill_gaps(tracks=None, method="auto", inside=True, before=False,
@@ -195,7 +196,7 @@ commands are `app.info`, `message`, `comp.open`, `comp.new`, `comp.save`, `comp.
 `node.info`, `node.set_input`, `node.set_position`, `knob.list`, `knob.get`, `knob.set`,
 `knob.set_key`, `knob.set_expression`, `knob.keys`, `knob.clear_animation`, `tracker.fill_gaps`,
 `tracker.clear_filled`, `render.info`,
-`render.sample`, `render.image`, `render.png` (a small sRGB preview, base64), `render.write` and
+`render.sample`, `render.deep_samples`, `render.image`, `render.png` (a small sRGB preview, base64), `render.write` and
 `batch`, and in the editor `editor.selected`, `editor.select`, `editor.frame`,
 `editor.set_frame`, `editor.view`, `editor.viewed`, `editor.show_panel` (and `editor.undo` /
 `editor.redo`, for the [MCP server](MCP.md)) and `editor.watch`, `node.add_button` and

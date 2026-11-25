@@ -2117,6 +2117,15 @@ class Translator:
                 params["outside"] = True
             self.translated += 1
             return self.emit(nk_name, klass, "DeepCrop", main[:1], params, k)
+        if klass == "DeepSample":
+            pos = num("pos")
+            if isinstance(pos, list) and len(pos) >= 2:
+                params["pos"] = [pos[0], pos[1]]
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepSample", main[:1], params, k)
+        if klass == "DeepToPoints":
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepToPoints", main[:2], params, k)
         if klass == "DeepReformat":
             if "format" in k:
                 f = parse_format(k["format"], self.formats)

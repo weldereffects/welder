@@ -23,6 +23,7 @@
 #include "core/NetPath.h"
 #include "core/Update.h"
 #include "core/Deep.h"
+#include "nodes/DeepNodes.h"
 #include "io/ExrIO.h"
 #include "io/ImageIO.h"
 #include "io/PsdIO.h"
@@ -10106,6 +10107,49 @@ Connections:  {
         CHECK(e.dod(c->find("Rf"), 1) == Box(0, 0, 32, 24));
         ImagePtr rf = render(*c, "Rf");
         CHECK(std::fabs(px(rf, 31, 23, "A") - 0.5) < 1e-6);
+    });
+    test("deep: ScanlineRender gives every surface; DeepSample; DeepToPoints", [&] {
+        auto c = comp(json::array({{{"name", "Red"}, {"type", "Constant"}, {"params", {{"color", {1, 0, 0, 1}}}}},
+                                   {{"name", "Blue"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 1, 1}}}}},
+                                   {{"name", "Near"}, {"type", "Card"}, {"inputs", {"Red"}}, {"params", {{"translate", {0, 0, -3}}, {"uniform_scale", 0.5}}}},
+                                   {{"name", "Far"}, {"type", "Card"}, {"inputs", {"Blue"}}, {"params", {{"translate", {0, 0, -10}}, {"uniform_scale", 20}}}},
+                                   {{"name", "Sc"}, {"type", "Scene"}, {"inputs", {"Near", "Far"}}},
+                                   {{"name", "Cam"}, {"type", "Camera"}},
+                                   {{"name", "SR"}, {"type", "ScanlineRender"}, {"inputs", {nullptr, "Sc", "Cam"}}},
+                                   {{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"SR"}}},
+                                   {{"name", "DS"}, {"type", "DeepSample"}, {"inputs", {"SR"}}, {"params", {{"pos", {32, 24}}}}},
+                                   {{"name", "DP"}, {"type", "DeepToPoints"}, {"inputs", {"SR", "Cam"}}, {"params", {{"density", 1}}}}}),
+                      64, 48);
+        Engine e;
+        DeepPtr d = e.requestDeep(c->find("SR"), 1, Box(32, 24, 33, 25));
+        CHECK(d->count(32, 24) == 2);  // the red card and the blue one hidden behind it
+        if (d->count(32, 24) == 2) {
+            CHECK(std::fabs(d->sample(32, 24)[d->zi] - 3) < 1e-3 && std::fabs(d->sample(32, 24)[d->nch() + d->zi] - 10) < 1e-3);
+            CHECK(std::fabs(d->sample(32, 24)[d->ch("R")] - 1) < 1e-4 && std::fabs(d->sample(32, 24)[d->nch() + d->ch("B")] - 1) < 1e-4);
+        }
+        // flattened, it is the ordinary render (but for antialiased edges)
+        ImagePtr flat = render(*c, "SR"), f = render(*c, "F");
+        double worst = 0, worstFar = 0;
+        int edge = 0;
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x) {
+                double dd = 0;
+                for (const char* ch : {"R", "G", "B", "A"}) dd = std::max(dd, (double)std::fabs(px(flat, x, y, ch) - px(f, x, y, ch)));
+                if (dd > 1e-3) ++edge;
+                worst = std::max(worst, dd);
+                if (px(flat, x, y, "R") == 0) worstFar = std::max(worstFar, std::fabs(1.0 - px(f, x, y, "A")));  // inner mesh edges don't show
+            }
+        std::printf("  flat vs deep flattened: %d edge pixels differ (worst %.3f); far card alpha off by %.2g\n", edge, worst, worstFar);
+        CHECK(edge < 40);
+        CHECK(worstFar < 1e-4);
+        json si = c->find("DS")->info(e, 1);
+        CHECK(si.value("samples", 0) == 2);
+        CHECK(si["metadata"].contains("sample 02"));
+        auto pts = deepPointsOf(c->find("DP"), 1, &e);
+        CHECK(pts && pts->points.size() > 64 * 48);
+        bool nearPoint = false;
+        for (auto& q : pts->points) nearPoint = nearPoint || (std::fabs(q.z + 3) < 0.01 && std::fabs(q.x) < 0.05 && std::fabs(q.y) < 0.05);
+        CHECK(nearPoint);
     });
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

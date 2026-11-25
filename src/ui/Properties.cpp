@@ -2970,6 +2970,8 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         }
         double ps = comp.project.proxyScale;
         text = "root proxy scale " + std::to_string(ps).substr(0, 4) + "  " + formatText((int)std::ceil(w * ps), (int)std::ceil(h * ps));
+    } else if (in.is_object() && in.contains(k.info) && in[k.info].is_string()) {  // a node's own line of text (DeepToPoints)
+        text = in[k.info].get<std::string>();
     }
     ImGui::TextDisabled("%s", text.c_str());
 }

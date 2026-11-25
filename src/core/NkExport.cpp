@@ -471,6 +471,13 @@ struct Writer {
             b.cls = "DeepRecolor";
             mainMask(2, -1);
             if (p.value("target_alpha", false)) raw("target_input_alpha", "true");
+        } else if (type == "DeepSample") {
+            b.cls = "DeepSample";
+            mainMask(1, -1);
+            copy("pos");
+        } else if (type == "DeepToPoints") {
+            b.cls = "DeepToPoints";
+            mainMask(2, -1);
         } else if (type == "DeepFromImage") {
             b.cls = "DeepFromImage";
             mainMask(1, -1);

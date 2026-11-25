@@ -7,7 +7,10 @@
 #include "../color/Color.h"
 #include "../core/Comp.h"
 #include "../io/ExrIO.h"
+#include "Cam3D.h"
+#include "DeepNodes.h"
 #include "DeepUtil.h"
+#include <mutex>
 #include "NodeUtils.h"
 
 namespace strata {
@@ -586,7 +589,140 @@ public:
     }
 };
 
+// ------------------------------------------------------------------ DeepSample
+// Lists the samples of one pixel (pos) of its input in the panel; passes the input through.
+class DeepSampleNode : public Node {
+public:
+    int identityInput(double) override { return 0; }
+    void render(RenderArgs&, Image&) override {}
+    json info(Engine& e, double frame) override {
+        json j = json::object();
+        Node* in = input(0);
+        if (!in) return j;
+        auto pos = params.vec<2>("pos", frame, {0, 0});
+        const double sc = e.scale();
+        const int x = (int)std::floor(pos[0] * sc), y = (int)std::floor(pos[1] * sc);
+        DeepPtr d = e.requestDeep(in, frame, Box(x, y, x + 1, y + 1));
+        const int n = d->count(x, y), nc = d->nch();
+        json md = json::object();
+        char key[32];
+        double T = 1;
+        for (int k = 0; k < n; ++k) {
+            const float* s = d->sample(x, y) + (size_t)k * nc;
+            std::string v;
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "Z %.4g", s[d->zi]);
+            v += buf;
+            if (s[d->zbi] != s[d->zi]) {
+                std::snprintf(buf, sizeof buf, " to %.4g", s[d->zbi]);
+                v += buf;
+            }
+            for (int c = 0; c < nc; ++c) {
+                if (c == d->zi || c == d->zbi) continue;
+                std::snprintf(buf, sizeof buf, "  %s %.4g", d->channels[c].c_str(), s[c]);
+                v += buf;
+            }
+            std::snprintf(buf, sizeof buf, "  (shows %.0f%%)", 100.0 * T * s[d->ai]);
+            v += buf;
+            T *= 1.0 - std::clamp((double)s[d->ai], 0.0, 1.0);
+            std::snprintf(key, sizeof key, "sample %02d", k + 1);
+            md[key] = v;
+        }
+        j["metadata"] = md;
+        j["samples"] = n;
+        j["pixel"] = {x, y};
+        return j;
+    }
+};
+
+// ------------------------------------------------------------------ DeepToPoints
+// Shows its deep input's samples as a point cloud in the 3D viewer, placed through the camera
+// input (each sample at its depth along the camera's view). Passes the image through.
+// params: density (1 = every pixel, 2 = every other...), alpha_threshold (samples below it are
+// left out), max_points.
+class DeepToPointsNode : public Node {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 0 ? "" : "cam"; }
+    int identityInput(double) override { return 0; }
+    void render(RenderArgs&, Image&) override {}
+
+    std::shared_ptr<const geo::PointsItem> points(double frame, Engine* eng) {
+        Node* in = input(0);
+        Node* camNode = input(1);
+        if (!in || !camNode) return nullptr;
+        auto cam = cam3d::cameraAt(camNode, frame);
+        if (!cam) return nullptr;
+        std::unique_ptr<Engine> own;
+        if (!eng) {
+            own = std::make_unique<Engine>();
+            eng = own.get();
+        }
+        Engine& e = *eng;
+        const double sc = e.scale();
+        const uint64_t h = hashCombine(e.hash(this, frame), hashBytes(&sc, sizeof sc));
+        {
+            std::lock_guard<std::mutex> l(m_);
+            if (cached_ && h == hash_) return cached_;
+        }
+        const Format fmt = in->format(e, frame);
+        const Box b = e.dod(in, frame).intersect(fmt.box());
+        auto p = std::make_shared<geo::PointsItem>();
+        p->node = this;
+        p->dense = true;
+        if (!b.empty()) {
+            DeepPtr d = e.renderDeepRegion(in, frame, b);
+            const int step = std::max(1, (int)params.num("density", frame, 2));
+            const float thr = (float)params.num("alpha_threshold", frame, 0.01);
+            const size_t maxPts = (size_t)std::max(1000.0, params.num("max_points", frame, 500000));
+            const double fpx = cam->focalPx(fmt.width);
+            const int R = d->ch("R"), G = d->ch("G"), B = d->ch("B"), nc = d->nch();
+            for (int y = b.y1; y < b.y2 && p->points.size() < maxPts; y += step)
+                for (int x = b.x1; x < b.x2 && p->points.size() < maxPts; x += step) {
+                    const int n = d->count(x, y);
+                    const float* s = d->sample(x, y);
+                    for (int k = 0; k < n; ++k, s += nc) {
+                        const float a = s[d->ai], z = s[d->zi];
+                        if (a < thr || !std::isfinite(z) || z <= 0) continue;
+                        const geo::V3 q((x + 0.5 - fmt.width * 0.5) / fpx * z, (y + 0.5 - fmt.height * 0.5) / fpx * z, -z);
+                        p->points.push_back(cam->R * q + cam->C);
+                        auto c8 = [&](int c) {
+                            const double v = c >= 0 ? s[c] / std::max(a, 1e-6f) : 1.0;
+                            return (uint32_t)std::clamp((int)std::lround(std::pow(std::clamp(v, 0.0, 1.0), 1 / 2.2) * 255), 0, 255);
+                        };
+                        p->colors.push_back(c8(R) | (c8(G) << 8) | (c8(B) << 16) | 0xFF000000u);
+                    }
+                }
+        }
+        std::lock_guard<std::mutex> l(m_);
+        cached_ = p;
+        hash_ = h;
+        return p;
+    }
+    json info(Engine& e, double frame) override {
+        json j = json::object();
+        if (!input(1)) j["status"] = "connect a camera to place the samples";
+        else if (auto p = points(frame, &e)) j["status"] = std::to_string(p->points.size()) + " points";
+        return j;
+    }
+
+private:
+    std::mutex m_;
+    std::shared_ptr<const geo::PointsItem> cached_;
+    uint64_t hash_ = 0;
+};
+
 }  // namespace
+
+std::shared_ptr<const geo::PointsItem> deepPointsOf(Node* n, double frame, Engine* e) {
+    auto* d = dynamic_cast<DeepToPointsNode*>(n);
+    if (!d || d->disabled()) return nullptr;
+    try {
+        return d->points(frame, e);
+    } catch (const std::exception&) {
+        return nullptr;  // the viewer shows what it can; the node's panel reports render errors
+    }
+}
 
 void registerDeepNodes() {
     auto& r = NodeRegistry::instance();
@@ -601,6 +737,8 @@ void registerDeepNodes() {
     r.add("DeepTransform", [] { return std::make_unique<DeepTransformNode>(); });
     r.add("DeepCrop", [] { return std::make_unique<DeepCropNode>(); });
     r.add("DeepReformat", [] { return std::make_unique<DeepReformatNode>(); });
+    r.add("DeepSample", [] { return std::make_unique<DeepSampleNode>(); });
+    r.add("DeepToPoints", [] { return std::make_unique<DeepToPointsNode>(); });
 }
 
 }  // namespace strata

@@ -154,3 +154,5 @@ DeepColorCorrect
 DeepTransform
 DeepCrop
 DeepReformat
+DeepSample
+DeepToPoints

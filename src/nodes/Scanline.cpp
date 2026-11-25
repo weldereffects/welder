@@ -4,6 +4,10 @@
 // "medium", "high": 1, 2, 3, 4 samples per pixel per axis), filter (texture
 // filtering: "impulse", "bilinear", "trilinear"), z_channel (true: depth.Z = 1/z).
 //
+// It is also a deep node: deep nodes downstream (DeepMerge, DeepHoldout, DeepWrite...) get every
+// surface in each pixel as a sample, hidden ones too (see renderDeep), while flat nodes get the
+// ordinary render.
+//
 // A tile-based rasteriser on the CPU: triangles are clipped at the camera's
 // near plane and projected; each pixel is sampled on an n x n grid with a
 // z-buffer; textures are sampled perspective-correct, with mipmaps chosen from
@@ -15,6 +19,8 @@
 #include <map>
 
 #include "../core/Comp.h"
+#include "../core/Deep.h"
+#include "DeepUtil.h"
 #include "Geo.h"
 #include "NodeUtils.h"
 #include "Retime.h"
@@ -209,6 +215,103 @@ public:
             for (const char* v : {"forward.u", "forward.v", "backward.u", "backward.v"}) c.push_back(v);
         if (input(0)) c = unionChannels(c, e.channels(input(0), f));
         return c;
+    }
+
+    // ---- deep output
+    bool isDeep() const override { return true; }
+    ChannelSet deepChannels(Engine& e, double f) override {
+        ChannelSet c = rgbaChannels();
+        if (input(0)) c = unionChannels(c, e.channels(input(0), f));
+        return deepChannelsOf(c);
+    }
+    // Every surface covering part of a pixel, in front or hidden, becomes a sample: its colour
+    // shaded at the middle of the part it covers, alpha scaled by that coverage, at its depth.
+    // Triangles of one object meeting in a pixel at about the same depth (a mesh's neighbouring
+    // faces) are one sample, so a mesh's inner edges don't show. The bg input, when connected, is
+    // behind (at its depth.Z, or infinitely far). No motion blur in the samples.
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        const Box R = a.region;
+        const int w = R.width(), h = R.height();
+        const int fmode = params.str("filter", "trilinear") == "impulse" ? 0 : params.str("filter", "trilinear") == "bilinear" ? 1 : 2;
+        uint64_t key = hashCombine(a.engine.hash(this, a.frame), hashBytes(&a.frame, sizeof a.frame, 0x51e));
+        auto P = cache_.get(key, [&] { return prepare(a, a.frame, a.frame, false); });
+        const int n = std::clamp(samples(), 1, 8), ns = n * n;
+        struct Frag {
+            int tri, mat, cnt;
+            float iz;  // 1 / depth at the first sample
+            double cx, cy;
+        };
+        std::vector<std::vector<Frag>> px((size_t)w * h);
+        for (int ti = 0; ti < (int)P->tris.size(); ++ti) {
+            const Tri& t = P->tris[ti];
+            if (t.bx1 < R.x1 || t.bx0 > R.x2 || t.by1 < R.y1 || t.by0 > R.y2) continue;
+            int x0 = std::max(R.x1, (int)std::floor(t.bx0)), x1 = std::min(R.x2 - 1, (int)std::floor(t.bx1));
+            int y0 = std::max(R.y1, (int)std::floor(t.by0)), y1 = std::min(R.y2 - 1, (int)std::floor(t.by1));
+            for (int y = y0; y <= y1; ++y)
+                for (int x = x0; x <= x1; ++x) {
+                    int cnt = 0;
+                    double cx = 0, cy = 0;
+                    for (int j = 0; j < n; ++j)
+                        for (int i = 0; i < n; ++i) {
+                            double sx = x + (i + 0.5) / n, sy = y + (j + 0.5) / n;
+                            bool in = true;
+                            for (int k = 0; k < 3 && in; ++k) in = t.e[k][0] * sx + t.e[k][1] * sy + t.e[k][2] >= 0;
+                            if (!in) continue;
+                            ++cnt;
+                            cx += sx;
+                            cy += sy;
+                        }
+                    if (!cnt) continue;
+                    const double mx = cx / cnt, my = cy / cnt;
+                    const float iz = (float)(t.z[0] * mx + t.z[1] * my + t.z[2]);
+                    if (!(iz > 0)) continue;
+                    auto& L = px[(size_t)(y - R.y1) * w + (x - R.x1)];
+                    // the same object at about the same depth: one surface
+                    bool merged = false;
+                    for (auto& f : L)
+                        if (f.mat == t.mat && std::fabs(f.iz - iz) <= 0.01f * std::max(f.iz, iz)) {
+                            f.cnt += cnt;
+                            f.cx += cx;
+                            f.cy += cy;
+                            merged = true;
+                            break;
+                        }
+                    if (!merged) L.push_back({ti, t.mat, cnt, iz, cx, cy});
+                }
+        }
+        DeepPtr bg = input(0) ? a.fetchDeep(input(0), R) : nullptr;
+        const int on = out.nch();
+        const int oc[4] = {out.ch("R"), out.ch("G"), out.ch("B"), out.ai};
+        std::vector<int> bmap;
+        if (bg) {
+            bmap.resize(on);
+            for (int c = 0; c < on; ++c) bmap[c] = bg->ch(out.channels[c]);
+        }
+        for (int y = R.y1; y < R.y2; ++y)
+            for (int x = R.x1; x < R.x2; ++x) {
+                auto& L = px[(size_t)(y - R.y1) * w + (x - R.x1)];
+                const int nb = bg ? bg->count(x, y) : 0;
+                float* d = out.newPixel((int)L.size() + nb);
+                for (auto& f : L) {
+                    const Tri& t = P->tris[f.tri];
+                    const double sx = f.cx / f.cnt, sy = f.cy / f.cnt;
+                    const double Z = t.z[0] * sx + t.z[1] * sy + t.z[2];
+                    float c[4];
+                    shade(*P, t, sx, sy, Z, fmode, c);
+                    const float cov = std::min(1.0f, (float)f.cnt / ns);
+                    std::fill(d, d + on, 0.0f);
+                    for (int k = 0; k < 4; ++k)
+                        if (oc[k] >= 0) d[oc[k]] = c[k] * cov;
+                    d[out.zi] = d[out.zbi] = (float)(1.0 / std::max(Z, 1e-12));
+                    d += on;
+                }
+                if (nb) {
+                    const float* s = bg->sample(x, y);
+                    for (int k = 0; k < nb; ++k, s += bg->nch(), d += on)
+                        for (int c = 0; c < on; ++c) d[c] = bmap[c] >= 0 ? s[bmap[c]] : 0.0f;
+                }
+                out.sortPixel((size_t)out.pixelsAdded() - 1);
+            }
     }
 
     void render(RenderArgs& a, Image& out) override {
