@@ -265,6 +265,9 @@ public:
     double diskCacheGB = 20;         // the setting (STRATA_DISK_CACHE_GB overrides it)
     std::string pythonInterpreter;   // Preferences > Python: the Python scripts run with ("" = found automatically)
     bool runInitScript = true;       // run <config>/init.py when the editor starts
+    bool mcpEnabled = false;         // Preferences > MCP server: AI clients can drive the editor (McpService.h)
+    int mcpPort = 9471;              // its port on 127.0.0.1
+    bool mcpAllowRemote = false;     // listen on every network interface, not only 127.0.0.1
 
     // ------------------------------------------------------------ settings
     std::string settingsPath;  // settings.json in the config folder

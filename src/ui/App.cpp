@@ -393,6 +393,9 @@ void App::loadSettings() {
             diskCacheGB = j.value("disk_cache_gb", diskCacheGB);
             pythonInterpreter = j.value("python_interpreter", pythonInterpreter);
             runInitScript = j.value("python_run_init", runInitScript);
+            mcpEnabled = j.value("mcp_enabled", mcpEnabled);
+            mcpPort = j.value("mcp_port", mcpPort);
+            mcpAllowRemote = j.value("mcp_allow_remote", mcpAllowRemote);
             playbackCacheGB = j.value("playback_cache_gb", playbackCacheGB);
             askMatchProject = j.value("ask_match_project", askMatchProject);
             rightAnglePipes = j.value("graph_right_angle_pipes", rightAnglePipes);
@@ -453,6 +456,9 @@ void App::saveSettings() {
     j["disk_cache_gb"] = diskCacheGB;
     j["python_interpreter"] = pythonInterpreter;
     j["python_run_init"] = runInitScript;
+    j["mcp_enabled"] = mcpEnabled;
+    j["mcp_port"] = mcpPort;
+    j["mcp_allow_remote"] = mcpAllowRemote;
     j["playback_cache_gb"] = playbackCacheGB;
     j["ask_match_project"] = askMatchProject;
     j["graph_right_angle_pipes"] = rightAnglePipes;

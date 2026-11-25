@@ -55,6 +55,15 @@ void LocalConnection::close() {
     }
 }
 
+void LocalConnection::shutdown() {
+    if (fd_ == -1) return;
+#ifdef _WIN32
+    ::shutdown(S(fd_), SD_BOTH);
+#else
+    ::shutdown(S(fd_), SHUT_RDWR);
+#endif
+}
+
 bool LocalConnection::readLine(std::string& line, size_t maxBytes) {
     for (;;) {
         auto nl = buf_.find('\n');
@@ -72,10 +81,67 @@ bool LocalConnection::readLine(std::string& line, size_t maxBytes) {
     }
 }
 
+bool LocalConnection::readBytes(std::string& out, size_t n) {
+    while (buf_.size() < n) {
+        if (fd_ == -1) return false;
+        char tmp[65536];
+        int r = (int)::recv(S(fd_), tmp, (int)std::min<size_t>(sizeof tmp, n - buf_.size()), 0);
+        if (r <= 0) return false;
+        buf_.append(tmp, (size_t)r);
+    }
+    out.assign(buf_, 0, n);
+    buf_.erase(0, n);
+    return true;
+}
+
+void LocalConnection::setTimeout(int ms) {
+    if (fd_ == -1) return;
+    if (ms < 0) ms = 0;
+#ifdef _WIN32
+    DWORD t = (DWORD)ms;
+    ::setsockopt(S(fd_), SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);
+#else
+    timeval tv{ms / 1000, (ms % 1000) * 1000};
+    ::setsockopt(S(fd_), SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+#endif
+}
+
+std::unique_ptr<LocalConnection> LocalConnection::connect(int port, std::string* err) {
+    if (!startup()) {
+        if (err) *err = "network startup failed";
+        return nullptr;
+    }
+    sock_t s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == kBad) {
+        if (err) *err = "socket: " + lastError();
+        return nullptr;
+    }
+    noInherit(s);
+    sockaddr_in a;
+    std::memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = htons((unsigned short)port);
+    if (::connect(s, (sockaddr*)&a, sizeof a) != 0) {
+        if (err) *err = "connect to port " + std::to_string(port) + ": " + lastError();
+        closeSock(s);
+        return nullptr;
+    }
+    int one = 1;
+    ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char*)&one, sizeof one);
+    std::unique_ptr<LocalConnection> c(new LocalConnection());
+    c->fd_ = (long long)s;
+    return c;
+}
+
 bool LocalConnection::writeLine(const std::string& line) {
-    if (fd_ == -1) return false;
     std::string out = line;
     out.push_back('\n');
+    return write(out);
+}
+
+bool LocalConnection::write(const std::string& out) {
+    if (fd_ == -1) return false;
     size_t sent = 0;
     while (sent < out.size()) {
 #ifdef MSG_NOSIGNAL
@@ -92,7 +158,7 @@ bool LocalConnection::writeLine(const std::string& line) {
 
 // ------------------------------------------------------------ server
 
-std::unique_ptr<LocalServer> LocalServer::listen(std::string* err) {
+std::unique_ptr<LocalServer> LocalServer::listen(std::string* err, int port, bool anyInterface) {
     auto fail = [&](const std::string& what) -> std::unique_ptr<LocalServer> {
         if (err) *err = what + ": " + lastError();
         return nullptr;
@@ -112,11 +178,13 @@ std::unique_ptr<LocalServer> LocalServer::listen(std::string* err) {
     sockaddr_in a;
     std::memset(&a, 0, sizeof a);
     a.sin_family = AF_INET;
-    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // never reachable from another machine
-    a.sin_port = 0;
+    // loopback: never reachable from another machine
+    a.sin_addr.s_addr = htonl(anyInterface ? INADDR_ANY : INADDR_LOOPBACK);
+    a.sin_port = htons((unsigned short)port);
     if (::bind(s, (sockaddr*)&a, sizeof a) != 0) {
+        auto r = fail(port ? "port " + std::to_string(port) + " is in use or not allowed" : std::string("bind"));
         closeSock(s);
-        return fail("bind");
+        return r;
     }
     if (::listen(s, 4) != 0) {
         closeSock(s);
