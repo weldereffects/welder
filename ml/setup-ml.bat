@@ -3,18 +3,41 @@ rem Welder ML setup: the Python environments the ML worker runs in.
 rem   venv        Python 3.12, PyTorch 2.8 (CUDA 12.8): LTX-2.5, Alpha Gen, MapAnything, NeRF
 rem   venv-splat  Python 3.10, PyTorch 2.4 (CUDA 12.4) with gsplat's prebuilt kernels: Gaussian splats
 rem   venv-corridorkey  Python 3.12, PyTorch 2.9.1 (CUDA 12.8): CorridorKey (it pins numpy < 2, transformers < 5)
-rem Usage: setup-ml.bat [ml home]    (Welder's "Set up ML" button runs this for you)
+rem   venv-directml  AMD Radeon only: Python 3.12, PyTorch 2.4.1 + torch-directml: the AI masking nodes
+rem The PyTorch builds follow the GPU: CUDA for NVIDIA, XPU for Intel Arc, DirectML for AMD Radeon (the main
+rem environment then gets PyTorch's CPU build), the CPU build when there's no GPU PyTorch can use.
+rem Usage: setup-ml.bat [ml home] [gpu]    (Welder's "Set up ML" button runs this for you)
+rem   gpu: nvidia, intel, amd or cpu.
+rem   The GPU is found by itself; the second argument, or WELDER_ML_GPU, picks one instead.
 setlocal EnableExtensions
 set "MLHOME=%~1"
 if "%MLHOME%"=="" if not exist "%LOCALAPPDATA%\Welder\ml" if exist "%LOCALAPPDATA%\Strata\ml" set "MLHOME=%LOCALAPPDATA%\Strata\ml"
 if "%MLHOME%"=="" set "MLHOME=%LOCALAPPDATA%\Welder\ml"
 set "HERE=%~dp0"
 set "UV_LINK_MODE=copy"
+
+rem which GPU to install PyTorch for
+set "GPUKIND=%~2"
+if "%GPUKIND%"=="" set "GPUKIND=%WELDER_ML_GPU%"
+set "GPUNAMES="
+for /f "usebackq tokens=1* delims=|" %%A in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%detect-gpu.ps1"`) do (
+  set "FOUNDKIND=%%A"
+  set "GPUNAMES=%%B"
+)
+if "%GPUKIND%"=="" set "GPUKIND=%FOUNDKIND%"
+if /i not "%GPUKIND%"=="nvidia" if /i not "%GPUKIND%"=="intel" if /i not "%GPUKIND%"=="amd" if /i not "%GPUKIND%"=="cpu" set "GPUKIND=nvidia"
+
 echo.
 echo  Welder ML setup
 echo  ---------------
 echo  Installs into: %MLHOME%
-echo  Needs an NVIDIA GPU with a current driver and about 20 GB of disk.
+echo  GPU: %GPUNAMES%
+if /i "%GPUKIND%"=="nvidia" echo  Setting up for NVIDIA (CUDA). Needs a current driver and about 20 GB of disk.
+if /i "%GPUKIND%"=="intel" echo  Setting up for Intel Arc (XPU). Needs a current Intel graphics driver and about 15 GB of disk.
+if /i "%GPUKIND%"=="amd" echo  Setting up for AMD Radeon (DirectML): the AI masking nodes (TrackMask, CorridorKey) run on the GPU,
+if /i "%GPUKIND%"=="amd" echo  the other ML nodes on the CPU. Needs a current AMD driver and about 12 GB of disk.
+if /i "%GPUKIND%"=="cpu" echo  No GPU PyTorch can use was found: setting up for the CPU (works, but slowly).
+echo  Another GPU: run setup-ml.bat "%MLHOME%" nvidia^|intel^|amd^|cpu
 echo  The models themselves are downloaded later, from each node's panel.
 echo.
 if not exist "%MLHOME%" mkdir "%MLHOME%"
@@ -48,25 +71,36 @@ set "UV_PYTHON_INSTALL_DIR=%MLHOME%\python"
 set "UV_PYTHON_PREFERENCE=only-managed"
 
 echo.
-echo [1/6] Python 3.12 environment
+echo [1/7] Python 3.12 environment
 call :venv venv 3.12
 if errorlevel 1 goto :fail
 set "PY=%MLHOME%\venv\Scripts\python.exe"
 
+rem (the builds are pinned with their +local tag, so a change of GPU swaps the build in place)
+set "TORCHBUILD=cu128"
+if /i "%GPUKIND%"=="intel" set "TORCHBUILD=xpu"
+if /i "%GPUKIND%"=="amd" set "TORCHBUILD=cpu"
+if /i "%GPUKIND%"=="cpu" set "TORCHBUILD=cpu"
+echo %GPUKIND%> "%MLHOME%\gpu.txt"
+
 echo.
-echo [2/6] PyTorch 2.8 with CUDA 12.8 (about 3 GB)
-call uv pip install --python "%PY%" torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+echo [2/7] PyTorch 2.8 (%TORCHBUILD%, up to 3 GB)
+call uv pip install --python "%PY%" torch==2.8.0+%TORCHBUILD% torchvision==0.23.0+%TORCHBUILD% torchaudio==2.8.0+%TORCHBUILD% --index-url https://download.pytorch.org/whl/%TORCHBUILD%
 if errorlevel 1 goto :fail
 
 echo.
-echo [3/6] LTX-2.5 pipelines, MapAnything and the rest
+echo [3/7] LTX-2.5 pipelines, MapAnything and the rest
 call uv pip install --python "%PY%" --no-sources -r "%HERE%requirements.txt"
 if errorlevel 1 goto :fail
 rem what was installed: Welder compares it with a newer requirements.txt and offers "Update ML"
 copy /y "%HERE%requirements.txt" "%MLHOME%\requirements-installed.txt" >nul
 
 echo.
-echo [4/6] Gaussian splat environment: Python 3.10 + PyTorch 2.4 (CUDA 12.4)
+echo [4/7] Gaussian splat environment: Python 3.10 + PyTorch 2.4 (CUDA 12.4)
+if /i not "%GPUKIND%"=="nvidia" (
+  echo  skipped: gsplat's kernels are CUDA only. GaussianSplat trains with the slower PyTorch rasteriser.
+  goto :corridorkey
+)
 call :venv venv-splat 3.10
 if errorlevel 1 goto :splatfail
 set "SPY=%MLHOME%\venv-splat\Scripts\python.exe"
@@ -77,7 +111,7 @@ call uv pip install --python "%SPY%" "numpy<2" opencv-python-headless pillow nin
 if errorlevel 1 goto :splatfail
 
 echo.
-echo [5/6] gsplat (prebuilt CUDA kernels)
+echo [5/7] gsplat (prebuilt CUDA kernels)
 call uv pip install --python "%SPY%" --no-deps "gsplat==1.5.3+pt24cu124" --index-url https://docs.gsplat.studio/whl
 if errorlevel 1 goto :splatfail
 
@@ -94,19 +128,53 @@ echo  with a much slower PyTorch rasteriser. Everything else is ready.
 
 :corridorkey
 echo.
-echo [6/6] CorridorKey environment: Python 3.12 + PyTorch 2.9.1 (CUDA 12.8)
+if /i "%GPUKIND%"=="amd" (
+  echo [6/7] CorridorKey environment: Python 3.12 + PyTorch 2.4.1 with DirectML
+) else (
+  echo [6/7] CorridorKey environment: Python 3.12 + PyTorch 2.9.1 ^(%TORCHBUILD%^)
+)
 call :venv venv-corridorkey 3.12
 if errorlevel 1 goto :ckfail
 set "CPY=%MLHOME%\venv-corridorkey\Scripts\python.exe"
-call uv pip install --python "%CPY%" torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu128
+if /i "%GPUKIND%"=="amd" goto :ckdml
+call uv pip install --python "%CPY%" torch==2.9.1+%TORCHBUILD% torchvision==0.24.1+%TORCHBUILD% --index-url https://download.pytorch.org/whl/%TORCHBUILD%
 if errorlevel 1 goto :ckfail
+goto :ckreqs
+:ckdml
+call uv pip install --python "%CPY%" torch==2.4.1 torchvision==0.19.1 torch-directml==0.2.5.dev240914
+if errorlevel 1 goto :ckfail
+:ckreqs
 call uv pip install --python "%CPY%" -r "%HERE%requirements-corridorkey.txt"
 if errorlevel 1 goto :ckfail
-goto :done
+goto :directml
 
 :ckfail
 echo.
 echo  The CorridorKey environment could not be set up: the CorridorKey node won't run.
+echo  Everything else is ready. Run "Set up ML" again to retry.
+
+:directml
+echo.
+echo [7/7] DirectML environment (AMD Radeon): Python 3.12 + PyTorch 2.4.1 + torch-directml
+if /i not "%GPUKIND%"=="amd" (
+  echo  skipped: only needed for AMD GPUs
+  goto :done
+)
+call :venv venv-directml 3.12
+if errorlevel 1 goto :dmlfail
+set "DPY=%MLHOME%\venv-directml\Scripts\python.exe"
+call uv pip install --python "%DPY%" torch==2.4.1 torchvision==0.19.1 torch-directml==0.2.5.dev240914
+if errorlevel 1 goto :dmlfail
+call uv pip install --python "%DPY%" -r "%HERE%requirements-directml.txt"
+if errorlevel 1 goto :dmlfail
+echo Checking DirectML sees the GPU ...
+"%DPY%" -c "import torch, torch_directml as d; n = d.device_count(); print('torch', torch.__version__, '- DirectML adapters:', ', '.join(d.device_name(i) for i in range(n)) or 'none')"
+if errorlevel 1 goto :dmlfail
+goto :done
+
+:dmlfail
+echo.
+echo  The DirectML environment could not be set up: the AI masking nodes run on the CPU (slower).
 echo  Everything else is ready. Run "Set up ML" again to retry.
 
 :done

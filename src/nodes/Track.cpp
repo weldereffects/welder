@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -25,7 +26,14 @@ std::vector<Key> keysOf(const json& t) {
         k.x = e[1].get<double>();
         k.y = e[2].get<double>();
         if (e.size() > 3 && e[3].is_number()) k.score = e[3].get<double>();
-        if (e.size() > 4) k.user = e[4].is_boolean() ? e[4].get<bool>() : (e[4].is_number() && e[4].get<double>() != 0);
+        if (e.size() > 4) {
+            if (e[4].is_boolean()) k.user = e[4].get<bool>();
+            else if (e[4].is_number()) {
+                const double u = e[4].get<double>();
+                k.filled = std::fabs(u - 2) < 1e-9;
+                k.user = u != 0 && !k.filled;
+            }
+        }
         if (e.size() > 8 && e[5].is_number() && e[6].is_number() && e[7].is_number() && e[8].is_number()) {
             k.a = e[5].get<double>();
             k.b = e[6].get<double>();
@@ -42,7 +50,7 @@ json keysJson(const std::vector<Key>& keys) {
     json a = json::array();
     auto rnd = [](double v, double q) { return std::round(v * q) / q; };
     for (auto& k : keys) {
-        json e = {k.frame, rnd(k.x, 1000), rnd(k.y, 1000), rnd(k.score, 100000), k.user ? 1 : 0};
+        json e = {k.frame, rnd(k.x, 1000), rnd(k.y, 1000), rnd(k.score, 100000), k.user ? 1 : k.filled ? 2 : 0};
         if (!identityWarp(k.a, k.b, k.c, k.d))
             for (double v : {k.a, k.b, k.c, k.d}) e.push_back(rnd(v, 100000));
         a.push_back(e);
@@ -104,6 +112,7 @@ std::optional<Key> sampleAt(const json& t, double f) {
             k.x = a.x + (b.x - a.x) * s;
             k.y = a.y + (b.y - a.y) * s;
             k.score = std::min(a.score, b.score);
+            k.filled = a.filled || b.filled;
             k.a = a.a + (b.a - a.a) * s;
             k.b = a.b + (b.b - a.b) * s;
             k.c = a.c + (b.c - a.c) * s;
@@ -794,7 +803,7 @@ Affine trackerTransform(const json& p, double f, Solve* shown) {
     if (shown) *shown = Solve();
     if (!p.is_object() || !p.contains("tracks") || !p["tracks"].is_array()) return A;
     const std::string mode = p.value("transform", std::string("none"));
-    if (mode == "none") return A;
+    if (mode == "none" || isPinMode(mode)) return A;  // the corner pin: trackerMatrix
     const json& tracks = p["tracks"];
     const double ref = referenceFrame(p, f);
     const bool one = mode.find("1pt") != std::string::npos;
@@ -855,6 +864,430 @@ bool homography(const double src[8], const double dst[8], double H[9]) {
     for (int i = 0; i < 8; ++i) H[i] = A[i][8] / A[i][i];
     H[8] = 1;
     return true;
+}
+
+// ------------------------------------------------------------------ corner pin from tracks
+
+void H9::apply(double x, double y, double& ox, double& oy) const {
+    const double w = m[6] * x + m[7] * y + m[8];
+    const double iw = std::fabs(w) > 1e-12 ? 1.0 / w : 0.0;
+    ox = (m[0] * x + m[1] * y + m[2]) * iw;
+    oy = (m[3] * x + m[4] * y + m[5]) * iw;
+}
+
+H9 H9::operator*(const H9& o) const {
+    H9 r;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            double v = 0;
+            for (int k = 0; k < 3; ++k) v += m[i * 3 + k] * o.m[k * 3 + j];
+            r.m[i * 3 + j] = v;
+        }
+    return r;
+}
+
+H9 H9::inverse() const {
+    const double* a = m;
+    const double c00 = a[4] * a[8] - a[5] * a[7], c01 = a[5] * a[6] - a[3] * a[8], c02 = a[3] * a[7] - a[4] * a[6];
+    const double det = a[0] * c00 + a[1] * c01 + a[2] * c02;
+    H9 r;
+    if (std::fabs(det) < 1e-18) return r;
+    const double id = 1.0 / det;
+    r.m[0] = c00 * id;
+    r.m[1] = (a[2] * a[7] - a[1] * a[8]) * id;
+    r.m[2] = (a[1] * a[5] - a[2] * a[4]) * id;
+    r.m[3] = c01 * id;
+    r.m[4] = (a[0] * a[8] - a[2] * a[6]) * id;
+    r.m[5] = (a[2] * a[3] - a[0] * a[5]) * id;
+    r.m[6] = c02 * id;
+    r.m[7] = (a[1] * a[6] - a[0] * a[7]) * id;
+    r.m[8] = (a[0] * a[4] - a[1] * a[3]) * id;
+    if (std::fabs(r.m[8]) > 1e-12) {
+        const double s = 1.0 / r.m[8];
+        for (double& v : r.m) v *= s;
+    }
+    return r;
+}
+
+H9 H9::of(const Affine& A) {
+    H9 r;
+    r.m[0] = A.a, r.m[1] = A.b, r.m[2] = A.tx;
+    r.m[3] = A.c, r.m[4] = A.d, r.m[5] = A.ty;
+    return r;
+}
+
+const char* modelName(int model) {
+    switch (model) {
+        case 4: return "perspective";
+        case 3: return "affine";
+        case 2: return "similarity";
+        case 1: return "translation";
+        default: return "none";
+    }
+}
+
+namespace {
+
+double residualOf(const H9& H, const PointPair& p) {
+    double x, y;
+    H.apply(p.rx, p.ry, x, y);
+    return std::hypot(x - p.cx, y - p.cy);
+}
+
+// The model fitted to all of `p` (model = the points it needs: 4 perspective, 3 affine,
+// 2 similarity, 1 translation). False when the points can't support it.
+bool fitModel(const std::vector<PointPair>& p, int model, H9& H) {
+    const size_t n = p.size();
+    if ((int)n < model || n == 0) return false;
+    double crx = 0, cry = 0, ccx = 0, ccy = 0;
+    for (auto& q : p) {
+        crx += q.rx, cry += q.ry, ccx += q.cx, ccy += q.cy;
+    }
+    crx /= n, cry /= n, ccx /= n, ccy /= n;
+    double spread = 0;  // mean distance from the centroid (reference)
+    for (auto& q : p) spread += std::hypot(q.rx - crx, q.ry - cry);
+    spread /= n;
+    H = H9();
+    if (model == 1) {
+        H.m[2] = ccx - crx;
+        H.m[5] = ccy - cry;
+        return true;
+    }
+    if (spread < 1e-6) return false;
+    if (model == 2) {
+        double na = 0, nb = 0, den = 0;
+        for (auto& q : p) {
+            const double ux = q.rx - crx, uy = q.ry - cry, vx = q.cx - ccx, vy = q.cy - ccy;
+            na += ux * vx + uy * vy;
+            nb += ux * vy - uy * vx;
+            den += ux * ux + uy * uy;
+        }
+        const double a = na / den, b = nb / den;
+        H.m[0] = a, H.m[1] = -b, H.m[2] = ccx - (a * crx - b * cry);
+        H.m[3] = b, H.m[4] = a, H.m[5] = ccy - (b * crx + a * cry);
+        return true;
+    }
+    // the reference points must span an area (not all on a line)
+    double sxx = 0, sxy = 0, syy = 0;
+    for (auto& q : p) {
+        const double ux = (q.rx - crx) / spread, uy = (q.ry - cry) / spread;
+        sxx += ux * ux, sxy += ux * uy, syy += uy * uy;
+    }
+    const double tr = sxx + syy, det = sxx * syy - sxy * sxy;
+    if (det < 1e-6 * tr * tr) return false;
+    if (model == 3) {
+        double sxu = 0, syu = 0, sxv = 0, syv = 0;
+        for (auto& q : p) {
+            const double ux = (q.rx - crx) / spread, uy = (q.ry - cry) / spread, vx = q.cx - ccx, vy = q.cy - ccy;
+            sxu += ux * vx, syu += uy * vx, sxv += ux * vy, syv += uy * vy;
+        }
+        // [sxx sxy; sxy syy] [a b]' = [sxu syu]'   (normalised reference coordinates)
+        const double a = (sxu * syy - syu * sxy) / det, b = (syu * sxx - sxu * sxy) / det;
+        const double c = (sxv * syy - syv * sxy) / det, d = (syv * sxx - sxv * sxy) / det;
+        H.m[0] = a / spread, H.m[1] = b / spread, H.m[2] = ccx - (a * crx + b * cry) / spread;
+        H.m[3] = c / spread, H.m[4] = d / spread, H.m[5] = ccy - (c * crx + d * cry) / spread;
+        return true;
+    }
+    // perspective: normalised DLT (h22 = 1) by least squares
+    if (n == 4) {  // three of the four on a line: no unique pin
+        for (int i = 0; i < 4; ++i) {
+            const PointPair &a = p[(i + 1) % 4], &b = p[(i + 2) % 4], &c = p[(i + 3) % 4];
+            const double area = std::fabs((b.rx - a.rx) * (c.ry - a.ry) - (b.ry - a.ry) * (c.rx - a.rx)) * 0.5;
+            if (area < 1e-4 * spread * spread) return false;
+        }
+    }
+    double dsp = 0;
+    for (auto& q : p) dsp += std::hypot(q.cx - ccx, q.cy - ccy);
+    dsp /= n;
+    if (dsp < 1e-6) return false;
+    const double ks = std::sqrt(2.0) / spread, kd = std::sqrt(2.0) / dsp;
+    std::vector<double> A(64, 0.0), b(8, 0.0);
+    for (auto& q : p) {
+        const double x = (q.rx - crx) * ks, y = (q.ry - cry) * ks, u = (q.cx - ccx) * kd, v = (q.cy - ccy) * kd;
+        const double r0[8] = {x, y, 1, 0, 0, 0, -u * x, -u * y};
+        const double r1[8] = {0, 0, 0, x, y, 1, -v * x, -v * y};
+        for (int i = 0; i < 8; ++i) {
+            for (int j = 0; j < 8; ++j) A[i * 8 + j] += r0[i] * r0[j] + r1[i] * r1[j];
+            b[i] += r0[i] * u + r1[i] * v;
+        }
+    }
+    if (!solveSmall(A, b, 8)) return false;
+    H9 Hn;
+    for (int i = 0; i < 8; ++i) Hn.m[i] = b[i];
+    Hn.m[8] = 1;
+    H9 Ts, Tdi;  // reference normalisation; destination de-normalisation
+    Ts.m[0] = ks, Ts.m[2] = -ks * crx, Ts.m[4] = ks, Ts.m[5] = -ks * cry;
+    Tdi.m[0] = 1 / kd, Tdi.m[2] = ccx, Tdi.m[4] = 1 / kd, Tdi.m[5] = ccy;
+    H = Tdi * Hn * Ts;
+    if (std::fabs(H.m[8]) < 1e-12) return false;
+    const double s8 = 1.0 / H.m[8];
+    for (double& v : H.m) v *= s8;
+    // every point in front (the same side of the horizon): else the fit folded the plane
+    for (auto& q : p)
+        if (H.m[6] * q.rx + H.m[7] * q.ry + H.m[8] <= 1e-6) return false;
+    return true;
+}
+
+}  // namespace
+
+Fit fitPoints(const std::vector<PointPair>& pts, int maxModel) {
+    Fit f;
+    if (pts.empty()) return f;
+    const int top = std::clamp(std::min(maxModel, (int)pts.size()), 1, 4);
+    for (int model = top; model >= 1; --model) {
+        std::vector<PointPair> use = pts;
+        H9 H;
+        if (!fitModel(use, model, H)) continue;
+        if ((int)use.size() > model + 1) {  // room to spot a bad point: drop the far ones, refit
+            std::vector<double> r;
+            for (auto& q : use) r.push_back(residualOf(H, q));
+            std::vector<double> sorted = r;
+            std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+            const double thr = std::max(1.0, 3.0 * sorted[sorted.size() / 2]);
+            std::vector<PointPair> keep;
+            for (size_t i = 0; i < use.size(); ++i)
+                if (r[i] <= thr) keep.push_back(use[i]);
+            H9 H2;
+            if (keep.size() < use.size() && (int)keep.size() >= model && fitModel(keep, model, H2)) {
+                H = H2;
+                use = keep;
+            }
+        }
+        f.ok = true;
+        f.H = H;
+        f.model = model;
+        f.used = (int)use.size();
+        double e = 0;
+        for (auto& q : use) e += residualOf(H, q) * residualOf(H, q);
+        f.rms = std::sqrt(e / use.size());
+        return f;
+    }
+    return f;
+}
+
+std::vector<int> pinTracks(const json& tracks) {
+    std::vector<int> r;
+    if (!tracks.is_array()) return r;
+    for (int i = 0; i < (int)tracks.size(); ++i)
+        if (tracks[i].value("enabled", true) && tracks[i].value("T", true)) r.push_back(i);
+    return r;
+}
+
+std::optional<std::pair<double, double>> trackedAt(const json& t, double f) {
+    auto keys = keysOf(t);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        if (std::fabs(keys[i].frame - f) < 1e-6) return std::make_pair(keys[i].x, keys[i].y);
+        if (i + 1 < keys.size() && keys[i].frame < f && keys[i + 1].frame > f) {
+            const Key &a = keys[i], &b = keys[i + 1];
+            if (b.frame - a.frame > 1.5 && !(a.user && b.user)) return std::nullopt;  // lost in between
+            const double s = (f - a.frame) / (b.frame - a.frame);
+            return std::make_pair(a.x + (b.x - a.x) * s, a.y + (b.y - a.y) * s);
+        }
+    }
+    return std::nullopt;
+}
+
+Fit pinSolve(const json& tracks, double ref, double frame, const std::vector<int>* which, int smooth) {
+    const std::vector<int> ids = which ? *which : pinTracks(tracks);
+    auto pos = [&](const json& t, double f) -> std::optional<std::pair<double, double>> {
+        auto c = trackedAt(t, f);
+        if (!c || smooth <= 1) return c;
+        double sx = 0, sy = 0;
+        int n = 0;
+        for (int k = -(smooth - 1) / 2; k <= smooth / 2; ++k)
+            if (auto q = trackedAt(t, f + k)) {
+                sx += q->first, sy += q->second;
+                ++n;
+            }
+        return std::make_pair(sx / n, sy / n);
+    };
+    std::vector<PointPair> pts;
+    for (int i : ids) {
+        if (!tracks.is_array() || i < 0 || i >= (int)tracks.size()) continue;
+        auto a = pos(tracks[i], ref), b = pos(tracks[i], frame);
+        if (a && b) pts.push_back({a->first, a->second, b->first, b->second});
+    }
+    return fitPoints(pts, 4);
+}
+
+H9 trackerMatrix(const json& p, double frame) {
+    if (!p.is_object()) return H9();
+    const std::string mode = p.value("transform", std::string("none"));
+    if (!isPinMode(mode)) return H9::of(trackerTransform(p, frame));
+    if (!p.contains("tracks") || !p["tracks"].is_array()) return H9();
+    int smooth = 0;
+    if (p.contains("smooth") && p["smooth"].is_array() && !p["smooth"].empty() && p["smooth"][0].is_number())
+        smooth = (int)std::lround(p["smooth"][0].get<double>());
+    Fit f = pinSolve(p["tracks"], referenceFrame(p, frame), frame, nullptr, smooth);
+    if (!f.ok) return H9();
+    return mode == "corner pin stabilize" ? f.H.inverse() : f.H;
+}
+
+// ------------------------------------------------------------------ gap filling
+
+namespace {
+bool trusted(const Key& k, double redoAbove) {
+    if (k.filled) return false;
+    if (k.user) return true;
+    return redoAbove <= 0 || errorOf(k) <= redoAbove;
+}
+bool wholeFrame(double f) { return std::fabs(f - std::round(f)) < 1e-6; }
+}  // namespace
+
+FillReport fillGaps(json& tracks, const std::vector<int>& which, const FillOptions& o) {
+    FillReport rep;
+    if (!tracks.is_array()) return rep;
+    const int N = (int)tracks.size();
+    // every track's trusted keys, by whole frame
+    std::vector<std::map<int, Key>> good(N);
+    for (int i = 0; i < N; ++i)
+        for (auto& k : keysOf(tracks[i]))
+            if (wholeFrame(k.frame) && trusted(k, o.redoAbove)) good[i][(int)std::lround(k.frame)] = k;
+    const bool useOthers = o.method != "smooth" && o.method != "linear";
+    const bool interp = o.method != "from other tracks";
+    const bool linear = o.method == "linear";
+    constexpr int kNone = std::numeric_limits<int>::min();
+
+    for (int ti : std::set<int>(which.begin(), which.end())) {
+        if (ti < 0 || ti >= N) continue;
+        const std::map<int, Key>& G = good[ti];
+        if (G.empty()) continue;
+        struct Job {
+            int f, a, b;  // the frame; the good frames before / after it (kNone: none)
+        };
+        std::vector<Job> jobs;
+        if (o.inside)
+            for (auto it = G.begin(); std::next(it) != G.end(); ++it) {
+                const int a = it->first, b = std::next(it)->first;
+                if (b - a < 2 || (o.maxGap > 0 && b - a - 1 > o.maxGap)) continue;
+                for (int f = a + 1; f < b; ++f) jobs.push_back({f, a, b});
+            }
+        if (o.before) {
+            const int a0 = G.begin()->first, lo = (int)std::lround(o.first);
+            if (o.maxGap <= 0 || a0 - lo <= o.maxGap)
+                for (int f = lo; f < a0; ++f) jobs.push_back({f, kNone, a0});
+        }
+        if (o.after) {
+            const int b0 = G.rbegin()->first, hi = (int)std::lround(o.last);
+            if (o.maxGap <= 0 || hi - b0 <= o.maxGap)
+                for (int f = b0 + 1; f <= hi; ++f) jobs.push_back({f, b0, kNone});
+        }
+        if (jobs.empty()) continue;
+        std::vector<int> helpers;
+        for (int h = 0; h < N; ++h)
+            if (h != ti && tracks[h].value("enabled", true) && !good[h].empty()) helpers.push_back(h);
+
+        // the track carried from its good frame `anchor` to `f` by the helpers' motion
+        auto carry = [&](int anchor, int f, double& x, double& y) {
+            std::vector<PointPair> pts;
+            for (int h : helpers) {
+                auto ia = good[h].find(anchor), ib = good[h].find(f);
+                if (ia != good[h].end() && ib != good[h].end()) pts.push_back({ia->second.x, ia->second.y, ib->second.x, ib->second.y});
+            }
+            Fit fit = fitPoints(pts, 4);
+            if (!fit.ok) return false;
+            const Key& k = G.at(anchor);
+            fit.H.apply(k.x, k.y, x, y);
+            return std::isfinite(x) && std::isfinite(y);
+        };
+        // the track's own velocity at a good frame, from its neighbours (side: -1 before, +1 after)
+        auto velocity = [&](int at, int side, int span) -> std::pair<double, double> {
+            const Key& k = G.at(at);
+            for (int d = span; d >= 1; --d) {
+                auto it = G.find(at + side * d);
+                if (it != G.end()) return {(k.x - it->second.x) / (-side * d), (k.y - it->second.y) / (-side * d)};
+            }
+            return {0, 0};
+        };
+
+        std::map<int, Key> out;
+        for (const Job& j : jobs) {
+            Key k;
+            k.frame = j.f;
+            k.filled = true;
+            bool done = false;
+            if (useOthers) {
+                double ax = 0, ay = 0, bx = 0, by = 0;
+                const bool ha = j.a != kNone && carry(j.a, j.f, ax, ay), hb = j.b != kNone && carry(j.b, j.f, bx, by);
+                if (ha && hb) {
+                    const double w = double(j.f - j.a) / double(j.b - j.a);
+                    k.x = ax + (bx - ax) * w;
+                    k.y = ay + (by - ay) * w;
+                } else if (ha || hb) {
+                    k.x = ha ? ax : bx;
+                    k.y = ha ? ay : by;
+                }
+                done = ha || hb;
+                if (done) ++rep.fromTracks;
+            }
+            if (!done && interp) {
+                if (j.a != kNone && j.b != kNone) {
+                    const Key &A = G.at(j.a), &B = G.at(j.b);
+                    const double L = double(j.b - j.a), t = (j.f - j.a) / L;
+                    if (linear) {
+                        k.x = A.x + (B.x - A.x) * t;
+                        k.y = A.y + (B.y - A.y) * t;
+                    } else {  // cubic Hermite, matching the velocity either side (the chord where unknown)
+                        auto va = velocity(j.a, -1, 1), vb = velocity(j.b, +1, 1);
+                        if (!G.count(j.a - 1)) va = {(B.x - A.x) / L, (B.y - A.y) / L};
+                        if (!G.count(j.b + 1)) vb = {(B.x - A.x) / L, (B.y - A.y) / L};
+                        const double t2 = t * t, t3 = t2 * t;
+                        const double h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+                        k.x = h00 * A.x + h10 * L * va.first + h01 * B.x + h11 * L * vb.first;
+                        k.y = h00 * A.y + h10 * L * va.second + h01 * B.y + h11 * L * vb.second;
+                    }
+                } else {  // past an end: carry on at the speed of its last few frames
+                    const int e = j.a != kNone ? j.a : j.b, side = j.a != kNone ? -1 : +1;
+                    const Key& E = G.at(e);
+                    auto v = velocity(e, side, 5);
+                    k.x = E.x + v.first * (j.f - e);
+                    k.y = E.y + v.second * (j.f - e);
+                }
+                done = true;
+                ++rep.interpolated;
+            }
+            if (!done) {
+                ++rep.skipped;
+                continue;
+            }
+            // score and pattern shape from the good frames either side
+            const Key* A = j.a != kNone ? &G.at(j.a) : nullptr;
+            const Key* B = j.b != kNone ? &G.at(j.b) : nullptr;
+            const double w = A && B ? double(j.f - j.a) / double(j.b - j.a) : A ? 0.0 : 1.0;
+            const Key& P = A ? *A : *B;
+            const Key& Q = B ? *B : *A;
+            k.score = std::min(P.score, Q.score);
+            k.a = P.a + (Q.a - P.a) * w;
+            k.b = P.b + (Q.b - P.b) * w;
+            k.c = P.c + (Q.c - P.c) * w;
+            k.d = P.d + (Q.d - P.d) * w;
+            out[j.f] = k;
+        }
+        if (out.empty()) continue;
+        std::vector<Key> keys;
+        for (auto& k : keysOf(tracks[ti]))
+            if (!(wholeFrame(k.frame) && out.count((int)std::lround(k.frame)))) keys.push_back(k);
+        for (auto& [f, k] : out) keys.push_back(k);
+        std::sort(keys.begin(), keys.end(), [](const Key& a, const Key& b) { return a.frame < b.frame; });
+        tracks[ti]["keys"] = keysJson(keys);
+        rep.frames += (int)out.size();
+    }
+    return rep;
+}
+
+int clearFilled(json& tracks, const std::vector<int>& which) {
+    int n = 0;
+    if (!tracks.is_array()) return n;
+    for (int ti : std::set<int>(which.begin(), which.end())) {
+        if (ti < 0 || ti >= (int)tracks.size()) continue;
+        auto keys = keysOf(tracks[ti]);
+        const size_t before = keys.size();
+        keys.erase(std::remove_if(keys.begin(), keys.end(), [](const Key& k) { return k.filled; }), keys.end());
+        if (keys.size() == before) continue;
+        n += (int)(before - keys.size());
+        tracks[ti]["keys"] = keysJson(keys);
+    }
+    return n;
 }
 
 }  // namespace strata::track

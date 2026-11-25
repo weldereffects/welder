@@ -299,7 +299,20 @@ class _Tee:
             pass
 
 
-def inference_config(p, fps, temp_dir):
+# CorridorKey's temporal window (frames) when it can't size one from the GPU's free memory (its auto VRAM sizing
+# asks CUDA): by the card's memory, else the smallest safe one.
+_WINDOWS = ((20, 16), (14, 12), (10, 8), (0, 4))
+
+
+def fallback_window(vram_bytes):
+    gb = (vram_bytes or 0) / 2 ** 30
+    for need, w in _WINDOWS:
+        if gb >= need:
+            return w
+    return 4
+
+
+def inference_config(p, fps, temp_dir, dev=None):
     """CorridorKey's settings from the node's."""
     from pathlib import Path
     from corridorkey.runtime import InferenceConfig
@@ -317,6 +330,13 @@ def inference_config(p, fps, temp_dir):
         cfg.hann_chunk = window
         cfg.hann_stride = max(1, window // 2)
         cfg.low_vram = bool(p.get("low_vram", False))
+    elif dev is not None and dev.kind not in ("cuda", "rocm"):
+        # its auto sizing reads CUDA's free memory: on DirectML / XPU / the CPU, size the window from the card
+        cfg.auto_vram = False
+        window = fallback_window(dev.vram_bytes)
+        cfg.hann_chunk = window
+        cfg.hann_stride = max(1, window // 2)
+        cfg.low_vram = bool(p.get("low_vram", dev.vram_bytes is None))
     else:
         cfg.auto_vram = True  # the largest window that fits the GPU's free memory
     return cfg
@@ -328,9 +348,12 @@ def run_core(ctx, p):
         raise RuntimeError("connect the src input")
     hint = ctx.input("hint")
     root = ctx.require_model(MODEL_ID)
-    import torch
-    if not torch.cuda.is_available():
-        raise RuntimeError("CorridorKey needs an NVIDIA GPU (RTX 30-series or newer) with CUDA")
+    from ..device import current, requested
+    dev = current()
+    if not dev.is_gpu and requested() != "cpu":
+        raise RuntimeError("CorridorKey needs a GPU: an NVIDIA RTX (CUDA), an AMD Radeon (DirectML on Windows, ROCm on "
+                           "Linux) or an Intel Arc (XPU), with ML setup run for it. Set WELDER_ML_DEVICE=cpu to key "
+                           "on the CPU anyway (very slow)")
     work = os.path.join(ctx.jobdir, "corridorkey")
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work, exist_ok=True)
@@ -342,9 +365,16 @@ def run_core(ctx, p):
         from corridorkey.runtime import RuntimePaths, load_model, run_inference
         from corridorkey.video_io import WriterConfig
         ctx.progress(0.09, "loading CorridorKey", force=True)
-        model = load_model(RuntimePaths.from_package(root), device="cuda")
+        ctx.log(f"CorridorKey on {dev.describe()}")
+        try:
+            model = load_model(RuntimePaths.from_package(root), device=dev.torch_device)
+        except Exception as e:  # noqa: BLE001
+            if dev.kind in ("cuda", "rocm", "cpu"):
+                raise
+            raise RuntimeError(f"CorridorKey couldn't load on {dev.describe()}: {str(e).strip().splitlines()[0][:300]}. "
+                               "Set WELDER_ML_DEVICE=cpu to key on the CPU (very slow)") from e
         ctx.check()
-        cfg = inference_config(p, p.get("fps", 24.0), os.path.join(work, "tmp"))
+        cfg = inference_config(p, p.get("fps", 24.0), os.path.join(work, "tmp"), dev)
         out_dir = os.path.join(work, "out")
         state = {"error": None, "done": False}
 

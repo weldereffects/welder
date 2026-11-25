@@ -19,6 +19,21 @@ def _lazy(module, fn):
     return run
 
 
+def _gpu_routed(task, module, fn):
+    """A task that runs in the DirectML environment when that's where the GPU is (AMD / other DirectX 12 GPUs
+    on Windows: see strata_ml.subtask), else here."""
+    here = _lazy(module, fn)
+
+    def run(ctx, params):
+        from ..subtask import accelerated_python, run_in
+        py = accelerated_python(ctx.home, task)
+        if py:
+            return run_in(py, ctx, task, params)
+        return here(ctx, params)
+    run.__name__ = here.__name__
+    return run
+
+
 def registry():
     from .. import models
     return {
@@ -29,9 +44,9 @@ def registry():
         "splat_train": _lazy("splat", "train"),
         "reconstruct": _lazy("reconstruct", "run"),
         "depth": _lazy("depth", "run"),
-        "segment": _lazy("segment", "run"),
-        "textfind": _lazy("textfind", "run"),
-        "matte_refine": _lazy("matte_refine", "run"),
+        "segment": _gpu_routed("segment", "segment", "run"),
+        "textfind": _gpu_routed("textfind", "textfind", "run"),
+        "matte_refine": _gpu_routed("matte_refine", "matte_refine", "run"),
         "nerf_train": _lazy("nerf", "train"),
         "nerf_render": _lazy("nerf", "render"),
         "imagegen": _lazy("imagegen", "run"),
@@ -41,4 +56,6 @@ def registry():
 
 def core_tasks():
     """Tasks a child process (strata_ml.subtask) may run."""
-    return {"splat_train": _lazy("splat", "train_core"), "corridorkey": _lazy("corridorkey", "run_core")}
+    return {"splat_train": _lazy("splat", "train_core"), "corridorkey": _lazy("corridorkey", "run_core"),
+            "segment": _lazy("segment", "run"), "textfind": _lazy("textfind", "run"),
+            "matte_refine": _lazy("matte_refine", "run")}

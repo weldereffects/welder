@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, Tensor
 
-from sam2.modeling.position_encoding import apply_rotary_enc, compute_axial_cis
+from sam2.modeling.position_encoding import apply_rotary_enc, apply_rotary_enc_real, compute_axial_cis
 from sam2.modeling.sam2_utils import MLP
 
 
@@ -287,19 +287,32 @@ class RoPEAttention(Attention):
 
         # Apply rotary position encoding
         w = h = math.sqrt(q.shape[-2])
-        self.freqs_cis = self.freqs_cis.to(q.device)
-        if self.freqs_cis.shape[0] != q.shape[-2]:
-            self.freqs_cis = self.compute_cis(end_x=w, end_y=h).to(q.device)
+        num_k_rope = k.size(-2) - num_k_exclude_rope
         if q.shape[-2] != k.shape[-2]:
             assert self.rope_k_repeat
-
-        num_k_rope = k.size(-2) - num_k_exclude_rope
-        q, k[:, :, :num_k_rope] = apply_rotary_enc(
-            q,
-            k[:, :, :num_k_rope],
-            freqs_cis=self.freqs_cis,
-            repeat_freqs_k=self.rope_k_repeat,
-        )
+        if q.device.type not in ("cuda", "cpu"):
+            # Welder: DirectML (and some XPU drivers) have no complex tensors: the same rotation in real arithmetic
+            if self.freqs_cis.shape[0] != q.shape[-2]:
+                self.freqs_cis = self.compute_cis(end_x=w, end_y=h)
+            key = (str(q.device), self.freqs_cis.shape[0])
+            if getattr(self, "_rope_real_key", None) != key:
+                fc = self.freqs_cis.cpu()
+                self._rope_real = (fc.real.contiguous().to(q.device), fc.imag.contiguous().to(q.device))
+                self._rope_real_key = key
+            cos, sin = self._rope_real
+            q, k[:, :, :num_k_rope] = apply_rotary_enc_real(
+                q, k[:, :, :num_k_rope], cos, sin, repeat_freqs_k=self.rope_k_repeat
+            )
+        else:
+            self.freqs_cis = self.freqs_cis.to(q.device)
+            if self.freqs_cis.shape[0] != q.shape[-2]:
+                self.freqs_cis = self.compute_cis(end_x=w, end_y=h).to(q.device)
+            q, k[:, :, :num_k_rope] = apply_rotary_enc(
+                q,
+                k[:, :, :num_k_rope],
+                freqs_cis=self.freqs_cis,
+                repeat_freqs_k=self.rope_k_repeat,
+            )
 
         dropout_p = self.dropout_p if self.training else 0.0
         # Attention

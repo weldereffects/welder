@@ -237,3 +237,29 @@ def apply_rotary_enc(
             freqs_cis = freqs_cis.unsqueeze(2).expand(-1, -1, r, -1, -1).flatten(2, 3)
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq).to(xq.device), xk_out.type_as(xk).to(xk.device)
+
+
+def apply_rotary_enc_real(
+    xq: torch.Tensor,
+    xk: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    repeat_freqs_k: bool = False,
+):
+    """apply_rotary_enc without complex tensors (Welder: for GPU backends that have none, such as DirectML).
+    cos, sin: the real and imaginary parts of freqs_cis, (seq, dim / 2), on xq's device."""
+
+    def rot(x, c, s):
+        xf = x.float().reshape(*x.shape[:-1], -1, 2)
+        a, b = xf[..., 0], xf[..., 1]
+        c = c.view(*([1] * (x.ndim - 2)), *c.shape)
+        s = s.view(*([1] * (x.ndim - 2)), *s.shape)
+        return torch.stack((a * c - b * s, a * s + b * c), dim=-1).flatten(3).type_as(x)
+
+    xq_out = rot(xq, cos, sin)
+    if xk.shape[-2] == 0:
+        return xq_out, xk
+    if repeat_freqs_k:
+        r = xk.shape[-2] // xq.shape[-2]
+        cos, sin = cos.repeat(r, 1), sin.repeat(r, 1)
+    return xq_out, rot(xk, cos, sin)

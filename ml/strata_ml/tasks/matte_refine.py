@@ -126,8 +126,9 @@ def missing_message(model):
 def load_vitmatte(ctx, model, device=None):
     import torch
     from transformers import VitMatteForImageMatting, VitMatteImageProcessor
-    dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    key = (model, dev)
+    from ..device import current
+    dev = device or current().torch_device
+    key = (model, str(dev))
     if key not in _LOADED:
         d = ctx.require_model(model)
         proc = VitMatteImageProcessor.from_pretrained(d)
@@ -155,8 +156,9 @@ def load_mematte(ctx, device=None):
     import sys
     import torch
     d = ctx.require_model("mematte")
-    dev = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    key = ("mematte", dev)
+    from ..device import current
+    dev = device or current().torch_device
+    key = ("mematte", str(dev))
     if key not in _LOADED:
         if d not in sys.path:
             sys.path.insert(0, d)
@@ -211,11 +213,20 @@ def coarse_matte(entry, frame, W, H, mask_input=None):
 def refine_with_fallback(fn, u8, tri, size, ctx, model, fake=False):
     """tiled(), and when the GPU runs out of memory: smaller tiles (down to 256 px), then the model on the CPU.
     Returns (alpha, the model as finally used, the tile size), so the later frames start from there."""
+    from ..device import current, is_backend_failure
     from ..util import free_gpu, is_oom
     while True:
         try:
             return tiled(fn, u8, tri, size=size), fn, size
         except Exception as e:  # noqa: BLE001
+            if not is_oom(e) and not fake and not getattr(fn, "on_cpu", False) and \
+                    is_backend_failure(e, current()):
+                ctx.log(f"the GPU backend couldn't run the refiner ({str(e).strip().splitlines()[0][:200]}): "
+                        "refining on the CPU (slower)")
+                free_gpu()
+                fn = load_model(ctx, model, device="cpu")
+                fn.on_cpu = True
+                continue
             if not is_oom(e):
                 raise
             free_gpu()

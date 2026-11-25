@@ -24,17 +24,27 @@ def load(ctx):
     for mod in ("torch", "transformers"):
         if importlib.util.find_spec(mod) is None:
             raise RuntimeError(f"the ML worker's Python has no '{mod}': click 'Update ML' in the ML worker row")
-    import torch
     from transformers import Owlv2ForObjectDetection, Owlv2Processor
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
-    if dev in _LOADED:
-        return _LOADED[dev]
+    from ..device import current
+    dev = current().torch_device
+    key = str(dev)
+    if key in _LOADED:
+        return _LOADED[key]
     d = ctx.require_model(MODEL)
     proc = Owlv2Processor.from_pretrained(d)
     model = Owlv2ForObjectDetection.from_pretrained(d).to(dev).eval()
     _LOADED.clear()
-    _LOADED[dev] = (proc, model, dev)
-    return _LOADED[dev]
+    _LOADED[key] = (proc, model, dev)
+    return _LOADED[key]
+
+
+def to_cpu():
+    """Move the loaded detector to the CPU (its GPU backend couldn't run it)."""
+    for key, (proc, model, _) in list(_LOADED.items()):
+        _LOADED.clear()
+        _LOADED["cpu"] = (proc, model.to("cpu"), "cpu")
+        return _LOADED["cpu"]
+    return None
 
 
 def nms(boxes, scores, iou=0.5):
@@ -51,14 +61,26 @@ def detector(ctx, threshold=0.2, max_boxes=16):
     """A function (H x W x 3 uint8 sRGB image, [queries]) -> [{"box", "score", "query", "embedding"}] in the image's
     pixels. The embedding (OWLv2's per-box class embedding) says what the thing looks like, for matching it
     again later."""
-    proc, model, dev = load(ctx)
+    state = {"m": load(ctx)}
 
-    def detect(img_u8, queries):
+    def forward(img_u8, queries):
         import torch
-        H, W = img_u8.shape[:2]
+        proc, model, dev = state["m"]
         with torch.inference_mode():
             inputs = proc(text=[list(queries)], images=img_u8, return_tensors="pt").to(dev)
-            out = model(**inputs)
+            return model(**inputs)
+
+    def detect(img_u8, queries):
+        from ..device import is_backend_failure
+        H, W = img_u8.shape[:2]
+        try:
+            out = forward(img_u8, queries)
+        except Exception as e:  # noqa: BLE001
+            if not is_backend_failure(e, state["m"][2]):
+                raise
+            ctx.log(f"the GPU backend couldn't run OWLv2 ({str(e).strip().splitlines()[0][:200]}): on the CPU")
+            state["m"] = to_cpu()
+            out = forward(img_u8, queries)
         logits = out.logits[0].float().cpu().numpy()          # patches x queries
         boxes = out.pred_boxes[0].float().cpu().numpy()       # cx, cy, w, h of the padded square, 0-1
         emb = out.class_embeds[0].float().cpu().numpy()       # patches x dim

@@ -4,7 +4,9 @@ affiliates, Apache License 2.0 (LICENSE in this folder).
 
 Changes for Welder: only the sam2 package (no training code, no training configs, no CUDA
 extension sources; iopath replaced by a plain open() in modeling/backbones/hieradet.py - the optional hole-filling post-process falls back as upstream does); the
-legacy top-level sam2_hiera_*.yaml config links are left out (the sam2.1 configs are used).
+legacy top-level sam2_hiera_*.yaml config links are left out (the sam2.1 configs are used); RoPE attention
+(modeling/sam/transformer.py) does its rotation in real arithmetic on GPU backends other than CUDA (apply_rotary_enc_real
+in modeling/position_encoding.py), since DirectML has no complex tensors.
 This folder goes on sys.path so the package keeps its own name (its Hydra configs are found as "sam2").
 
 The SAM 2.1 checkpoints (facebook/sam2.1-hiera-*) are a separate download, Apache 2.0.

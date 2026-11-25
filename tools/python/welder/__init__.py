@@ -563,6 +563,31 @@ class Node:
     def disabled(self, on):
         self["disable"] = bool(on)
 
+    # -- Tracker
+    def fill_gaps(self, tracks=None, method="auto", inside=True, before=False, after=True,
+                  first=None, last=None, redo_above=0, max_gap=0):
+        """Tracker: fill the frames where tracks lost their feature (all tracks, or the given
+        names / indices). method: "auto", "from other tracks", "smooth" or "linear". inside:
+        gaps between tracked frames; before / after: out to `first` / `last` (the comp's range
+        by default). redo_above refills keys with a higher error; max_gap leaves longer gaps.
+        Returns {"filled", "from_tracks", "interpolated", "skipped"}."""
+        p = {"node": self._name, "method": method, "inside": bool(inside), "before": bool(before),
+             "after": bool(after), "redo_above": float(redo_above), "max_gap": int(max_gap)}
+        if tracks is not None:
+            p["tracks"] = list(tracks)
+        if first is not None:
+            p["first"] = float(first)
+        if last is not None:
+            p["last"] = float(last)
+        return _call("tracker.fill_gaps", p)
+
+    def clear_filled(self, tracks=None):
+        """Tracker: remove the frames fill_gaps filled. Returns {"removed"}."""
+        p = {"node": self._name}
+        if tracks is not None:
+            p["tracks"] = list(tracks)
+        return _call("tracker.clear_filled", p)
+
     # -- pixels
     def format(self, frame=None):
         """{"width", "height", "pixel_aspect", "bbox", "channels"} of the node's output."""

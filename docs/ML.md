@@ -1,6 +1,6 @@
 # AI nodes and the ML worker
 
-The nodes in the **AI** toolbar run on your NVIDIA GPU through the **ML worker**,
+The nodes in the **AI** toolbar run on your GPU through the **ML worker**,
 a Python process that Welder starts in the background, in the same way ComfyUI
 runs models. The worker never holds up the editor. You press **Run**, keep
 working, and the node shows the result when it's ready.
@@ -34,6 +34,9 @@ Two 3D nodes work without the worker:
    * `venv-corridorkey`: Python 3.12 and PyTorch 2.9.1 (CUDA 12.8) for
      CorridorKey, which needs older numpy and transformers than the others.
 
+   On a PC without an NVIDIA GPU it sets up for the GPU it finds instead (see
+   [AMD and Intel GPUs](#amd-and-intel-gpus)).
+
    It installs [uv](https://astral.sh/uv) to do this if you don't have it. Run
    it again any time: finished steps are kept. Python itself goes in the ML
    home too (`ml\python`), so the whole folder can be copied to another machine
@@ -45,6 +48,36 @@ Two 3D nodes work without the worker:
    resumable and go to `ml\models`. LTX-2.5 itself is 72 GB (the distilled
    transformer, the Gemma text encoder, VAEs and the upscaler). Each IC-LoRA is
    0.3–1.3 GB.
+
+### AMD and Intel GPUs
+
+**Set up ML** looks at the display adapters Windows lists and installs the PyTorch
+build for the best one. NVIDIA (CUDA) runs every AI node. On other GPUs the AI
+masking nodes (TrackMask with its text find and matte refiners, and CorridorKey)
+run on the GPU, and the rest run on the CPU:
+
+| GPU | How PyTorch reaches it | What runs on the GPU |
+|---|---|---|
+| NVIDIA GeForce / RTX | CUDA 12.8 | everything |
+| Intel Arc (A- and B-series, Core Ultra graphics) | PyTorch's XPU build | TrackMask, text find, the matte refiners, CorridorKey, Depth |
+| AMD Radeon on Windows | DirectML (`torch-directml`, in its own `venv-directml`) | TrackMask, text find, the matte refiners, CorridorKey |
+| AMD Radeon on Linux | ROCm 6.4 | everything but gsplat's fast splat kernels (CUDA only) |
+| none of these | the CPU build | everything, slowly |
+
+* The ML section shows what the worker found, for example *running on Intel(R)
+  Arc(TM) B580 Graphics via Intel XPU*, or *AI masking on AMD Radeon RX 7900 XTX via
+  DirectML; other ML nodes on the CPU*.
+* When a backend can't run part of a model (DirectML lacks some of PyTorch's
+  operators), or runs out of memory, the job carries on on the CPU and its log says so.
+* To pick a GPU yourself, run `bin\ml\setup-ml.bat "<ml home>" amd` (or `nvidia`,
+  `intel`, `cpu`), or set `WELDER_ML_GPU` before **Set up ML**. Running setup again
+  after a GPU change swaps the PyTorch builds in place.
+* `WELDER_ML_DEVICE` makes the worker use one backend (`cuda`, `rocm`, `xpu`,
+  `directml`, `cpu`), and `WELDER_ML_DEVICE_INDEX` picks among several GPUs. Stop
+  the worker in the ML section after changing them.
+* DirectML runs on PyTorch 2.4.1 (the newest `torch-directml` supports), with
+  full-precision maths, so it's slower than CUDA on a comparable card. TrackMask
+  loads SAM 2.1 for every job there instead of keeping it loaded between jobs.
 
 ### Installing models by hand
 
@@ -404,8 +437,11 @@ worker started by hand reads the model folders Welder uses from
 * The plates CorridorKey reads are staged as uncompressed EXRs inside the job's folder
   in Welder's cache folder (Preferences), on the machine that runs the key, and
   deleted when it's done: a fast local disk there is quickest.
-* **Needs:** an NVIDIA RTX 30-series or newer (CUDA), and `venv-corridorkey` (the
-  panel says **Update ML** when it's missing).
+* **Needs:** a GPU: an NVIDIA RTX 30-series or newer (CUDA) works best; Intel Arc
+  (XPU) and AMD Radeon (DirectML on Windows, ROCm on Linux) run it too (see
+  [AMD and Intel GPUs](#amd-and-intel-gpus)). Away from CUDA it picks its temporal
+  window from the card's memory instead of measuring free memory. And `venv-corridorkey`
+  (the panel says **Update ML** when it's missing).
 * **It isn't part of Welder.** Its licence can't be bundled with Welder's AGPL, so
   **Download** (about 5 GB) fetches CorridorKey's own code from Corridor Digital's
   GitHub (at the commit Welder was tested with) and runs its `download_weights.py`,

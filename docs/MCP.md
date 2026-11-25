@@ -40,6 +40,7 @@ its server is off, the client is told so.
 | `connect` | Connect or disconnect an input, by index or label (`"A"`, `"mask"`) |
 | `set_knobs` | Set knobs, or key them at a frame, or give them expressions: one undo step |
 | `rename_node`, `delete_nodes`, `set_comp` | Rename, delete, change the frame range / fps / size |
+| `fill_track_gaps` | Fill the frames where a Tracker's tracks lost their feature (from the other tracks, or interpolated), or clear them |
 | `view_image` | A node's picture at a frame as a PNG (sRGB, 512 px by default; a region to look closer) |
 | `sample_pixels` | Exact linear values of every channel at up to 256 points |
 | `render` | Render Write nodes over a frame range |

@@ -110,7 +110,7 @@ rpc("notifications/initialized", notify=True)
 check(rpc("ping")["result"] == {}, "ping")
 
 tools = {t["name"]: t for t in rpc("tools/list")["result"]["tools"]}
-for t in ["get_comp", "create_node", "connect", "set_knobs", "view_image", "sample_pixels", "render", "save_comp"]:
+for t in ["get_comp", "create_node", "connect", "set_knobs", "view_image", "sample_pixels", "render", "save_comp", "fill_track_gaps"]:
     check(t in tools and tools[t]["inputSchema"]["type"] == "object", "tool " + t)
 check(("undo" in tools) == editor and ("show_in_editor" in tools) == editor, "editor tools only in the editor")
 check(tools["get_comp"]["annotations"]["readOnlyHint"] and not tools["create_node"]["annotations"]["readOnlyHint"],
@@ -133,6 +133,18 @@ check(grade["inputs"] == ["Flat"] and grade["position"][1] > flat["position"][1]
 px, _ = call("sample_pixels", node=grade["name"], points=[[10, 10], [300, 170]])
 v = px["samples"][0]["values"]
 check(close(v["R"], 1.0) and close(v["G"], 0.5) and close(v["B"], 0.25), "sample_pixels through the Grade")
+
+# a Tracker whose second track was lost for frames 3-4: filled from the first
+keys = [[f, 10.0 + 2 * f, 20.0, 0.99, 1 if f == 1 else 0] for f in range(1, 7)]
+trk, _ = call("create_node", type="Tracker", name="Trk", knobs={"tracks": [
+    {"name": "a", "keys": keys}, {"name": "b", "keys": [[k[0], k[1], 40.0, k[3], k[4]] for k in keys if k[0] not in (3, 4)]}]})
+fill, _ = call("fill_track_gaps", node="Trk", tracks=["b"], after=False)
+check(fill and fill["filled"] == 2 and fill["from_tracks"] == 2, "fill_track_gaps")
+cleared, _ = call("fill_track_gaps", node="Trk", clear=True)
+check(cleared and cleared["removed"] == 2, "fill_track_gaps clear")
+_, err = call("fill_track_gaps", node=grade["name"])
+check(err and "not a Tracker" in err, "fill_track_gaps on a non-Tracker is an error")
+call("delete_nodes", nodes=["Trk"])
 
 res, _ = call("set_knobs", node=grade["name"], values={"mix": 0.0}, frame=1)
 call("set_knobs", node=grade["name"], values={"mix": 1.0}, frame=9)

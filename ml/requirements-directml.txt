@@ -1,0 +1,15 @@
+# Welder's DirectML environment (venv-directml): AMD Radeon and other DirectX 12 GPUs on Windows.
+# PyTorch 2.4.1 with Microsoft's torch-directml is installed first (see setup-ml.bat). The AI masking tasks run
+# here: TrackMask (SAM 2.1, its code bundled in strata_ml/vendor/sam2pkg), text find (OWLv2) and the matte
+# refiners (ViTMatte). Kept to what PyTorch 2.4 works with.
+numpy>=1.26,<2
+scipy
+pillow
+opencv-python-headless>=4.11,<5
+hydra-core
+einops
+tqdm
+transformers>=4.45,<5
+safetensors
+huggingface_hub
+packaging

@@ -146,6 +146,9 @@ and pixels: `format(frame)`, `channels(frame)`, `sample(x, y, frame)` (a dict by
 counts up from the bottom row), `render(path, frame, box=None)` (.exr, .tif, .png, .npy...),
 `image(frame, box=None)` (a numpy array, height x width x channels, top row first, and the
 channel names; needs numpy).
+A Tracker also has `fill_gaps(tracks=None, method="auto", inside=True, before=False,
+after=True, first=None, last=None, redo_above=0, max_gap=0)` (fill the frames where tracks lost
+their feature; see the Tracker's Fill gaps) and `clear_filled(tracks=None)`.
 
 **Knob**: `value` (at the comp's first frame; assign to set), `get(frame)`, `set(value,
 index=None)`, `reset()`, `set_key(frame, value, index=None)`, `keys()`,
@@ -190,7 +193,8 @@ The first request must be `hello` with the token; a connection without it is clo
 commands are `app.info`, `message`, `comp.open`, `comp.new`, `comp.save`, `comp.info`,
 `comp.set`, `comp.nodes`, `comp.types`, `node.create`, `node.delete`, `node.rename`,
 `node.info`, `node.set_input`, `node.set_position`, `knob.list`, `knob.get`, `knob.set`,
-`knob.set_key`, `knob.set_expression`, `knob.keys`, `knob.clear_animation`, `render.info`,
+`knob.set_key`, `knob.set_expression`, `knob.keys`, `knob.clear_animation`, `tracker.fill_gaps`,
+`tracker.clear_filled`, `render.info`,
 `render.sample`, `render.image`, `render.png` (a small sRGB preview, base64), `render.write` and
 `batch`, and in the editor `editor.selected`, `editor.select`, `editor.frame`,
 `editor.set_frame`, `editor.view`, `editor.viewed`, `editor.show_panel` (and `editor.undo` /

@@ -64,19 +64,20 @@ def load_predictor(ctx, size):
     for mod in ("torch", "torchvision", "hydra", "PIL"):
         if importlib.util.find_spec(mod) is None:
             raise RuntimeError(f"the ML worker's Python has no '{mod}': run Set up ML again (it adds what TrackMask needs)")
-    import torch
     _vendor_path()
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
-    key = (size, dev)
+    from ..device import current
+    d = current()  # NVIDIA (CUDA), AMD (ROCm / DirectML), Intel (XPU), or the CPU
+    key = (size, d.kind, d.index)
     if key in _LOADED:
-        return _LOADED[key], dev
+        return _LOADED[key], d.torch_device
     from sam2.build_sam import build_sam2_video_predictor
     cfg, ckpt = CONFIGS[size]
     path = ctx.model_file(model_id(size), ckpt)
-    pred = build_sam2_video_predictor(cfg, path, device=dev)
+    ctx.log(f"SAM 2.1 {size} on {d.describe()}")
+    pred = build_sam2_video_predictor(cfg, path, device=d.torch_device)
     _LOADED.clear()  # one at a time: they're big
     _LOADED[key] = pred
-    return pred, dev
+    return pred, d.torch_device
 
 
 def write_jpegs(frames_linear, folder, max_size):
@@ -305,7 +306,8 @@ def infer_masks(pred, dev, folder, prompts, n, needed=None, preview=False, repor
     try:
         import torch
         ctx_inf = torch.inference_mode()
-        ctx_amp = torch.autocast("cuda", dtype=torch.bfloat16) if dev == "cuda" else _Null()
+        from ..device import autocast
+        ctx_amp = autocast(dev)  # bfloat16 on CUDA / ROCm / XPU; full precision on DirectML and the CPU
     except ImportError:  # (the tests' stand-in model)
         ctx_inf = ctx_amp = _Null()
     if needed is None:
@@ -519,24 +521,34 @@ def auto_cache_mb():
 
 def track_with_fallback(pred, dev, folder, prompts, n, need, preview, report, cache_mb, log):
     """infer_masks, and when the GPU runs out of memory: again with a small feature cache, then on the CPU (slow,
-    but the job finishes). Returns (mattes, predictor, device, cache_mb) as finally used."""
+    but the job finishes). A GPU backend that can't run SAM (an operator DirectML or XPU lacks, a driver error)
+    goes straight to the CPU. Returns (mattes, predictor, device, cache_mb) as finally used."""
+    from ..device import is_backend_failure
     from ..util import free_gpu, is_oom
-    for attempt in range(3):
+    attempt = 0
+    while True:
         try:
             return infer_masks(pred, dev, folder, prompts, n, need, preview, report, cache_mb, log), pred, dev, cache_mb
         except Exception as e:  # noqa: BLE001
-            if not is_oom(e) or attempt == 2:
+            oom = is_oom(e)
+            if not oom and is_backend_failure(e, dev):
+                log(f"the GPU backend couldn't run SAM ({str(e).strip().splitlines()[0][:200]}): tracking on the CPU (slower)")
+            elif not oom or attempt == 2:
                 raise
-            free_gpu()
-            if attempt == 0 and cache_mb > 128:
+            elif attempt == 0 and cache_mb > 128:
+                attempt = 1
+                free_gpu()
                 cache_mb = 128
                 log(f"GPU out of memory: tracking again with a {cache_mb} MB feature cache")
+                continue
             else:
                 log("GPU out of memory again: tracking on the CPU (slower)")
-                if hasattr(pred, "to"):
-                    pred = pred.to("cpu")
-                dev = "cpu"
-                _LOADED.clear()  # (the next job loads it on the GPU again)
+            attempt = 2
+            free_gpu()
+            if hasattr(pred, "to"):
+                pred = pred.to("cpu")
+            dev = "cpu"
+            _LOADED.clear()  # (the next job loads it on the GPU again)
 
 
 def run(ctx, p):

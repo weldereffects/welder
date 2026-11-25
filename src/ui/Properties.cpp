@@ -2530,6 +2530,25 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         return;
     }
     if (k.info == "tracker_xform") {  // Tracker: the transform it applies on this frame (read-only, like the classic knobs)
+        const json& tp = c.node->params.data;
+        if (track::isPinMode(tp.value("transform", std::string("none")))) {  // the corner pin: what it solved from
+            const json& tr = tp.contains("tracks") ? tp["tracks"] : json::array();
+            const auto pins = track::pinTracks(tr);
+            track::Fit fit = track::pinSolve(tr, track::referenceFrame(tp, c.app.frame), c.app.frame);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("corner pin");
+            ImGui::SameLine(kit::labelWidth());
+            if (pins.size() < 4)
+                ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.3f, 1), "needs 4 tracks with T on (has %d)", (int)pins.size());
+            else if (!fit.ok)
+                ImGui::TextColored(ImVec4(0.95f, 0.4f, 0.35f, 1), "no solve on this frame (no tracks here)");
+            else if (fit.model < 4)
+                ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.3f, 1), "%s from %d of %d tracks (the others are lost here: Fill gaps)",
+                                   track::modelName(fit.model), fit.used, (int)pins.size());
+            else
+                ImGui::Text("perspective from %d of %d tracks, %.3f px rms", fit.used, (int)pins.size(), fit.rms);
+            return;
+        }
         track::Solve sh;
         track::trackerTransform(c.node->params.data, c.app.frame, &sh);
         auto ro = [&](const char* label, const char* fmt, std::initializer_list<double> vals) {
