@@ -51,6 +51,9 @@ class FrameSeq:
         self.frames = list(spec.get("frames", []))
         self.width = int(spec.get("width", 0))
         self.height = int(spec.get("height", 0))
+        # the plate's own size: Welder may write the frames smaller than the plate (TrackMask: at most max_size)
+        self.plate_width = int(spec.get("plate_width") or self.width)
+        self.plate_height = int(spec.get("plate_height") or self.height)
         self.channels = list(spec.get("channels", ["R", "G", "B", "A"]))
         self.pattern = spec.get("pattern", "")
 

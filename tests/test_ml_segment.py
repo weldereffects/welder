@@ -168,6 +168,26 @@ class SegmentTask(unittest.TestCase):
         m = self.matte(jd, 1001)
         self.assertGreater(m[25, 32], 0.99)
 
+    def test_frames_written_smaller_than_the_plate(self):
+        """Welder writes TrackMask's plate at most max_size: the clicks stay in the plate's pixels."""
+        from strata_ml.util import JobContext
+        frames = [1, 2, 3]
+        arrays = [np.dstack([np.full((100, 200), 0.2, np.float32)] * 3 + [np.ones((100, 200), np.float32)])
+                  for _ in frames]
+        params = {"model": "large", "max_size": 200, "prompts": [{"frame": 2, "points": [[1000, 500, 1]]}]}
+        jd = write_job(self.home, "small", frames, arrays, params)
+        job = json.load(open(os.path.join(jd, "job.json")))
+        job["inputs"]["src"].update({"plate_width": 2000, "plate_height": 1000})  # the plate: 2000 x 1000
+        json.dump(job, open(os.path.join(jd, "job.json"), "w"))
+        ctx = JobContext(self.home, jd)
+        try:
+            r = self.seg.run(ctx, params)
+        finally:
+            ctx.close()
+        self.assertEqual(self.fake.calls[0], ("init", 3, (200, 100)))
+        self.assertIn(("add", 1, 1, 100.0, 50.0), self.adds())  # (1000, 500) of 2000 x 1000 -> the middle
+        self.assertEqual(r["outputs"]["matte"]["frames"], frames)
+
     def test_objects_on_different_frames_each_tracked_from_their_own(self):
         frames = list(range(1, 11))
         objs = [{"id": 1, "anchors": [{"frame": 2, "points": [[100, 50, 1]]}]},

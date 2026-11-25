@@ -1732,6 +1732,9 @@ public:
         }
         std::sort(maskFrames.begin(), maskFrames.end());
         s.inputs = {{"src", 0, true}};
+        // SAM works on frames of at most max_size (1280 px): write the plate that small, not at full size
+        // (a 4.6K EXR plate is ~115 MB a frame as half floats, so a 1600-frame shot would be ~190 GB).
+        s.inputs[0].maxSize = std::max(0, (int)params.num("max_size", 0, 1280));
         if (!maskFrames.empty()) {
             InputSpec mi{"mask", 1, false};
             mi.frames = maskFrames;

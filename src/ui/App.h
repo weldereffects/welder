@@ -93,6 +93,7 @@ struct MLExportStatus {
     std::string node, slot;
     int done = 0, total = 0;
     std::string label;
+    bool failed = false;  // the job couldn't be written: label says why (shown by the node's button)
 };
 
 // Render > Render... (the classic Render dialog): which frames and Writes, and how.

@@ -76,6 +76,7 @@ void App::mlLoop(std::string name, std::string slot) {
     auto fail = [&](const std::string& msg) {
         std::lock_guard<std::mutex> l(mlM_);
         mlStatus_.running = false;
+        mlStatus_.failed = true;
         mlStatus_.label = msg;
         mlMessages_.push_back(name + ": " + msg);
     };
@@ -114,6 +115,7 @@ void App::mlLoop(std::string name, std::string slot) {
                     continue;
                 }
                 h = hashString(in.name, h);
+                if (in.maxSize > 0) h = hashCombine(h, (uint64_t)in.maxSize);
                 if (in.frame) h = hashCombine(h, e.hash(src, *in.frame));
                 else if (!in.frames.empty())
                     for (int f : in.frames) h = hashCombine(h, e.hash(src, f));
@@ -161,7 +163,7 @@ void App::mlLoop(std::string name, std::string slot) {
         int done = 0;
         for (auto& in : spec.inputs) {
             json fl = json::array();
-            int W = 0, H = 0;
+            int W = 0, H = 0, plateW = 0, plateH = 0;
             bool connected = true;
             const std::vector<int> inFrames = in.frame ? std::vector<int>{*in.frame} : !in.frames.empty() ? in.frames : frames;
             for (int f : inFrames) {
@@ -203,13 +205,37 @@ void App::mlLoop(std::string name, std::string slot) {
                         }
                     }
                 }
+                plateW = W, plateH = H;
+                if (in.maxSize > 0 && std::max(W, H) > in.maxSize) {  // smaller: an area average
+                    const double sc = (double)in.maxSize / std::max(W, H);
+                    const int w2 = std::max(1, (int)std::lround(W * sc)), h2 = std::max(1, (int)std::lround(H * sc));
+                    std::vector<float> small((size_t)w2 * h2 * 4, 0.0f);
+                    for (int y = 0; y < h2; ++y) {
+                        const int y0 = (int)((long long)y * H / h2), y1 = std::max(y0 + 1, (int)((long long)(y + 1) * H / h2));
+                        for (int x = 0; x < w2; ++x) {
+                            const int x0 = (int)((long long)x * W / w2), x1 = std::max(x0 + 1, (int)((long long)(x + 1) * W / w2));
+                            double acc[4] = {0, 0, 0, 0};
+                            for (int yy = y0; yy < y1; ++yy)
+                                for (int xx = x0; xx < x1; ++xx) {
+                                    const float* q = &buf[((size_t)yy * W + xx) * 4];
+                                    for (int k = 0; k < 4; ++k) acc[k] += q[k];
+                                }
+                            const double nPix = (double)(y1 - y0) * (x1 - x0);
+                            float* o = &small[((size_t)y * w2 + x) * 4];
+                            for (int k = 0; k < 4; ++k) o[k] = (float)(acc[k] / nPix);
+                        }
+                    }
+                    buf.swap(small);
+                    W = w2, H = h2;
+                }
                 std::string path = dir + "/in/" + in.name + "." + std::to_string(f) + ".npy";
-                if (!ml::writeNpy(path, buf.data(), W, H, 4, true)) throw std::runtime_error("can't write " + path);
+                if (!ml::writeNpy(path, buf.data(), W, H, 4, true))
+                    throw std::runtime_error("can't write " + path + " (is the cache folder's disk full?)");
                 fl.push_back(f);
             }
             if (!connected) continue;
             inputs[in.name] = {{"frames", fl}, {"pattern", "in/" + in.name + ".%d.npy"}, {"width", W}, {"height", H},
-                               {"channels", {"R", "G", "B", "A"}}};
+                               {"plate_width", plateW}, {"plate_height", plateH}, {"channels", {"R", "G", "B", "A"}}};
         }
         if (!points.empty() && !ml::writeNpy2D(dir + "/in/points.npy", points.data(), (int)(points.size() / 6), 6))
             throw std::runtime_error("can't write the points");

@@ -570,7 +570,9 @@ def run(ctx, p):
     ctx.progress(0.01, f"reading {len(frames)} frame(s)", force=True)
     cache_mb = int(p.get("embed_cache_mb", 0)) or auto_cache_mb()
     with tempfile.TemporaryDirectory(dir=ctx.jobdir) as td:
-        w, h, (sx, sy) = write_jpegs([src.rgb(f) for f in frames], td, int(p.get("max_size", 1280)))
+        w, h, _ = write_jpegs([src.rgb(f) for f in frames], td, int(p.get("max_size", 1280)))
+        # the clicks are in the plate's pixels; the frames may have been written smaller than the plate
+        sx, sy = w / max(1, src.plate_width), h / max(1, src.plate_height)
         prompts, texts = {}, {}
         for o in objects:
             oid = int(o.get("id", 1))
