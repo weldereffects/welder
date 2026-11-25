@@ -1,0 +1,100 @@
+// Merge (nodes/MergeNodes.cpp): one A input merged into the result, which holds B, with the
+// operation picked by p.op (the CPU's mergeOpNames order). Several A inputs are several dispatches
+// of one sequence, each with its own place in the A and parameter buffers. Video colorspace: the
+// first converts the result's colour to sRGB-encoded, the last back to linear, and A's colour is
+// converted as it's read. In place, one invocation per pixel, the CPU's maths in its order.
+#version 450
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) buffer Out { float o[]; };
+layout(std430, set = 0, binding = 1) readonly buffer A { float av[]; };
+// per A input, at p.prmOff: 32 (out channel, A channel) pairs, the result's video channels (3),
+// A's video channels (3)
+layout(std430, set = 0, binding = 2) readonly buffer Prm { int prm[]; };
+
+layout(push_constant) uniform P {
+    int count, n;    // pixels, the result's channels
+    int an, aOff;    // A's channels, and where its pixels start in av
+    int prmOff;
+    int op, npairs;
+    int Aa, outA;    // A's alpha (-1: none), the result's
+    int alphaMasking;
+    float aNone;     // A's alpha where it has none
+    int flags;       // 1: convert the result to video first, 2: back to linear after, 4: A is converted
+    int nrgb, nac;
+} p;
+
+float toVideo(float v) {
+    precise float r = v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
+    return r;
+}
+float toLinear(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+
+float merge(int op, float A, float B, float a, float b) {
+    precise float r;
+    switch (op) {
+        case 0: r = A + B * (1.0 - a); break;
+        case 1: r = A * (1.0 - b) + B; break;
+        case 2: r = A + B; break;
+        case 3: r = A - B; break;
+        case 4: r = B - A; break;
+        case 5: r = (A < 0.0 && B < 0.0) ? A : A * B; break;
+        case 6: r = (A <= 1.0 && B <= 1.0) ? A + B - A * B : max(A, B); break;
+        case 7: r = max(A, B); break;
+        case 8: r = min(A, B); break;
+        case 9: r = abs(A - B); break;
+        case 10: r = (A < 0.0 && B < 0.0) || B == 0.0 ? 0.0 : A / B; break;
+        case 11: r = A * b; break;
+        case 12: r = A * (1.0 - b); break;
+        case 13: r = A * b + B * (1.0 - a); break;
+        case 14: r = A * (1.0 - b) + B * (1.0 - a); break;
+        case 15: r = B * a; break;
+        case 16: r = B * (1.0 - a); break;
+        case 17: r = A; break;
+        case 18: r = (A + B) * 0.5; break;
+        case 19: r = sqrt(A * A + B * B); break;
+        case 20: r = B < 0.5 ? 2.0 * A * B : 1.0 - 2.0 * (1.0 - A) * (1.0 - B); break;
+        case 21: r = A < 0.5 ? 2.0 * A * B : 1.0 - 2.0 * (1.0 - A) * (1.0 - B); break;
+        case 22: r = a > b ? A : (b > 0.0 ? A + B * (1.0 - a / b) : A); break;
+        case 23: r = a + b < 1.0 ? A + B : (b > 0.0 ? A + B * (1.0 - a) / b : A); break;
+        case 24: r = (A + B) == 0.0 ? 0.0 : 2.0 * A * B / (A + B); break;
+        default: r = B; break;
+    }
+    return r;
+}
+
+float readA(int base, int i) {
+    float v = av[base + i];
+    if ((p.flags & 4) != 0)
+        for (int k = 0; k < p.nac; ++k)
+            if (prm[p.prmOff + 67 + k] == i) return toVideo(v);
+    return v;
+}
+
+void main() {
+    const int i = int(gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 256u);
+    if (i >= p.count) return;
+    const int ob = i * p.n, ab = p.aOff + i * p.an;
+    if ((p.flags & 1) != 0)
+        for (int k = 0; k < p.nrgb; ++k) {
+            int c = prm[p.prmOff + 64 + k];
+            o[ob + c] = toVideo(o[ob + c]);
+        }
+    const float aa = p.Aa >= 0 ? readA(ab, p.Aa) : p.aNone;
+    const float bb = p.outA >= 0 ? o[ob + p.outA] : 0.0;
+    for (int k = 0; k < p.npairs; ++k) {
+        int oi = prm[p.prmOff + 2 * k], ai = prm[p.prmOff + 2 * k + 1];
+        if (p.alphaMasking != 0 && oi == p.outA) {
+            precise float u = aa + bb - aa * bb;
+            o[ob + oi] = u;
+            continue;
+        }
+        float A = ai >= 0 ? readA(ab, ai) : oi == p.outA ? aa : 0.0;
+        o[ob + oi] = merge(p.op, A, o[ob + oi], aa, bb);
+    }
+    if ((p.flags & 2) != 0)
+        for (int k = 0; k < p.nrgb; ++k) {
+            int c = prm[p.prmOff + 64 + k];
+            o[ob + c] = toLinear(o[ob + c]);
+        }
+}

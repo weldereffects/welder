@@ -7318,6 +7318,130 @@ Connections:  {
         auto half = renderScaled(*c, "CG", 0.5);
         CHECK(half->bounds.width() == W / 2 && std::isfinite(px(half, 60, 40, "R")));
     });
+    // Render each node on the CPU and then on the GPU (the router forced each way): the GPU must have
+    // run, and every value match within tol (relative above 1).
+    auto gpuParity = [](Comp& c, const std::vector<std::string>& names, double tol) {
+        for (auto& nm : names) {
+            gpu::setEnabled(false);  // everything on the CPU
+            auto cpu = render(c, nm, 2, 128);
+            gpu::setEnabled(true);
+            gpu::setRoute(gpu::RouteMode::Gpu);
+            // this node's own kind of job ran on the GPU (not only the ones upstream)
+            const std::string kind = c.find(nm)->type;
+            const auto before = gpu::stats().runs, jobs = gpu::routedGpuJobs(kind);
+            auto g = render(c, nm, 2, 128);
+            gpu::setRoute(gpu::RouteMode::Auto);
+            const bool used = gpu::stats().runs > before && (kind == "Transform" || gpu::routedGpuJobs(kind) > jobs);
+            double worst = 0;
+            size_t at = 0;
+            for (size_t i = 0; i < cpu->data.size() && i < g->data.size(); ++i) {
+                const double d = std::fabs(cpu->data[i] - g->data[i]) / std::max(1.0, (double)std::fabs(cpu->data[i]));
+                if (d > worst || std::isnan(d)) worst = std::isnan(d) ? 1e9 : d, at = i;
+            }
+            const bool ok = worst < tol && used && cpu->bounds == g->bounds && cpu->channels == g->channels;
+            std::printf("  %s: max |cpu - gpu| %.2g, gpu used %d%s\n", nm.c_str(), worst, used, ok ? "" : "  <-- FAIL");
+            if (!ok && at < cpu->data.size())
+                std::printf("    at pixel %zu ch %zu: cpu %g gpu %g\n", at / cpu->nch(), at % cpu->nch(), cpu->data[at], g->data[at]);
+            CHECK(cpu->bounds == g->bounds);
+            CHECK(used);
+            CHECK(worst < tol);
+        }
+    };
+    test("GPU: Grade and the colour/math nodes match the CPU (gamma, reverse, clamps, unpremult, mix, ranges)", [&] {
+        if (!gpu::available()) {
+            std::printf("  (no GPU: %s)\n", gpu::status().c_str());
+            return;
+        }
+        // values below 0 and above 1, a soft alpha, and an extra channel
+        json nodes = json::array({
+            {{"name", "Scene"}, {"type", "MovingScene"}},
+            {{"name", "Src"}, {"type", "Grade"}, {"inputs", {"Scene"}},
+             {"params", {{"multiply", {2.4, 2.1, 1.8, 1}}, {"offset", {-0.45, -0.3, -0.2, 0}}, {"black_clamp", false}}}},
+        });
+        std::vector<std::string> names;
+        auto add = [&](const std::string& nm, const std::string& type, json p) {
+            nodes.push_back({{"name", nm}, {"type", type}, {"inputs", {"Src"}}, {"params", p}});
+            names.push_back(nm);
+        };
+        add("G0", "Grade", {{"multiply", 1.3}, {"offset", 0.02}});
+        add("G1", "Grade", {{"gamma", {0.7, 1.3, 2.0, 1}}, {"lift", {0.05, 0, 0.1, 0}}, {"gain", {1.2, 0.9, 1.1, 1}}, {"white_clamp", true}});
+        add("G2", "Grade", {{"gamma", {0.8, 1.6, 1.0, 1}}, {"blackpoint", 0.02}, {"whitepoint", 0.9}, {"black_clamp", false}});
+        add("G3", "Grade", {{"gamma", {1.4, 0.6, 1.2, 1}}, {"multiply", 1.5}, {"reverse", true}, {"black_clamp", false}});
+        add("G4", "Grade", {{"gamma", 1.7}, {"channels", "all"}, {"unpremult", "A"}, {"mix", 0.6}});
+        add("G5", "Grade", {{"gamma", 0.5}, {"unpremult", "A"}, {"invert_unpremult", true}, {"white_clamp", true}});
+        add("Mu", "Multiply", {{"value", {1.5, 0.5, 2, 0.8}}, {"channels", "rgba"}});
+        add("Ad", "Add", {{"value", {0.1, -0.2, 0.3, 0}}});
+        add("Ga", "Gamma", {{"value", {2.2, 0.45, 1.0, 1}}});
+        add("In", "Invert", {{"channels", "rgba"}});
+        add("Cl", "Clamp", {{"minimum", {0.1, 0, 0.2, 0}}, {"maximum", {0.8, 1, 0.9, 1}}});
+        add("S0", "Saturation", {{"saturation", 1.6}});
+        add("S1", "Saturation", {{"saturation", 0.3}, {"mode", "CCIR 601"}});
+        add("S2", "Saturation", {{"saturation", 2.0}, {"mode", "Maximum"}});
+        add("CC", "ColorCorrect", {{"saturation", 1.2}, {"contrast", 1.3}, {"gamma", 0.9}, {"gain", 1.1}, {"offset", 0.01},
+                                   {"shadows.gain", {1.2, 1, 0.8, 1}}, {"midtones.gamma", 1.4}, {"highlights.contrast", 0.8},
+                                   {"highlights.saturation", 0.5}});
+        add("Pm", "Premult", {{"channels", "all"}});
+        add("Up", "Unpremult", {});
+        auto c = comp(nodes, 400, 300);
+        gpuParity(*c, names, 1e-4);
+    });
+    test("GPU: Merge matches the CPU (every operation, video colorspace, alpha masking, several A inputs)", [&] {
+        if (!gpu::available()) return;
+        json nodes = json::array({
+            {{"name", "Scene"}, {"type", "MovingScene"}},
+            {{"name", "B"}, {"type", "Grade"}, {"inputs", {"Scene"}},
+             {"params", {{"multiply", {2.4, 2.1, 1.8, 1}}, {"offset", {-0.45, -0.3, -0.2, 0}}, {"black_clamp", false}}}},
+            {{"name", "Moved"}, {"type", "Transform"}, {"inputs", {"Scene"}}, {"params", {{"translate", {-37, 11}}, {"filter", "impulse"}}}},
+            {{"name", "A"}, {"type", "Grade"}, {"inputs", {"Moved"}}, {"params", {{"multiply", {0.7, 1.3, 1.1, 1}}, {"channels", "rgba"}}}},
+            {{"name", "A2"}, {"type", "Invert"}, {"inputs", {"Scene"}}, {"params", {{"channels", "rgba"}}}},
+            {{"name", "Rgb"}, {"type", "Remove"}, {"inputs", {"A2"}}, {"params", {{"channels", "alpha"}}}},
+        });
+        std::vector<std::string> names;
+        int k = 0;
+        for (const char* op : {"over", "under", "plus", "minus", "from", "multiply", "screen", "max", "min", "difference", "divide", "in",
+                               "out", "atop", "xor", "mask", "stencil", "copy", "average", "hypot", "overlay", "hard-light",
+                               "conjoint-over", "disjoint-over", "geometric"}) {
+            std::string nm = "M" + std::to_string(k++);
+            nodes.push_back({{"name", nm}, {"type", "Merge"}, {"inputs", {"B", "A"}}, {"params", {{"operation", op}}}});
+            names.push_back(nm);
+        }
+        auto add = [&](const std::string& nm, json inputs, json p) {
+            nodes.push_back({{"name", nm}, {"type", "Merge"}, {"inputs", inputs}, {"params", p}});
+            names.push_back(nm);
+        };
+        add("Vid", {"B", "A"}, {{"operation", "screen"}, {"video_colorspace", true}});
+        add("AM", {"B", "A"}, {{"operation", "plus"}, {"alpha_masking", true}});
+        add("Multi", {"B", "A", nullptr, "A2"}, {{"operation", "over"}, {"mix", 0.7}});
+        add("MultiVid", {"B", "A", nullptr, "A2"}, {{"operation", "multiply"}, {"video_colorspace", true}});
+        add("NoAlpha", {"B", "Rgb"}, {{"operation", "over"}});
+        add("Masked", {"B", "A", "A2"}, {{"operation", "difference"}});
+        add("Depth", {"B", "A"}, {{"operation", "over"}, {"channels", "all"}});
+        auto c = comp(nodes, 400, 300);
+        gpuParity(*c, names, 1e-4);
+    });
+    test("GPU: Transform motion blur in one submission matches the CPU (edges, filters, many samples)", [&] {
+        if (!gpu::available()) return;
+        json nodes = json::array({{{"name", "Scene"}, {"type", "MovingScene"}}});
+        std::vector<std::string> names;
+        int k = 0;
+        for (int variant = 0; variant < 4; ++variant) {
+            json tx = json::object(), rot = json::object();
+            tx["keys"] = json::array({json::array({1, -20}), json::array({3, 45})});
+            rot["keys"] = json::array({json::array({1, 0}), json::array({3, 12})});
+            json p = {{"translate", json::array({tx, 7})}, {"rotate", rot}, {"motionblur", variant == 3 ? 3 : 1},
+                      {"filter", variant == 1 ? "lanczos4" : variant == 2 ? "impulse" : "cubic"}, {"shutter", 0.75}};
+            if (variant == 1) {
+                p["black_outside"] = false;
+                p["clamp"] = true;
+            }
+            if (variant == 2) p["scale"] = 0.4;
+            std::string nm = "MB" + std::to_string(k++);
+            nodes.push_back({{"name", nm}, {"type", "Transform"}, {"inputs", {"Scene"}}, {"params", p}});
+            names.push_back(nm);
+        }
+        auto c = comp(nodes, 400, 300);
+        gpuParity(*c, names, 2e-4);
+    });
     test("GPU: Transform / CornerPin resampling matches the CPU (every filter, edges, clamp, perspective)", [] {
         if (!gpu::available()) {
             std::printf("  (no GPU: %s)\n", gpu::status().c_str());

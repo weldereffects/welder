@@ -158,6 +158,7 @@ add_library(strata_core STATIC
   src/nodes/ColorMgmtNodes.cpp
   src/color/Color.cpp
   src/ml/ML.cpp
+  src/gpu/Route.cpp
   src/nodes/ColorNodes.cpp
   src/nodes/MergeNodes.cpp
   src/nodes/TransformNodes.cpp

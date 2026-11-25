@@ -4,8 +4,11 @@
 // All of them take input 0 = image, input 1 = optional mask, and support
 // `channels` (which channels to affect) and `mix`.
 #include <cmath>
+#include <cstring>
+#include <optional>
 
 #include "NodeUtils.h"
+#include "gpu/Gpu.h"
 
 namespace strata {
 
@@ -45,6 +48,66 @@ public:
         if (ua >= 0)
             for (int i : idx)
                 if (i != ua) uidx.push_back(i);
+        // on the GPU (gpu/shaders/pixel_op.comp) when the router finds it pays there
+        GpuOp g;
+        const bool canGpu = idx.size() <= 16 && gpuOp(a, out, g);
+        std::optional<gpu::Routed> rt;
+        if (canGpu) rt.emplace(g.name, (uint64_t)g.op * 16 + g.variant, (size_t)out.bounds.area() * idx.size());
+        if (rt && rt->gpu() && runGpu(out, idx, comps, ua, invUp, g)) {
+            rt->done(true);
+        } else {
+            cpuApply(a, out, *src, idx, comps, ua, invUp, uidx, up);
+            if (rt) rt->done(false);
+        }
+
+        MaskMix mm = MaskMix::setup(a, this, 1);
+        if (!mm.active()) return;
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                float w = mm.weight(x, y);
+                float* o = out.px(x, y);
+                const float* s = src->px(x, y);
+                for (int i : idx) o[i] = lerpf(s[i], o[i], w);
+            }
+    }
+
+protected:
+    // The GPU version of apply(): which of pixel_op.comp's operations, with its numbers.
+    struct GpuOp {
+        const char* name = "pixel";  // for the router (a literal)
+        int op = -1;
+        uint64_t variant = 0;        // what changes the cost (a gamma, ...)
+        int flags = 0, ai = -1, r = -1, g = -1, b = -1, mode = 0;
+        float s = 0;
+        float k[64] = {};            // the op's numbers (pixel_op.comp: prm[32..])
+    };
+    // False: this one stays on the CPU.
+    virtual bool gpuOp(RenderArgs&, const Image&, GpuOp&) { return false; }
+
+    static bool runGpu(Image& out, const std::vector<int>& idx, const std::vector<int>& comps, int ua, bool invUp, const GpuOp& g) {
+        float prm[32 + 64] = {};
+        for (size_t k = 0; k < idx.size(); ++k) {
+            prm[k] = (float)idx[k];
+            prm[16 + k] = (float)comps[k];
+        }
+        std::memcpy(prm + 32, g.k, sizeof g.k);
+        struct Push {
+            int count, n, op, nsel, ua, invUp, flags, ai, r, g, b, mode;
+            float s;
+        } pc{(int)out.bounds.area(), out.nch(), g.op, (int)idx.size(), ua, invUp ? 1 : 0, g.flags, g.ai, g.r, g.g, g.b, g.mode, g.s};
+        if (pc.count <= 0) return true;
+        const uint32_t groups = (uint32_t)((pc.count + 255) / 256);
+        gpu::Dispatch d;
+        std::memcpy(d.push, &pc, sizeof pc);
+        d.gx = std::min<uint32_t>(groups, 65535);
+        d.gy = (groups + d.gx - 1) / d.gx;
+        const size_t bytes = out.data.size() * sizeof(float);
+        return gpu::runSequence("pixel_op", {{out.data.data(), out.data.data(), bytes}, {prm, nullptr, sizeof prm}}, {d});
+    }
+
+    void cpuApply(RenderArgs& a, Image& out, const Image& srcImg, const std::vector<int>& idx, const std::vector<int>& comps, int ua,
+                  bool invUp, const std::vector<int>& uidx, const std::string& up) {
+        const Image* src = &srcImg;
         auto alphaAt = [&](const float* p) { return invUp ? 1.0f - p[ua] : p[ua]; };
         if (ua >= 0)
             for (size_t k = 0; k < (size_t)out.bounds.width() * out.bounds.height(); ++k) {
@@ -63,19 +126,8 @@ public:
                     for (int i : uidx) p[i] *= al;
             }
         }
-
-        MaskMix mm = MaskMix::setup(a, this, 1);
-        if (!mm.active()) return;
-        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
-            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
-                float w = mm.weight(x, y);
-                float* o = out.px(x, y);
-                const float* s = src->px(x, y);
-                for (int i : idx) o[i] = lerpf(s[i], o[i], w);
-            }
     }
 
-protected:
     virtual std::string defaultChannels() const { return "rgb"; }
     // Modify `out` in place for the selected channel indices.
     virtual void apply(RenderArgs& a, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) = 0;
@@ -100,6 +152,36 @@ protected:
 //                B = offset + lift - A*blackpoint
 //                out = pow(A*in + B, 1/gamma)   (gamma only applied to positive values)
 class GradeNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image&, GpuOp& g) override {
+        double f = a.frame;
+        auto bp = params.vec<4>("blackpoint", f, {0, 0, 0, 0});
+        auto wp = params.vec<4>("whitepoint", f, {1, 1, 1, 1});
+        auto lift = params.vec<4>("lift", f, {0, 0, 0, 0});
+        auto gain = params.vec<4>("gain", f, {1, 1, 1, 1});
+        auto mul = params.vec<4>("multiply", f, {1, 1, 1, 1});
+        auto off = params.vec<4>("offset", f, {0, 0, 0, 0});
+        auto gam = params.vec<4>("gamma", f, {1, 1, 1, 1});
+        g.name = "Grade";
+        g.flags = (params.flag("black_clamp", true) ? 1 : 0) | (params.flag("white_clamp", false) ? 2 : 0);
+        const bool rev = params.flag("reverse", false);
+        g.op = rev ? 1 : 0;
+        for (int c = 0; c < 4; ++c) {
+            double d = wp[c] - bp[c];
+            if (rev) {  // as apply(), in floats
+                double Aa = mul[c] * (gain[c] - lift[c]) / (d == 0 ? 1e-9 : d), Bb = off[c] + lift[c] - Aa * bp[c];
+                g.k[c] = (float)(Aa == 0 ? 1e-9 : Aa);
+                g.k[4 + c] = (float)Bb;
+                g.k[8 + c] = gam[c] <= 0 ? 1.0f : (float)gam[c];
+            } else {
+                const float A = (float)(mul[c] * (gain[c] - lift[c]) / (d == 0 ? 1e-9 : d));
+                g.k[c] = A;
+                g.k[4 + c] = (float)(off[c] + lift[c] - A * bp[c]);
+                g.k[8 + c] = gam[c] <= 0 ? 1.0f : (float)(1.0 / gam[c]);
+            }
+            if (g.k[8 + c] != 1.0f) g.variant = 1;  // a gamma: pow per pixel
+        }
+        return true;
+    }
     void apply(RenderArgs& a, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         double f = a.frame;
         auto bp = params.vec<4>("blackpoint", f, {0, 0, 0, 0});
@@ -166,6 +248,13 @@ class GradeNode : public PixelOp {
 };
 
 class MultiplyNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image&, GpuOp& g) override {
+        auto v4 = params.vec<4>("value", a.frame, {1, 1, 1, 1});
+        g.name = "Multiply";
+        g.op = 2;
+        for (int c = 0; c < 4; ++c) g.k[c] = (float)v4[c];
+        return true;
+    }
     void apply(RenderArgs& a, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         auto v4 = params.vec<4>("value", a.frame, {1, 1, 1, 1});
         forEach(out, idx, comps, [&](float v, int c, float*) { return v * (float)v4[c]; });
@@ -173,6 +262,13 @@ class MultiplyNode : public PixelOp {
 };
 
 class AddNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image&, GpuOp& g) override {
+        auto v4 = params.vec<4>("value", a.frame, {0, 0, 0, 0});
+        g.name = "Add";
+        g.op = 3;
+        for (int c = 0; c < 4; ++c) g.k[c] = (float)v4[c];
+        return true;
+    }
     void apply(RenderArgs& a, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         auto v4 = params.vec<4>("value", a.frame, {0, 0, 0, 0});
         forEach(out, idx, comps, [&](float v, int c, float*) { return v + (float)v4[c]; });
@@ -180,6 +276,13 @@ class AddNode : public PixelOp {
 };
 
 class GammaNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image&, GpuOp& g) override {
+        auto v = params.vec<4>("value", a.frame, {1, 1, 1, 1});
+        g.name = "Gamma";
+        g.op = 4;
+        for (int c = 0; c < 4; ++c) g.k[c] = v[c] > 0 ? (float)(1.0 / v[c]) : -1.0f;
+        return true;
+    }
     void apply(RenderArgs& a, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         auto g = params.vec<4>("value", a.frame, {1, 1, 1, 1});
         forEach(out, idx, comps, [&](float v, int c, float*) {
@@ -189,12 +292,28 @@ class GammaNode : public PixelOp {
 };
 
 class InvertNode : public PixelOp {
+    bool gpuOp(RenderArgs&, const Image&, GpuOp& g) override {
+        g.name = "Invert";
+        g.op = 5;
+        return true;
+    }
     void apply(RenderArgs&, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         forEach(out, idx, comps, [](float v, int, float*) { return 1.0f - v; });
     }
 };
 
 class ClampNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image&, GpuOp& g) override {
+        auto lo = params.vec<4>("minimum", a.frame, {0, 0, 0, 0});
+        auto hi = params.vec<4>("maximum", a.frame, {1, 1, 1, 1});
+        g.name = "Clamp";
+        g.op = 6;
+        for (int c = 0; c < 4; ++c) {
+            g.k[c] = (float)lo[c];
+            g.k[4 + c] = (float)hi[c];
+        }
+        return true;
+    }
     std::string defaultChannels() const override { return "rgba"; }
     void apply(RenderArgs& a, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         auto lo = params.vec<4>("minimum", a.frame, {0, 0, 0, 0});
@@ -206,6 +325,16 @@ class ClampNode : public PixelOp {
 inline float luma709(float r, float g, float b) { return 0.2126f * r + 0.7152f * g + 0.0722f * b; }
 
 class SaturationNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image& out, GpuOp& g) override {
+        g.r = out.ch("R"), g.g = out.ch("G"), g.b = out.ch("B");
+        if (g.r < 0 || g.g < 0 || g.b < 0) return false;
+        const std::string m = params.str("mode", "Rec 709");
+        g.name = "Saturation";
+        g.op = 9;
+        g.mode = m == "CCIR 601" ? 1 : m == "Average" ? 2 : m == "Maximum" ? 3 : 0;
+        g.s = (float)params.num("saturation", a.frame, 1.0);
+        return true;
+    }
     void apply(RenderArgs& a, Image& out, const std::vector<int>&, const std::vector<int>&) override {
         float s = (float)params.num("saturation", a.frame, 1.0);
         int r = out.ch("R"), g = out.ch("G"), b = out.ch("B");
@@ -231,6 +360,26 @@ class SaturationNode : public PixelOp {
 // saturation, contrast (pivot 0.18), gamma, gain, offset. Range weights use
 // smooth falloffs similar to the .nk default lookup curves.
 class ColorCorrectNode : public PixelOp {
+    bool gpuOp(RenderArgs& a, const Image& out, GpuOp& g) override {
+        g.r = out.ch("R"), g.g = out.ch("G"), g.b = out.ch("B");
+        if (g.r < 0 || g.g < 0 || g.b < 0) return false;
+        const Range rs[4] = {range("", a.frame), range("shadows", a.frame), range("midtones", a.frame), range("highlights", a.frame)};
+        g.name = "ColorCorrect";
+        g.op = 10;
+        for (int k = 0; k < 4; ++k) {
+            if (!rs[k].identity()) g.flags |= 1 << k;
+            for (int c = 0; c < 3; ++c) {
+                float* o = g.k + 16 * k;
+                o[c] = (float)rs[k].sat[c];
+                o[3 + c] = (float)rs[k].con[c];
+                o[6 + c] = (float)rs[k].gam[c];
+                o[9 + c] = (float)rs[k].gain[c];
+                o[12 + c] = (float)rs[k].off[c];
+            }
+        }
+        g.variant = (uint64_t)g.flags;
+        return true;
+    }
     struct Range {
         std::array<double, 4> sat, con, gam, gain, off;
         bool identity() const {
@@ -287,6 +436,13 @@ class ColorCorrectNode : public PixelOp {
 };
 
 class PremultNode : public PixelOp {
+    bool gpuOp(RenderArgs&, const Image& out, GpuOp& g) override {
+        g.ai = out.ch(params.str("alpha", "A"));
+        if (g.ai < 0) return false;
+        g.name = "Premult";
+        g.op = 7;
+        return true;
+    }
     void apply(RenderArgs&, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         int ai = out.ch(params.str("alpha", "A"));
         if (ai < 0) return;
@@ -295,6 +451,13 @@ class PremultNode : public PixelOp {
 };
 
 class UnpremultNode : public PixelOp {
+    bool gpuOp(RenderArgs&, const Image& out, GpuOp& g) override {
+        g.ai = out.ch(params.str("alpha", "A"));
+        if (g.ai < 0) return false;
+        g.name = "Unpremult";
+        g.op = 8;
+        return true;
+    }
     void apply(RenderArgs&, Image& out, const std::vector<int>& idx, const std::vector<int>& comps) override {
         int ai = out.ch(params.str("alpha", "A"));
         if (ai < 0) return;
