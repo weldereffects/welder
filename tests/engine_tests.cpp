@@ -22,6 +22,8 @@
 #include "core/ThreadBudget.h"
 #include "core/NetPath.h"
 #include "core/Update.h"
+#include "core/Deep.h"
+#include "io/ExrIO.h"
 #include "io/ImageIO.h"
 #include "io/PsdIO.h"
 #include "io/MovieIO.h"
@@ -9603,6 +9605,188 @@ Connections:  {
             CHECK(eg / n < 0.4);
             CHECK(eg / n < ec / n + 0.02);
         }
+    });
+    // ---------------------------------------------------------------- deep
+    // A deep image with empty pixels, hard surfaces, a volume, samples given out of order, and an
+    // extra channel; its bbox starts away from the origin.
+    auto makeDeep = [] {
+        DeepImage d(Box(3, 2, 40, 30), {"R", "G", "B", "A", "id"});
+        const int nc = d.nch();
+        for (int y = d.bounds.y1; y < d.bounds.y2; ++y)
+            for (int x = d.bounds.x1; x < d.bounds.x2; ++x) {
+                const int n = (x * 7 + y * 3) % 4;  // 0..3 samples
+                float* s = d.newPixel(n);
+                for (int k = 0; k < n; ++k, s += nc) {
+                    const float a = 0.25f + 0.2f * k;
+                    s[d.ch("R")] = a * (x / 40.0f);
+                    s[d.ch("G")] = a * (y / 30.0f);
+                    s[d.ch("B")] = a * 0.5f;
+                    s[d.ai] = a;
+                    s[d.ch("id")] = (float)k;
+                    s[d.zi] = 10.0f - 3.0f * k + x * 0.01f;  // back to front: sorted on the way in
+                    s[d.zbi] = s[d.zi] + (k == 1 ? 2.0f : 0.0f);
+                }
+                d.sortPixel(d.pixelIndex(x, y));
+            }
+        d.finish();
+        return d;
+    };
+    auto sameDeep = [](const DeepImage& a, const DeepImage& b, double eps) {
+        if (a.bounds != b.bounds) return false;
+        for (int y = a.bounds.y1; y < a.bounds.y2; ++y)
+            for (int x = a.bounds.x1; x < a.bounds.x2; ++x) {
+                if (a.count(x, y) != b.count(x, y)) return false;
+                for (int k = 0; k < a.count(x, y); ++k)
+                    for (int c = 0; c < a.nch(); ++c) {
+                        const int bc = b.ch(a.channels[c]);
+                        if (bc < 0) return false;
+                        if (std::fabs(a.sample(x, y)[k * a.nch() + c] - b.sample(x, y)[k * b.nch() + bc]) > eps) return false;
+                    }
+            }
+        return true;
+    };
+    const auto deepDir = std::filesystem::temp_directory_path() / "welder_deep_test";
+    std::filesystem::create_directories(deepDir);
+
+    test("deep: samples are sorted front to back", [&] {
+        DeepImage d = makeDeep();
+        bool sorted = true;
+        for (int y = d.bounds.y1; y < d.bounds.y2; ++y)
+            for (int x = d.bounds.x1; x < d.bounds.x2; ++x)
+                for (int k = 1; k < d.count(x, y); ++k) sorted = sorted && d.sample(x, y)[(k - 1) * d.nch() + d.zi] <= d.sample(x, y)[k * d.nch() + d.zi];
+        CHECK(sorted);
+        CHECK(d.finished());
+        CHECK(d.channels.back() == "ZBack");
+    });
+
+    test("deep EXR round trip: every sample, every compression", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        for (const std::string comp : {"none", "rle", "zips"}) {
+            const std::string p = (deepDir / ("rt_" + comp + ".exr")).string();
+            DeepExrWriteOptions o;
+            o.type = ExrPixelType::Float;
+            o.compression = comp;
+            writeDeepExr(p, d, f, o);
+            DeepExrFile r = readDeepExr(p);
+            CHECK(r.header.format.width == 48 && r.header.format.height == 36);
+            CHECK(r.header.bounds == d.bounds);
+            CHECK(r.image->total() == d.total());
+            CHECK(sameDeep(d, *r.image, 0));
+            CHECK(r.header.compression == comp);
+        }
+        // half colour: close, depths exact
+        const std::string p = (deepDir / "rt_half.exr").string();
+        writeDeepExr(p, d, f, DeepExrWriteOptions{});
+        DeepExrFile r = readDeepExr(p);
+        CHECK(sameDeep(d, *r.image, 2e-3));
+        bool zExact = true;
+        for (size_t i = 0; i < d.total(); ++i) zExact = zExact && d.samples[i * d.nch() + d.zi] == r.image->samples[i * r.image->nch() + r.image->zi];
+        CHECK(zExact);
+        bool threw = false;
+        try {
+            DeepExrWriteOptions bad;
+            bad.compression = "dwaa";
+            writeDeepExr(p, d, f, bad);
+        } catch (const RenderError&) {
+            threw = true;
+        }
+        CHECK(threw);
+        threw = false;
+        try {
+            readDeepExr(p, "nope");
+        } catch (const RenderError&) {
+            threw = true;
+        }
+        CHECK(threw);
+    });
+
+    test("deep: DeepRead flattened matches Read's flattening", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        const std::string p = (deepDir / "flat_match.exr").string();
+        DeepExrWriteOptions o;
+        o.type = ExrPixelType::Float;
+        writeDeepExr(p, d, f, o);
+        auto c = comp(json::array({json{{"name", "R"}, {"type", "Read"}, {"params", {{"file", p}}}},
+                                   json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
+                                   json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"D"}}, {"params", {{"depth", "z"}}}},
+                                   json{{"name", "G"}, {"type", "Grade"}, {"inputs", {"D"}}, {"params", {{"multiply", 2}}}}}),
+                      48, 36);
+        ImagePtr a = render(*c, "R"), b = render(*c, "F", 1, 16), v = render(*c, "D", 1, 32), g = render(*c, "G");
+        double worst = 0, worstZ = 0, worstV = 0, worstG = 0;
+        for (int y = 0; y < 36; ++y)
+            for (int x = 0; x < 48; ++x) {
+                for (const char* ch : {"R", "G", "B", "A"}) {
+                    worst = std::max(worst, (double)std::fabs(px(a, x, y, ch) - px(b, x, y, ch)));
+                    worstV = std::max(worstV, (double)std::fabs(px(v, x, y, ch) - px(b, x, y, ch)));
+                    if (std::string(ch) != "A") worstG = std::max(worstG, (double)std::fabs(px(g, x, y, ch) - 2 * px(b, x, y, ch)));
+                }
+                worstZ = std::max(worstZ, (double)std::fabs(px(a, x, y, "depth.Z") - px(b, x, y, "depth.Z")));
+                // the viewer's flat answer is 1/z
+                const float z = px(b, x, y, "depth.Z");
+                if (z > 0) worstV = std::max(worstV, (double)std::fabs(px(v, x, y, "depth.Z") - 1 / z));
+            }
+        std::printf("  |Read - DeepRead flattened| rgba %.2g, z %.2g; auto-flatten %.2g; Grade on deep %.2g\n", worst, worstZ, worstV, worstG);
+        CHECK(worst < 1e-6);
+        CHECK(worstZ < 1e-6);
+        CHECK(worstV < 1e-6);
+        CHECK(worstG < 1e-5);
+        CHECK(px(b, 10, 10, "id") == px(a, 10, 10, "id"));
+    });
+
+    test("deep: DeepRead -> DeepWrite keeps every sample (tiles assembled)", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        const std::string p = (deepDir / "in.exr").string(), q = (deepDir / "out.####.exr").string();
+        DeepExrWriteOptions o;
+        o.type = ExrPixelType::Float;
+        writeDeepExr(p, d, f, o);
+        auto c = comp(json::array({json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
+                                   json{{"name", "W"}, {"type", "DeepWrite"}, {"inputs", {"D"}}, {"params", {{"file", q}, {"datatype", "float"}}}}}),
+                      48, 36);
+        EngineOptions eo;
+        eo.tileSize = 16;  // many tiles: the write assembles them
+        Engine e(eo);
+        c->find("W")->execute(e, 7);
+        DeepExrFile r = readDeepExr((deepDir / "out.0007.exr").string());
+        CHECK(sameDeep(d, *r.image, 0));
+        CHECK(r.header.compression == "zips");
+        // a request across tile edges is the same as the file
+        DeepPtr part = e.requestDeep(c->find("D"), 1, Box(5, 4, 37, 29));
+        CHECK(sameDeep(*DeepImage::crop(d, Box(5, 4, 37, 29), d.channels), *part, 0));
+        // a disabled DeepRead gives nothing; DeepWrite passes its input through to the viewer
+        CHECK(e.deepChannels(c->find("W"), 1) == d.channels);
+    });
+
+    test("deep: proxy scale and flat inputs", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        const std::string p = (deepDir / "proxy.exr").string();
+        writeDeepExr(p, d, f, DeepExrWriteOptions{});
+        auto c = comp(json::array({json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
+                                   json{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.4, 0.6, 1}}}}},
+                                   json{{"name", "KF"}, {"type", "DeepToImage"}, {"inputs", {"K"}}, {"params", {{"depth", "none"}}}}}),
+                      48, 36);
+        Engine e;
+        e.setScale(0.5);
+        CHECK(c->find("D")->format(e, 1).width == 24);
+        ImagePtr half = renderScaled(*c, "D", 0.5);
+        CHECK(half->bounds.width() <= 24);
+        ImagePtr k = render(*c, "KF");
+        CHECK(k->ch("depth.Z") < 0);
+        CHECK(std::fabs(px(k, 5, 5, "G") - 0.4f) < 1e-6 && std::fabs(px(k, 5, 5, "A") - 1) < 1e-6);
+        Engine e2;
+        DeepPtr kd = e2.requestDeep(c->find("K"), 1, Box(0, 0, 4, 4));
+        CHECK(kd->count(1, 1) == 1 && std::isinf(kd->sample(1, 1)[kd->zi]));
     });
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

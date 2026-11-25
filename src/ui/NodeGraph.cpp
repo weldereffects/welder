@@ -528,7 +528,7 @@ void createNode(App& app, UiState& ui, const std::string& type, const json& para
         }
         Node* n = c.addNode(type, base + "1", params, uij);
         n->group = level;
-        if (type == "Read" && params.contains("file")) updateReadRange(n);
+        if ((type == "Read" || type == "DeepRead") && params.contains("file")) updateReadRange(n);
         if (type == "Group") {  // an empty group: one input straight to the output
             Node* in = c.addNode("Input", "Input1", json::object(), {{"x", 0}, {"y", 0}});
             in->group = n->name;
@@ -681,7 +681,7 @@ void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths
                 json uij = {{"x", std::round(at.x + 130.0f * (float)i)}, {"y", std::round(at.y)}};
                 Node* n = c.addNode(make[i].type, names[i], make[i].params, uij);
                 n->group = level;
-                if (n->type == "Read") updateReadRange(n);
+                if (n->type == "Read" || n->type == "DeepRead") updateReadRange(n);
                 n->paramsChanged();
             }
         });

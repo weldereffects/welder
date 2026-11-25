@@ -677,6 +677,11 @@ void categoryIcon(ImDrawList* dl, const std::string& cat, ImVec2 c, float s, ImU
         poly({top, r, br, b, bl, l}, true);
         poly({l, m, r}, false);
         dl->AddLine(m, b, col, t);
+    } else if (cat == "Deep") {  // samples stacked in depth: three offset cards
+        for (int i = 2; i >= 0; --i) {
+            const float o = -0.45f + i * 0.45f;
+            dl->AddRect(P(-0.95f + o + 0.45f, -0.95f + 0.45f - o), P(0.05f + o + 0.45f, 0.05f + 0.45f - o), col, rr, 0, t);
+        }
     } else if (cat == "Value") {  // a graph: axes and a wave
         poly({P(-0.9f, -0.9f), P(-0.9f, 0.9f), P(0.95f, 0.9f)}, false);
         ImVec2 pts[21];

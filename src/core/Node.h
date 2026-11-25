@@ -32,6 +32,8 @@ inline std::string placeholderClass(const std::string& type) { return type.subst
 class Engine;
 class Comp;
 class Node;
+class DeepImage;
+using DeepPtr = std::shared_ptr<const DeepImage>;
 
 struct Format {
     int width = 1920;
@@ -56,6 +58,9 @@ struct RenderArgs {
     // Pull `box` of `input` at `frame` (defaults to this frame).
     ImagePtr fetch(Node* input, const Box& box) const;
     ImagePtr fetch(Node* input, const Box& box, double atFrame) const;
+    // Pull `box` of `input` as deep samples (a flat input becomes one sample per pixel: core/Deep.h).
+    DeepPtr fetchDeep(Node* input, const Box& box) const;
+    DeepPtr fetchDeep(Node* input, const Box& box, double atFrame) const;
 };
 
 class RenderError : public std::runtime_error {
@@ -141,6 +146,15 @@ public:
     // Fill `out` (bounds == args.region, channels == channels()).
     // Called concurrently from multiple threads for different tiles.
     virtual void render(RenderArgs& args, Image& out) = 0;
+
+    // Deep nodes (core/Deep.h) carry samples per pixel. They fill renderDeep (out has bounds ==
+    // args.region and channels == deepChannels(), pixels added in order) and still answer render()
+    // with the samples flattened, so every flat node can take a deep input.
+    virtual bool isDeep() const { return false; }
+    // The sample channels (with A, Z and ZBack) of a deep node; for a flat node, its channels as
+    // deep ones (what Engine::requestDeep turns it into).
+    virtual ChannelSet deepChannels(Engine& e, double frame);
+    virtual void renderDeep(RenderArgs& args, DeepImage& out) { (void)args; (void)out; }
 
     // Output nodes (Write) render their input and write it somewhere.
     virtual bool isExecutable() const { return false; }

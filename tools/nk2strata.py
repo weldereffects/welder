@@ -2008,8 +2008,6 @@ class Translator:
 
         # ---------------------------------------------------- I/O
         if klass in ("Read", "DeepRead"):
-            if klass == "DeepRead":
-                warn("deep data is not supported; reading as a flat image")
             f = str(k.get("file", ""))
             if "[" in f:
                 warn("file path contains TCL expressions; it must be fixed by hand: " + f)
@@ -2057,7 +2055,36 @@ class Translator:
                 if oe in ("black", "checkerboard", "nearest frame", "nearest"):
                     params["missing_frames"] = "nearest frame" if oe.startswith("nearest") else oe
             self.translated += 1
+            if klass == "DeepRead":  # deep samples kept: DeepRead has no proxy / premultiplied / auto alpha
+                for knob in ("proxy", "format", "premultiplied", "auto_alpha"):
+                    params.pop(knob, None)
+                if params.get("missing_frames") == "checkerboard":
+                    params["missing_frames"] = "black"
+                return self.emit(nk_name, klass, "DeepRead", [], params, k)
             return self.emit(nk_name, klass, "Read", [], params, k)
+
+        if klass == "DeepToImage":
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepToImage", main[:1], params, k)
+
+        if klass == "DeepWrite":
+            params["file"] = str(k.get("file", ""))
+            if "channels" in k and channel_set(k["channels"]) == "rgba":
+                params["channels"] = "rgba"
+            dt = str(k.get("datatype", ""))
+            if dt:
+                params["datatype"] = "float" if "32" in dt else "half"
+            if "compression" in k:
+                comp = str(k["compression"]).lower()
+                params["compression"] = "none" if comp.startswith("none") else "rle" if "rle" in comp else "zips"
+            if flag("use_limit"):
+                params["use_limit"] = True
+                num("first", dest="first")
+                num("last", dest="last")
+            if flag("disable"):
+                params["disable"] = True
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepWrite", main[:1], params, k)
 
         if klass == "Write":
             params["file"] = str(k.get("file", ""))

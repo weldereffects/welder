@@ -1811,7 +1811,7 @@ void knobBody(Ctx& c, const KnobDef& k) {
                                app->edit([name, key, path](Comp& comp) {
                                    if (Node* n = comp.find(name)) {
                                        // Picking one frame of a sequence reads the whole sequence.
-                                       n->params.data[key] = n->type == "Read" ? sequencePatternFor(path) : path;
+                                       n->params.data[key] = n->type == "Read" || n->type == "DeepRead" ? sequencePatternFor(path) : path;
                                        updateReadRange(n);
                                        n->paramsChanged();
                                    }

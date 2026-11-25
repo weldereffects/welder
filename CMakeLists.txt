@@ -70,6 +70,7 @@ target_include_directories(strata_thirdparty SYSTEM INTERFACE
 # ---------------------------------------------------------------- core library
 add_library(strata_core STATIC
   src/core/Engine.cpp
+  src/core/Deep.cpp
   src/core/DiskCache.cpp
   src/core/CacheDir.cpp
   src/core/Crash.cpp
@@ -162,6 +163,7 @@ add_library(strata_core STATIC
   src/gpu/Route.cpp
   src/nodes/ColorNodes.cpp
   src/nodes/MergeNodes.cpp
+  src/nodes/DeepNodes.cpp
   src/nodes/TransformNodes.cpp
   src/nodes/FilterNodes.cpp
   src/nodes/GlowNodes.cpp

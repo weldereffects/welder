@@ -142,3 +142,6 @@ MultiTone
 WhipTransition
 PrismLens
 PixelMosh
+DeepRead
+DeepToImage
+DeepWrite

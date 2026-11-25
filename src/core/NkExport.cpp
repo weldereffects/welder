@@ -435,6 +435,29 @@ struct Writer {
                 copy("first");
                 copy("last");
             }
+        } else if (type == "DeepRead") {
+            b.cls = "DeepRead";
+            copy("file");
+            copy("first");
+            copy("last");
+            copy("before");
+            copy("after");
+            copy("origfirst");
+            copy("origlast");
+            copy("colorspace");
+            if (p.value("raw", false)) raw("raw", "true");
+        } else if (type == "DeepToImage") {
+            b.cls = "DeepToImage";
+            mainMask(1, -1);
+        } else if (type == "DeepWrite") {
+            b.cls = "DeepWrite";
+            mainMask(1, -1);
+            copy("file");
+            if (p.value("use_limit", false)) {
+                raw("use_limit", "true");
+                copy("first");
+                copy("last");
+            }
         } else if (type == "Constant" || type == "CheckerBoard") {
             b.cls = type == "Constant" ? "Constant" : "CheckerBoard2";
             if (type == "Constant") copy("color");

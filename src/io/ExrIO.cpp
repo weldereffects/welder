@@ -9,6 +9,7 @@
 #include <ImfCompression.h>
 #include <ImfDeepFrameBuffer.h>
 #include <ImfDeepScanLineInputPart.h>
+#include <ImfDeepScanLineOutputFile.h>
 #include <ImfDeepTiledInputPart.h>
 #include <ImfFrameBuffer.h>
 #include <ImfHeader.h>
@@ -208,7 +209,7 @@ std::vector<char> slurp(const std::string& path) {
 // A deep part, flattened into `img` (rows top-down, laid out from `uni`, as the flat parts are read):
 // each pixel's samples sorted front to back by Z and composited over each other (premultiplied, as
 // deep images are stored); "Z" becomes the depth of the nearest sample that isn't fully transparent.
-void flattenDeep(Imf::MultiPartInputFile& in, int p, const std::vector<std::pair<std::string, int>>& chans, const Imath::Box2i& uni, Image& img) {
+void flattenDeepPart(Imf::MultiPartInputFile& in, int p, const std::vector<std::pair<std::string, int>>& chans, const Imath::Box2i& uni, Image& img) {
     const Imf::Header& h = in.header(p);
     const Imath::Box2i dw = h.dataWindow();
     const long w = dw.max.x - dw.min.x + 1, hgt = dw.max.y - dw.min.y + 1;
@@ -421,7 +422,7 @@ ExrFile readExr(const std::string& path) {
             std::vector<std::pair<std::string, int>> chans;  // file channel -> its index in the image
             for (size_t k = 0; k < order.size(); ++k)
                 if (srcs[order[k]].part == p) chans.push_back({srcs[order[k]].fileName, (int)(k + off)});
-            flattenDeep(in, p, chans, uni, *img);
+            flattenDeepPart(in, p, chans, uni, *img);
         }
         flipRows(*img);
         if (lumaOnly) {
@@ -510,6 +511,255 @@ void writeExr(const std::string& path, const Image& src, const Format& fmt, cons
         Imf::OutputFile out(path.c_str(), h, Imf::globalThreadCount());
         out.setFrameBuffer(fb);
         out.writePixels(dw.max.y - dw.min.y + 1);
+    } catch (const std::exception& e) {
+        throw RenderError("cannot write EXR " + path + ": " + e.what());
+    }
+}
+
+// ---------------------------------------------------------------- deep, as samples
+
+namespace {
+
+// The deep part named `want` ("" = the first), and the names of all of them.
+int findDeepPart(Imf::MultiPartInputFile& in, const std::string& want, const std::string& path, std::vector<std::string>& names) {
+    int found = -1;
+    for (int p = 0; p < in.parts(); ++p) {
+        const Imf::Header& h = in.header(p);
+        if (!(h.hasType() && Imf::isDeepData(h.type()))) continue;
+        const std::string nm = h.hasName() ? h.name() : "";
+        names.push_back(nm);
+        if (found < 0 && (want.empty() || want == nm)) found = p;
+    }
+    if (names.empty()) throw RenderError("EXR has no deep data: " + path);
+    if (found < 0) throw RenderError("EXR has no deep part named '" + want + "': " + path);
+    return found;
+}
+
+DeepExrHeader deepHeaderOf(Imf::MultiPartInputFile& in, int p, std::vector<std::string> names) {
+    const Imf::Header& h = in.header(p);
+    const Imath::Box2i disp = in.header(0).displayWindow(), dw = h.dataWindow();
+    DeepExrHeader r;
+    r.format.width = disp.max.x - disp.min.x + 1;
+    r.format.height = disp.max.y - disp.min.y + 1;
+    r.format.pixelAspect = in.header(0).pixelAspectRatio() > 0 ? in.header(0).pixelAspectRatio() : 1.0;
+    r.bounds = Box(dw.min.x - disp.min.x, disp.max.y - dw.max.y, dw.max.x - disp.min.x + 1, disp.max.y - dw.min.y + 1);
+    ChannelSet first, rest;
+    for (auto it = h.channels().begin(); it != h.channels().end(); ++it) {
+        if (it.channel().xSampling != 1 || it.channel().ySampling != 1) continue;
+        const std::string c = it.name();
+        if (c == "Z" || c == "ZBack") continue;
+        (c == "R" || c == "G" || c == "B" || c == "A" ? first : rest).push_back(c);
+    }
+    for (const char* m : {"R", "G", "B", "A"})
+        if (channelIndex(first, m) >= 0) r.channels.push_back(m);
+    for (auto& c : rest) r.channels.push_back(c);
+    for (const char* need : {"A", "Z", "ZBack"})
+        if (channelIndex(r.channels, need) < 0) r.channels.push_back(need);
+    r.part = h.hasName() ? h.name() : "";
+    r.compression = compressionName(h.compression());
+    r.deepParts = std::move(names);
+    r.attributes = attributesOf(in.header(0));
+    return r;
+}
+
+}  // namespace
+
+DeepExrHeader readDeepExrHeader(const std::string& path, const std::string& part) {
+    initThreads();
+    try {
+        Imf::MultiPartInputFile in(path.c_str(), 1);
+        std::vector<std::string> names;
+        const int p = findDeepPart(in, part, path, names);
+        return deepHeaderOf(in, p, names);
+    } catch (const RenderError&) {
+        throw;
+    } catch (const std::exception& e) {
+        throw RenderError("cannot read EXR " + path + ": " + e.what());
+    }
+}
+
+DeepExrFile readDeepExr(const std::string& path, const std::string& part) {
+    initThreads();
+    try {
+        MemoryStream stream(path, slurp(path));
+        Imf::MultiPartInputFile in(stream, Imf::globalThreadCount());
+        std::vector<std::string> names;
+        const int p = findDeepPart(in, part, path, names);
+        DeepExrFile out;
+        out.header = deepHeaderOf(in, p, names);
+        const Imf::Header& h = in.header(p);
+        const Imath::Box2i dw = h.dataWindow();
+        const long w = dw.max.x - dw.min.x + 1, hgt = dw.max.y - dw.min.y + 1;
+        auto img = std::make_shared<DeepImage>(out.header.bounds, out.header.channels);
+        out.image = img;
+        if (w <= 0 || hgt <= 0) {
+            img->finish();
+            return out;
+        }
+        const size_t npx = (size_t)(w * hgt);
+        // the file's channels we read (some of ours may not be in the file: A, ZBack)
+        const int nc = img->nch();
+        std::vector<int> inFile(nc, 0);
+        for (int c = 0; c < nc; ++c) inFile[c] = h.channels().findChannel(img->channels[c]) != nullptr;
+        std::vector<unsigned int> counts(npx);
+        std::vector<std::vector<float*>> ptrs(nc);
+        Imf::DeepFrameBuffer fb;
+        const long base = (long)dw.min.x + (long)dw.min.y * w;  // slices address absolute pixels
+        fb.insertSampleCountSlice(Imf::Slice(Imf::UINT, (char*)counts.data() - base * (long)sizeof(unsigned int), sizeof(unsigned int),
+                                             sizeof(unsigned int) * w));
+        for (int c = 0; c < nc; ++c) {
+            if (!inFile[c]) continue;
+            ptrs[c].assign(npx, nullptr);
+            fb.insert(img->channels[c], Imf::DeepSlice(Imf::FLOAT, (char*)ptrs[c].data() - base * (long)sizeof(float*), sizeof(float*),
+                                                       sizeof(float*) * w, sizeof(float)));
+        }
+        const bool tiled = h.type() == Imf::DEEPTILE;
+        std::unique_ptr<Imf::DeepScanLineInputPart> sp;
+        std::unique_ptr<Imf::DeepTiledInputPart> tp;
+        if (tiled) {
+            tp = std::make_unique<Imf::DeepTiledInputPart>(in, p);
+            tp->setFrameBuffer(fb);
+            tp->readPixelSampleCounts(0, tp->numXTiles(0) - 1, 0, tp->numYTiles(0) - 1, 0, 0);
+        } else {
+            sp = std::make_unique<Imf::DeepScanLineInputPart>(in, p);
+            sp->setFrameBuffer(fb);
+            sp->readPixelSampleCounts(dw.min.y, dw.max.y);
+        }
+        size_t total = 0;
+        for (unsigned int n : counts) total += n;
+        // channel-major stores the library fills, then interleaved into the image
+        std::vector<std::vector<float>> store(nc);
+        for (int c = 0; c < nc; ++c) {
+            if (!inFile[c]) continue;
+            store[c].resize(std::max<size_t>(1, total));
+            size_t at = 0;
+            for (size_t i = 0; i < npx; ++i) {
+                ptrs[c][i] = store[c].data() + at;
+                at += counts[i];
+            }
+        }
+        if (tiled) tp->readTiles(0, tp->numXTiles(0) - 1, 0, tp->numYTiles(0) - 1, 0, 0);
+        else sp->readPixels(dw.min.y, dw.max.y);
+
+        // Welder's rows run bottom up: row r of the image is file row hgt - 1 - r
+        std::vector<size_t> fileStart(npx + 1, 0);  // each file pixel's first sample in the stores
+        for (size_t i = 0; i < npx; ++i) fileStart[i + 1] = fileStart[i] + counts[i];
+        img->offsets.assign(npx + 1, 0);
+        for (long r = 0; r < hgt; ++r) {
+            const long fr = hgt - 1 - r;
+            for (long x = 0; x < w; ++x) {
+                const size_t i = (size_t)(r * w + x);
+                img->offsets[i + 1] = img->offsets[i] + counts[(size_t)(fr * w + x)];
+            }
+        }
+        img->samples.assign(total * nc, 0.0f);
+        const int A = img->ai, Z = img->zi, ZB = img->zbi;
+        parallelFor(hgt, 8, [&](long r0, long r1) {
+            for (long r = r0; r < r1; ++r) {
+                const long fr = hgt - 1 - r;
+                for (long x = 0; x < w; ++x) {
+                    const size_t i = (size_t)(r * w + x), fi = (size_t)(fr * w + x);
+                    const unsigned int n = counts[fi];
+                    float* d = img->samples.data() + (size_t)img->offsets[i] * nc;
+                    for (unsigned int k = 0; k < n; ++k, d += nc)
+                        for (int c = 0; c < nc; ++c) {
+                            if (inFile[c]) d[c] = store[c][fileStart[fi] + k];
+                            else if (c == A) d[c] = 1.0f;
+                            else if (c == ZB) d[c] = inFile[Z] ? store[Z][fileStart[fi] + k] : 0.0f;
+                        }
+                    img->sortPixel(i);
+                }
+            }
+        });
+        return out;
+    } catch (const RenderError&) {
+        throw;
+    } catch (const std::exception& e) {
+        throw RenderError("cannot read EXR " + path + ": " + e.what());
+    }
+}
+
+const std::vector<std::string>& deepExrCompressions() {
+    static const std::vector<std::string> v = {"none", "rle", "zips"};
+    return v;
+}
+
+void writeDeepExr(const std::string& path, const DeepImage& img, const Format& fmt, const DeepExrWriteOptions& o) {
+    initThreads();
+    const std::string cname = o.compression.empty() ? "zips" : o.compression;
+    const auto& ok = deepExrCompressions();
+    if (std::find(ok.begin(), ok.end(), cname) == ok.end())
+        throw RenderError("deep EXR compression must be none, rle or zips (not '" + cname + "')");
+    const Imf::Compression comp = compressionMap().at(cname);
+    if (!img.finished()) throw RenderError("deep image is incomplete: " + path);
+
+    const Box b = img.bounds.empty() ? Box(0, 0, 1, 1) : img.bounds;  // a data window can't be empty
+    Imath::Box2i disp(Imath::V2i(0, 0), Imath::V2i(fmt.width - 1, fmt.height - 1));
+    Imath::Box2i dw(Imath::V2i(b.x1, fmt.height - b.y2), Imath::V2i(b.x2 - 1, fmt.height - 1 - b.y1));
+    const long w = b.width(), hgt = b.height();
+    const size_t npx = (size_t)(w * hgt);
+    const int nc = img.nch();
+    const bool half = o.type == ExrPixelType::Half;
+
+    // file order: rows top down
+    std::vector<unsigned int> counts(npx, 0);
+    std::vector<size_t> start(npx + 1, 0);
+    for (long fr = 0; fr < hgt; ++fr) {
+        const int y = b.y2 - 1 - (int)fr;
+        for (long x = 0; x < w; ++x) {
+            const size_t fi = (size_t)(fr * w + x);
+            counts[fi] = (unsigned int)img.count(b.x1 + (int)x, y);
+            start[fi + 1] = start[fi] + counts[fi];
+        }
+    }
+    const size_t total = start[npx];
+    std::vector<std::vector<float>> fstore(nc);
+    std::vector<std::vector<Imath::half>> hstore(nc);
+    std::vector<std::vector<char*>> ptrs(nc, std::vector<char*>(npx, nullptr));
+    std::vector<int> isHalf(nc, 0);
+    for (int c = 0; c < nc; ++c) {
+        isHalf[c] = half && c != img.zi && c != img.zbi;
+        if (isHalf[c]) hstore[c].resize(std::max<size_t>(1, total));
+        else fstore[c].resize(std::max<size_t>(1, total));
+    }
+    parallelFor(hgt, 8, [&](long r0, long r1) {
+        for (long fr = r0; fr < r1; ++fr) {
+            const int y = b.y2 - 1 - (int)fr;
+            for (long x = 0; x < w; ++x) {
+                const size_t fi = (size_t)(fr * w + x);
+                const unsigned int n = counts[fi];
+                for (int c = 0; c < nc; ++c)
+                    ptrs[c][fi] = isHalf[c] ? (char*)(hstore[c].data() + start[fi]) : (char*)(fstore[c].data() + start[fi]);
+                if (!n) continue;
+                const float* s = img.sample(b.x1 + (int)x, y);
+                for (unsigned int k = 0; k < n; ++k, s += nc)
+                    for (int c = 0; c < nc; ++c) {
+                        if (isHalf[c]) hstore[c][start[fi] + k] = Imath::half(s[c]);
+                        else fstore[c][start[fi] + k] = s[c];
+                    }
+            }
+        }
+    });
+
+    try {
+        Imf::Header h(disp, dw, (float)fmt.pixelAspect);
+        h.setType(Imf::DEEPSCANLINE);
+        h.compression() = comp;
+        writeAttributes(h, o.attributes);
+        Imf::DeepFrameBuffer fb;
+        const long base = (long)dw.min.x + (long)dw.min.y * w;
+        fb.insertSampleCountSlice(Imf::Slice(Imf::UINT, (char*)counts.data() - base * (long)sizeof(unsigned int), sizeof(unsigned int),
+                                             sizeof(unsigned int) * w));
+        for (int c = 0; c < nc; ++c) {
+            const Imf::PixelType pt = isHalf[c] ? Imf::HALF : Imf::FLOAT;
+            const size_t es = isHalf[c] ? sizeof(Imath::half) : sizeof(float);
+            h.channels().insert(img.channels[c], Imf::Channel(pt));
+            fb.insert(img.channels[c], Imf::DeepSlice(pt, (char*)ptrs[c].data() - base * (long)sizeof(char*), sizeof(char*),
+                                                      sizeof(char*) * w, es));
+        }
+        Imf::DeepScanLineOutputFile out(path.c_str(), h, Imf::globalThreadCount());
+        out.setFrameBuffer(fb);
+        out.writePixels((int)hgt);
     } catch (const std::exception& e) {
         throw RenderError("cannot write EXR " + path + ": " + e.what());
     }

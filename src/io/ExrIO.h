@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "../core/Deep.h"
 #include "../core/Image.h"
 #include "../core/Node.h"
 
@@ -60,6 +61,38 @@ struct ExrWriteOptions {
 // Writes the channels of `img`. The data window is the format box (or the
 // image bounds with dataWindowFromBbox).
 void writeExr(const std::string& path, const Image& img, const Format& fmt, const ExrWriteOptions& o);
+
+// ---- deep EXR (deep scanline and deep tiled parts), read as samples rather than flattened.
+
+struct DeepExrHeader {
+    Format format;
+    Box bounds;           // the part's data window, in Welder (y-up) coordinates
+    ChannelSet channels;  // as DeepImage holds them (A, Z, ZBack always there)
+    std::string part;     // the part's name
+    std::string compression;
+    std::vector<std::string> deepParts;  // names of every deep part in the file
+    json attributes;                      // as ExrFile::attributes
+};
+
+struct DeepExrFile {
+    std::shared_ptr<DeepImage> image;  // samples sorted front to back
+    DeepExrHeader header;
+};
+
+// `part`: a deep part's name ("" = the first deep part). Channels keep the file's names. A file
+// without alpha gets A = 1; without ZBack, ZBack = Z. Throws RenderError (also for a file with no
+// deep part).
+DeepExrFile readDeepExr(const std::string& path, const std::string& part = "");
+DeepExrHeader readDeepExrHeader(const std::string& path, const std::string& part = "");
+
+struct DeepExrWriteOptions {
+    ExrPixelType type = ExrPixelType::Half;  // colour and alpha (Z and ZBack are always float)
+    std::string compression = "zips";        // none rle zips (the ones OpenEXR allows for deep data)
+    json attributes;                         // more header attributes, as ExrWriteOptions
+};
+// Writes a deep scanline file whose data window is the image's bounds.
+void writeDeepExr(const std::string& path, const DeepImage& img, const Format& fmt, const DeepExrWriteOptions& o);
+const std::vector<std::string>& deepExrCompressions();
 
 // Names accepted for `compression`.
 const std::vector<std::string>& exrCompressions();

@@ -93,6 +93,14 @@ public:
 
     // Render a region of a node using all worker threads (top-level entry point).
     ImagePtr renderRegion(Node* n, double frame, const Box& box);
+
+    // Deep samples covering exactly `box` (none outside the node's dod). A flat node's pixels
+    // come back as one sample each (deepFromFlat). Deep tiles have their own cache.
+    DeepPtr requestDeep(Node* n, double frame, const Box& box);
+    // The same, with the tiles rendered on all worker threads (DeepWrite).
+    DeepPtr renderDeepRegion(Node* n, double frame, const Box& box);
+    // What requestDeep's images hold, following bypasses, groups and pass-throughs.
+    ChannelSet deepChannels(Node* n, double frame);
     // Every tile of `box` is in the RAM cache (renderRegion would be quick).
     bool isCached(Node* n, double frame, const Box& box);
 
@@ -149,6 +157,18 @@ public:
     bool finalRender() const { return finalRender_; }
 
 private:
+    DeepPtr deepTile(Node* n, double frame, uint64_t h, int tx, int ty, const Box& dodBox);
+    // the node requestDeep really asks (after bypasses, groups, pass-throughs); null = nothing
+    Node* deepTarget(Node* n, double& frame);
+    struct DeepEntry {
+        DeepPtr img;
+        std::list<TileCache::Key>::iterator pos;
+    };
+    std::mutex deepM_;
+    std::list<TileCache::Key> deepOrder_;  // most recent first
+    std::unordered_map<TileCache::Key, DeepEntry, TileCache::KeyHash> deepCache_;
+    size_t deepBytes_ = 0;
+
     // wait = false: nullptr when another thread is rendering the tile right now
     ImagePtr tile(Node* n, double frame, uint64_t h, int tx, int ty, const Box& dodBox, bool wait = true);
 
