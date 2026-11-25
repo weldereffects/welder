@@ -145,6 +145,23 @@ def _mps(torch):
     return None
 
 
+def torch_problem():
+    """Why this Python's PyTorch can't be used, or None when it's fine. A half-installed PyTorch (an install or
+    update cut short, or files Windows kept locked) leaves a torch folder without its __init__.py: Python then
+    imports it as an empty namespace package, and the first torch.cuda says "module 'torch' has no attribute
+    'cuda'". This says what's wrong instead."""
+    try:
+        import torch
+    except Exception as e:  # noqa: BLE001
+        return f"PyTorch doesn't load ({type(e).__name__}: {str(e).strip().splitlines()[0][:300] if str(e).strip() else ''})"
+    path = getattr(torch, "__path__", None)
+    if type(path).__name__ == "_NamespacePath" or not hasattr(torch, "cuda"):
+        where = list(path or [])
+        return ("PyTorch is incomplete: " + (", ".join(where) if where else "the torch package") +
+                " has no torch/__init__.py (an install or update was cut short)")
+    return None
+
+
 def detect(want=None):
     """The device for `want` ("auto", or one of KINDS); the CPU when that one isn't there."""
     want = want or requested()

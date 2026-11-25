@@ -113,7 +113,13 @@ void workerSection(App& app, const std::string& needPkg) {
         if (ImGui::SmallButton("stop")) ml::stopWorker();
         if (!needPkg.empty() && needPkg != "gsplat" && w.packages.is_object() && !w.packages.value(needPkg, false)) {
             label("");
-            if (needPkg == "corridorkey_env")
+            const json ckt = w.packages.value("corridorkey_torch", json());
+            if (needPkg == "corridorkey_env" && ckt.is_object() && ckt.contains("error")) {
+                ImGui::PushTextWrapPos(0);
+                ImGui::TextColored(kBad, "CorridorKey's environment: %s. Click Update ML to reinstall it.",
+                                   ckt.value("error", std::string()).c_str());
+                ImGui::PopTextWrapPos();
+            } else if (needPkg == "corridorkey_env")
                 ImGui::TextColored(kBad, "CorridorKey's Python environment isn't set up: click Update ML");
             else
                 ImGui::TextColored(kBad, "the worker's Python has no '%s': click Update ML", needPkg.c_str());
