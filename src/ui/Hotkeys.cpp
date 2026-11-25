@@ -56,7 +56,7 @@ const std::vector<Shortcut>& shortcuts() {
         {"Node Graph", "Ctrl+G", "group the selected nodes", true},
         {"Node Graph", "Ctrl+Alt+G", "expand the selected group", true},
         {"Node Graph", "Ctrl+Enter", "open the selected group (nothing selected: up a level)", true},
-        {"Node Graph", "Ctrl+V", "paste nodes (also nodes copied in another .nk app)", true},
+        {"Node Graph", "Ctrl+V", "paste nodes (including .nk nodes) or a footage path", true},
         {"Node Graph", "I", "info about the selected node", true},
         {"Node Graph", "S", "project settings", true},
         {"Node Graph", "F", "fit selected nodes (or all) in the panel", true},

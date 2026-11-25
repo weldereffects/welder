@@ -627,6 +627,7 @@ void numericKnob(Ctx& c, const KnobDef& k) {
     auto startGesture = [&]() {
         if (ImGui::IsItemActivated()) c.app.checkpoint();
     };
+    bool showInlinePicker = false;
 
     const ImGuiSliderFlags sflags = k.logSlider ? ImGuiSliderFlags_Logarithmic : 0;
     // a value field, then (unless noSlider) a slider filling the row
@@ -735,6 +736,7 @@ void numericKnob(Ctx& c, const KnobDef& k) {
         std::string ek = c.node->name + "/" + k.name;
         bool split = expanded.count(ek) || !(cur[0] == cur[1] && cur[1] == cur[2] && cur[2] == cur[3]);
         float col[4] = {(float)cur[0], (float)cur[1], (float)cur[2], (float)cur[3]};
+        const bool inlinePicker = c.node->type == "ColorCorrect" || c.node->type == "Grade";
         if (ImGui::ColorEdit4("##sw", col, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR |
                                                ImGuiColorEditFlags_AlphaPreviewHalf | ImGuiColorEditFlags_NoLabel)) {
             for (int i = 0; i < 4; ++i)
@@ -744,8 +746,20 @@ void numericKnob(Ctx& c, const KnobDef& k) {
         startGesture();
         ImGui::SameLine();
         float rest = avail - ImGui::GetFrameHeight() * 2 - 30 - ImGui::GetStyle().ItemSpacing.x * 2;  // room for "1|4" and the pipette
+        if (inlinePicker) {
+            const ImGuiID pickerId = ImGui::GetID("##inlinePickerOpen");
+            ImGuiStorage* state = ImGui::GetStateStorage();
+            showInlinePicker = state->GetBool(pickerId);
+            if (kit::iconButton("##wheel", kit::Icon::ColorWheel, showInlinePicker,
+                                showInlinePicker ? "Hide color wheel" : "Show color wheel")) {
+                showInlinePicker = !showInlinePicker;
+                state->SetBool(pickerId, showInlinePicker);
+            }
+            ImGui::SameLine();
+            rest -= ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
+        }
         if (split) {
-            ImGui::SetNextItemWidth(rest);
+            ImGui::SetNextItemWidth(std::max(40.0f, rest));
             float fv[4] = {col[0], col[1], col[2], col[3]};
             if (ImGui::DragFloat4("##v", fv, 0.005f, 0, 0, "%.3f") && !ImGui::GetIO().KeyAlt)
                 for (int i = 0; i < 4; ++i)
@@ -825,6 +839,19 @@ void numericKnob(Ctx& c, const KnobDef& k) {
         // the classic "=": the expression editor for the knob under the mouse
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Equal, false) && !ImGui::GetIO().KeyCtrl)
             openExprEditor(c, k, n, cur, defs);
+    }
+    if (showInlinePicker) {
+        ImGui::Indent(kit::labelWidth());
+        ImGui::SetNextItemWidth(std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, ImGui::GetFontSize() * 13.0f));
+        float rgb[3] = {(float)cur[0], (float)cur[1], (float)cur[2]};
+        const bool edited = ImGui::ColorPicker3("##inlinePicker", rgb, ImGuiColorEditFlags_PickerHueWheel |
+            ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_NoInputs |
+            ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoOptions | ImGuiColorEditFlags_NoLabel);
+        startGesture();
+        if (edited)
+            for (int i = 0; i < 3; ++i)
+                if (rgb[i] != (float)cur[i]) commit(i, rgb[i]);
+        ImGui::Unindent(kit::labelWidth());
     }
     ImGui::PopID();
 }

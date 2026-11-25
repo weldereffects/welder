@@ -35,7 +35,7 @@ bool beginCombo(const char* id, const char* preview, float width, int flags = 0)
 // ImGui::BeginCombo with the field's colour (the width as set before it).
 bool beginComboFlat(const char* id, const char* preview, int flags = 0);
 // Small icon buttons.
-enum class Icon { Chain, ChainBroken, Crosshair, Eyedropper };
+enum class Icon { Chain, ChainBroken, Crosshair, Eyedropper, ColorWheel };
 bool iconButton(const char* id, Icon icon, bool on = false, const char* tip = nullptr);
 
 // A card: a rounded, slightly darker box around a group of knobs, optionally

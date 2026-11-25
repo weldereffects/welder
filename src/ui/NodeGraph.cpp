@@ -606,10 +606,11 @@ bool graphTestPipe(App& app, UiState& ui, int frame) {
     return true;
 }
 
-void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths0, ImVec2 screenPos) {
+static void graphImportFiles(App& app, UiState& ui, const std::vector<std::string>& paths0,
+                             ImVec2 screenPos, bool pasted) {
     std::vector<std::string> paths;
     for (auto& p : paths0) paths.push_back(netpath::maybeUnc(p));  // mapped drives: their network path
-    for (auto& p : paths) crash::crumb("dropped " + p);
+    for (auto& p : paths) crash::crumb((pasted ? "pasted " : "dropped ") + p);
     namespace fs = std::filesystem;
     GraphState& g = ui.graph;
     // where: under the mouse when it's over the graph, else the middle of the graph view
@@ -687,8 +688,11 @@ void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths
         });
         app.selection = std::set<std::string>(names.begin(), names.end());
         if (make.size() == 1 && make[0].type == "Read") app.setViewed(names[0]);
-        app.message("dropped: " + std::to_string(make.size()) + " node(s)");
+        app.message(pasted ? "pasted footage: " + std::to_string(make.size()) + " node(s)"
+                           : "dropped: " + std::to_string(make.size()) + " node(s)");
         at.x += 130.0f * (float)make.size();  // anything pasted next goes beside them
+    } else if (pasted) {
+        app.message("no supported footage found in the clipboard folder");
     }
     for (auto& nk : nkFiles) {  // a .nk script dropped: its nodes, pasted where it landed
         std::ifstream f(nk, std::ios::binary);
@@ -715,6 +719,10 @@ void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths
         for (auto& u : unknown) t += (t.empty() ? "" : ", ") + u;
         app.message("can't use dropped file(s): " + t);
     }
+}
+
+void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths, ImVec2 screenPos) {
+    graphImportFiles(app, ui, paths, screenPos, false);
 }
 
 // A shake: a real one, not nudging a node into place. The drag's direction reverses 6+ times
@@ -838,6 +846,40 @@ static bool looksLikeNk(const std::string& t) {
     return b != std::string::npos && b < 64 && t.find('}') != std::string::npos;
 }
 
+static bool graphPasteFootage(App& app, UiState& ui, const std::string& clip) {
+    const size_t first = clip.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return false;
+    std::string path = clip.substr(first, clip.find_last_not_of(" \t\r\n") - first + 1);
+    if (path.find_first_of("\r\n") != std::string::npos) return false;
+    // Explorer's Copy as path wraps the path in double quotes.
+    if (path.size() >= 2 && path.front() == '"' && path.back() == '"')
+        path = path.substr(1, path.size() - 2);
+    namespace fs = std::filesystem;
+    try {
+        const bool image = isSupportedImagePath(path);
+        const bool movie = movie::isMoviePath(path);
+        path = app.comp->resolvePath(path);
+        std::error_code ec;
+        const fs::path absolute = fs::absolute(path, ec);
+        if (!ec) {
+            path = absolute.string();
+            int firstFrame = 0, lastFrame = 0;
+            if (fs::is_directory(absolute, ec) ||
+                ((image || movie) && fs::is_regular_file(absolute, ec)) ||
+                (image && sequenceRange(path, firstFrame, lastFrame))) {
+                graphImportFiles(app, ui, {path}, ImGui::GetIO().MousePos, true);
+                return true;
+            }
+        }
+        if (!image && !movie) return false;
+    } catch (const std::exception&) {
+        app.message("couldn't read the clipboard footage path");
+        return true;
+    }
+    app.message("couldn't find the clipboard footage on disk");
+    return true;
+}
+
 void graphPaste(App& app, UiState& ui) {
     const char* clipC = ImGui::GetClipboardText();
     std::string clip = clipC ? clipC : "";
@@ -856,7 +898,8 @@ void graphPaste(App& app, UiState& ui) {
         }
     }
     if (arr.is_null() || arr.empty()) {
-        app.message("clipboard has no nodes");
+        if (arr.is_null() && graphPasteFootage(app, ui, clip)) return;
+        app.message("clipboard has no nodes or footage path");
         return;
     }
     graphPasteNodes(app, ui, arr);
