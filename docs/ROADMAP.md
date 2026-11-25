@@ -61,7 +61,8 @@
 - [ ] Blender next: lights and cameras from Welder 3D lights, Alembic / USD exchange, render on another machine
 - [ ] AI next: LTX text / image to video, splats in ScanlineRender (with geometry), splat editing (crop boxes), remote workers
 - [x] Deep compositing, part 1: deep samples through the graph (any flat node sees them flattened), DeepRead (deep scanline / tiled EXR), DeepToImage, DeepWrite
-- [ ] Deep next: DeepMerge (volumes split where they overlap), DeepHoldout, DeepFromImage, DeepRecolor, deep colour and transform nodes, ScanlineRender deep output, deep sample readout, GPU flatten / merge
+- [x] Deep compositing, part 2: DeepMerge (combine / plus / holdout; volumes split where they overlap), DeepHoldout, DeepFromImage, DeepRecolor, DeepGrade, DeepColorCorrect, DeepTransform, DeepCrop, DeepReformat
+- [ ] Deep next: ScanlineRender deep output, deep sample readout, DeepToPoints, GPU flatten / merge, deep-aware ZDefocus
 - [ ] OFX: overlays/interacts, parametric params, 8/16-bit plugins
 - [ ] .nk importer: more nodes, TCL beyond [frame] / [value]; pixel-diff test suite against the original renders
 - [ ] Windows/macOS builds and CI

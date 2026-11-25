@@ -145,3 +145,12 @@ PixelMosh
 DeepRead
 DeepToImage
 DeepWrite
+DeepMerge
+DeepHoldout
+DeepFromImage
+DeepRecolor
+DeepGrade
+DeepColorCorrect
+DeepTransform
+DeepCrop
+DeepReformat

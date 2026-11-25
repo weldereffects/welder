@@ -1,6 +1,8 @@
-// Deep compositing nodes (core/Deep.h): DeepToImage and DeepWrite. DeepRead is with Read in
-// IONodes.cpp.
+// Deep compositing nodes (core/Deep.h). DeepRead is with Read in IONodes.cpp.
+#include <cmath>
+#include <cstring>
 #include <filesystem>
+#include <limits>
 
 #include "../color/Color.h"
 #include "../core/Comp.h"
@@ -86,12 +88,519 @@ public:
     }
 };
 
+// ------------------------------------------------------------------ deep node base
+// A deep node: its flat answer is its samples flattened; its sample channels are its main
+// input's unless it says otherwise.
+class DeepOp : public Node {
+public:
+    bool isDeep() const override { return true; }
+    ChannelSet deepChannels(Engine& e, double frame) override {
+        Node* in = input(0);
+        return in ? e.deepChannels(in, inputTime(0, frame)) : deepChannelsOf(rgbaChannels());
+    }
+    ChannelSet channels(Engine& e, double frame) override { return flatChannelsOf(deepChannels(e, frame)); }
+    void render(RenderArgs& a, Image& out) override { renderDeepFlattened(this, a, out); }
+};
+
+// Copies src's samples for out's region into out, sample by sample through `fn(const float* in,
+// float* out)` (channels matched by name; out's own channels missing from src are 0).
+template <class Fn>
+void mapSamples(const DeepImage& src, DeepImage& out, Fn&& fn) {
+    const int on = out.nch(), sn = src.nch();
+    std::vector<int> map(on);
+    for (int c = 0; c < on; ++c) map[c] = src.ch(out.channels[c]);
+    for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+        for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+            const int n = src.count(x, y);
+            float* d = out.newPixel(n);
+            if (!n) continue;
+            const float* s = src.sample(x, y);
+            for (int k = 0; k < n; ++k, s += sn, d += on) {
+                for (int c = 0; c < on; ++c) d[c] = map[c] >= 0 ? s[map[c]] : 0.0f;
+                fn(s, d);
+            }
+        }
+}
+
+// The depth range a colour node is limited to (limit_z, zmin, zmax): the weight of a sample.
+struct ZLimit {
+    bool on = false;
+    double zmin = 0, zmax = 1e30;
+    ZLimit(const Params& p, double f) : on(p.flag("limit_z", false)), zmin(p.num("zmin", f, 0)), zmax(p.num("zmax", f, 1e6)) {}
+    bool inside(float z0, float z1) const {
+        if (!on) return true;
+        const double m = z1 > z0 ? 0.5 * ((double)z0 + z1) : z0;
+        return m >= zmin && m <= zmax;
+    }
+};
+
+// Colour work on unpremultiplied samples. `fn(rgb)` changes three values in place.
+template <class Fn>
+void colourSamples(Node* self, RenderArgs& a, DeepImage& out, Fn&& fn) {
+    Node* in = self->input(0);
+    if (!in) return;
+    DeepPtr d = a.fetchDeep(in, out.bounds);
+    const ZLimit lim(self->params, a.frame);
+    const double mix = std::clamp(self->params.num("mix", a.frame, 1.0), 0.0, 1.0);
+    const int R = out.ch("R"), G = out.ch("G"), B = out.ch("B"), A = out.ai, Z = out.zi, ZB = out.zbi;
+    mapSamples(*d, out, [&](const float*, float* p) {
+        if (R < 0 || G < 0 || B < 0 || !lim.inside(p[Z], p[ZB])) return;
+        const float al = p[A];
+        const float un = al > 1e-8f ? 1.0f / al : 1.0f;
+        float rgb[3] = {p[R] * un, p[G] * un, p[B] * un}, orig[3] = {rgb[0], rgb[1], rgb[2]};
+        fn(rgb);
+        const float k = al > 1e-8f ? al : 1.0f;
+        p[R] = (float)((orig[0] + (rgb[0] - orig[0]) * mix) * k);
+        p[G] = (float)((orig[1] + (rgb[1] - orig[1]) * mix) * k);
+        p[B] = (float)((orig[2] + (rgb[2] - orig[2]) * mix) * k);
+    });
+}
+
+// ------------------------------------------------------------------ DeepMerge
+// Inputs B, A and more. operation: "combine" (every input's samples by depth: volumes split where
+// they overlap, samples at the same depth mixed as fogs), "plus" (the same, but samples at the
+// same depth add up), "holdout" (B's samples, held out by all the other inputs). drop_hidden:
+// leave out the samples behind the point where the result is fully opaque.
+class DeepMergeNode : public DeepOp {
+public:
+    int maxInputs() const override { return 8; }
+    std::string inputLabel(int i) const override { return i == 0 ? "B" : i == 1 ? "A" : "A" + std::to_string(i); }
+    bool holdout() const { return params.str("operation", "combine") == "holdout"; }
+    Box dod(Engine& e, double f) override {
+        if (holdout()) return input(0) ? e.dod(input(0), f) : Box();
+        Box b;
+        for (int i = 0; i < (int)inputs.size(); ++i)
+            if (input(i)) b = b.unite(e.dod(input(i), f));
+        return b;
+    }
+    ChannelSet deepChannels(Engine& e, double f) override {
+        if (holdout()) return DeepOp::deepChannels(e, f);
+        ChannelSet cs;
+        for (int i = 0; i < (int)inputs.size(); ++i)
+            if (input(i)) cs = unionChannels(cs, e.deepChannels(input(i), f));
+        return cs.empty() ? deepChannelsOf(rgbaChannels()) : deepChannelsOf(cs);
+    }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        std::vector<DeepPtr> ins;
+        for (int i = 0; i < (int)inputs.size(); ++i)
+            if (input(i)) ins.push_back(a.fetchDeep(input(i), out.bounds));
+            else if (i == 0 && holdout()) return;
+        if (ins.empty()) return;
+        const bool drop = params.flag("drop_hidden", false);
+        if (holdout()) {
+            // B held out by the others, all of them together
+            DeepPtr b = ins[0];
+            if (ins.size() > 1) {
+                std::vector<DeepPtr> rest(ins.begin() + 1, ins.end());
+                DeepImage all(out.bounds, deepChannelsOf(rgbaChannels()));
+                gather(rest, all, DeepCombine::Over, false);
+                b = deepHoldout(*b, all);
+            }
+            mapSamples(*b, out, [](const float*, float*) {});
+            return;
+        }
+        gather(ins, out, params.str("operation", "combine") == "plus" ? DeepCombine::Plus : DeepCombine::Over, drop);
+    }
+
+    // Every input's samples per pixel, tidied, into out.
+    static void gather(const std::vector<DeepPtr>& ins, DeepImage& out, DeepCombine mode, bool drop) {
+        const int on = out.nch();
+        std::vector<std::vector<int>> maps(ins.size());
+        for (size_t i = 0; i < ins.size(); ++i) {
+            maps[i].resize(on);
+            for (int c = 0; c < on; ++c) maps[i][c] = ins[i]->ch(out.channels[c]);
+        }
+        std::vector<float> s;
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                s.clear();
+                int sources = 0;
+                for (size_t i = 0; i < ins.size(); ++i) {
+                    const DeepImage& d = *ins[i];
+                    const int n = d.count(x, y), dn = d.nch();
+                    if (!n) continue;
+                    ++sources;
+                    const float* p = d.sample(x, y);
+                    for (int k = 0; k < n; ++k, p += dn)
+                        for (int c = 0; c < on; ++c) s.push_back(maps[i][c] >= 0 ? p[maps[i][c]] : 0.0f);
+                }
+                if (sources > 1) tidySamples(s, on, out.zi, out.zbi, out.ai, mode);
+                if (drop) dropHiddenSamples(s, on, out.ai);
+                float* d = out.newPixel((int)(s.size() / on));
+                if (!s.empty()) std::memcpy(d, s.data(), sizeof(float) * s.size());
+            }
+    }
+};
+
+// ------------------------------------------------------------------ DeepHoldout
+// Flattens its main input with the holdout input cutting it out: what of the main input shows
+// through, by depth. A flat image comes out (depth.Z as DeepToImage's depth knob).
+class DeepHoldoutNode : public Node {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 0 ? "" : "holdout"; }
+    ChannelSet channels(Engine& e, double frame) override {
+        Node* in = input(0);
+        ChannelSet cs = flatChannelsOf(in ? e.deepChannels(in, frame) : deepChannelsOf(rgbaChannels()));
+        if (depthMode(params) == DeepDepthOut::None) cs.erase(std::remove(cs.begin(), cs.end(), "depth.Z"), cs.end());
+        return cs;
+    }
+    void render(RenderArgs& a, Image& out) override {
+        Node* in = input(0);
+        if (!in) return;
+        DeepPtr d = a.fetchDeep(in, out.bounds);
+        if (Node* h = input(1)) d = deepHoldout(*d, *a.fetchDeep(h, out.bounds));
+        flattenDeep(*d, out, depthMode(params));
+    }
+};
+
+// ------------------------------------------------------------------ DeepFromImage
+// A flat image as deep samples, one a pixel. z_from: "depth.Z" (the input's depth.Z, read as
+// 1/z; 0 = infinitely far) or "constant" (z). volume: the samples' thickness (ZBack = Z + volume).
+// keep_zero_alpha: pixels with no alpha and no colour still get a sample.
+class DeepFromImageNode : public DeepOp {
+public:
+    ChannelSet deepChannels(Engine& e, double frame) override {
+        Node* in = input(0);
+        return deepChannelsOf(in ? e.channels(in, frame) : rgbaChannels());
+    }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        Node* in = input(0);
+        if (!in) return;
+        ImagePtr img = a.fetch(in, out.bounds);
+        const bool constant = params.str("z_from", "depth.Z") == "constant";
+        const float zc = (float)params.num("z", a.frame, 1.0), vol = (float)std::max(0.0, params.num("volume", a.frame, 0.0));
+        const bool keep = params.flag("keep_zero_alpha", false);
+        const int on = out.nch(), sa = img->ch("A"), sz = img->ch("depth.Z");
+        std::vector<int> map(on);
+        for (int c = 0; c < on; ++c) map[c] = (c == out.zi || c == out.zbi) ? -1 : img->ch(out.channels[c]);
+        const float inf = std::numeric_limits<float>::infinity();
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                const float* s = img->px(x, y);
+                bool any = keep || sa < 0;
+                for (int c = 0; c < img->nch() && !any; ++c) any = c != sz && s[c] != 0.0f;
+                if (!any) {
+                    out.newPixel(0);
+                    continue;
+                }
+                float* d = out.newPixel(1);
+                for (int c = 0; c < on; ++c) d[c] = map[c] >= 0 ? s[map[c]] : 0.0f;
+                if (sa < 0) d[out.ai] = 1.0f;
+                float z = zc;
+                if (!constant) {
+                    const float iz = sz >= 0 ? s[sz] : 0.0f;
+                    z = iz > 0 ? 1.0f / iz : inf;
+                }
+                d[out.zi] = z;
+                d[out.zbi] = z + vol;
+            }
+    }
+};
+
+// ------------------------------------------------------------------ DeepRecolor
+// Gives a deep image (input 0) the colour of a flat one (input "color", e.g. the deep render's
+// beauty after grading or paint): each sample takes the flat colour in proportion to what it
+// adds to the flattened alpha, so the result flattens to the flat image. target_alpha: also scale
+// the samples' alphas so the flattened alpha matches the flat one's.
+class DeepRecolorNode : public DeepOp {
+public:
+    int maxInputs() const override { return 2; }
+    std::string inputLabel(int i) const override { return i == 0 ? "depth" : "color"; }
+    ChannelSet deepChannels(Engine& e, double frame) override {
+        ChannelSet cs = DeepOp::deepChannels(e, frame);
+        if (Node* c = input(1))
+            for (auto& ch : e.channels(c, frame))
+                if (ch != "depth.Z" && channelIndex(cs, ch) < 0) cs.push_back(ch);
+        return deepChannelsOf(cs);
+    }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        Node* in = input(0);
+        if (!in) return;
+        DeepPtr d = a.fetchDeep(in, out.bounds);
+        Node* cn = input(1);
+        if (!cn) {
+            mapSamples(*d, out, [](const float*, float*) {});
+            return;
+        }
+        ImagePtr col = a.fetch(cn, out.bounds);
+        const bool target = params.flag("target_alpha", false);
+        const int on = out.nch(), dn = d->nch(), A = out.ai;
+        // the flat channels written onto the samples (not alpha or depth)
+        std::vector<std::pair<int, int>> fromFlat;  // out channel, flat channel
+        for (int c = 0; c < on; ++c) {
+            if (c == A || c == out.zi || c == out.zbi) continue;
+            const int fc = col->ch(out.channels[c]);
+            if (fc >= 0) fromFlat.push_back({c, fc});
+        }
+        std::vector<int> map(on);
+        for (int c = 0; c < on; ++c) map[c] = d->ch(out.channels[c]);
+        const int fa = col->ch("A");
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                const int n = d->count(x, y);
+                float* o = out.newPixel(n);
+                if (!n) continue;
+                const float* s = d->sample(x, y);
+                const float* f = col->bounds.contains(x, y) ? col->px(x, y) : nullptr;
+                for (int k = 0; k < n; ++k)
+                    for (int c = 0; c < on; ++c) o[k * on + c] = map[c] >= 0 ? s[k * dn + map[c]] : 0.0f;
+                double T = 1;
+                for (int k = 0; k < n; ++k) T *= 1.0 - std::clamp((double)o[k * on + A], 0.0, 1.0);
+                if (target && f && fa >= 0) {
+                    // a power k on every sample's transmission: prod (1 - a)^k = 1 - flat alpha
+                    const double want = std::clamp((double)f[fa], 0.0, 1.0 - 1e-6), logT = std::log(std::max(T, 1e-12));
+                    if (logT < -1e-12) {
+                        const double kk = std::log(1.0 - want) / logT;
+                        T = 1;
+                        for (int q = 0; q < n; ++q) {
+                            float& al = o[q * on + A];
+                            al = (float)(1.0 - std::pow(1.0 - std::clamp((double)al, 0.0, 1.0 - 1e-7), kk));
+                            T *= 1.0 - al;
+                        }
+                    }
+                }
+                const double total = 1.0 - T;
+                for (int q = 0; q < n; ++q) {
+                    const double w = total > 1e-9 ? o[q * on + A] / total : 0.0;
+                    for (auto [c, fc] : fromFlat) o[q * on + c] = f ? (float)(f[fc] * w) : 0.0f;
+                }
+            }
+    }
+};
+
+// ------------------------------------------------------------------ DeepGrade / DeepColorCorrect
+// Grade's knobs on the samples' unpremultiplied colour (R, G, B); limit_z / zmin / zmax keep it to
+// a depth range; mix.
+class DeepGradeNode : public DeepOp {
+public:
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        const double f = a.frame;
+        auto bp = params.vec<4>("blackpoint", f, {0, 0, 0, 0});
+        auto wp = params.vec<4>("whitepoint", f, {1, 1, 1, 1});
+        auto lift = params.vec<4>("lift", f, {0, 0, 0, 0});
+        auto gain = params.vec<4>("gain", f, {1, 1, 1, 1});
+        auto mul = params.vec<4>("multiply", f, {1, 1, 1, 1});
+        auto off = params.vec<4>("offset", f, {0, 0, 0, 0});
+        auto gam = params.vec<4>("gamma", f, {1, 1, 1, 1});
+        const bool bclamp = params.flag("black_clamp", true), wclamp = params.flag("white_clamp", false);
+        float A[3], B[3], G[3];
+        for (int c = 0; c < 3; ++c) {
+            const double d = wp[c] - bp[c];
+            A[c] = (float)(mul[c] * (gain[c] - lift[c]) / (d == 0 ? 1e-9 : d));
+            B[c] = (float)(off[c] + lift[c] - A[c] * bp[c]);
+            G[c] = gam[c] <= 0 ? 1.0f : (float)(1.0 / gam[c]);
+        }
+        colourSamples(this, a, out, [&](float* rgb) {
+            for (int c = 0; c < 3; ++c) {
+                float v = A[c] * rgb[c] + B[c];
+                if (G[c] != 1.0f && v > 0) v = std::pow(v, G[c]);
+                if (bclamp && v < 0) v = 0;
+                if (wclamp && v > 1) v = 1;
+                rgb[c] = v;
+            }
+        });
+    }
+};
+
+// saturation, contrast (about 0.18), gamma, gain, offset, in that order (as ColorCorrect's master).
+class DeepColorCorrectNode : public DeepOp {
+public:
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        const double f = a.frame;
+        const double sat = params.num("saturation", f, 1.0);
+        auto con = params.vec<4>("contrast", f, {1, 1, 1, 1});
+        auto gam = params.vec<4>("gamma", f, {1, 1, 1, 1});
+        auto gain = params.vec<4>("gain", f, {1, 1, 1, 1});
+        auto off = params.vec<4>("offset", f, {0, 0, 0, 0});
+        colourSamples(this, a, out, [&](float* rgb) {
+            const double l = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            for (int c = 0; c < 3; ++c) {
+                double v = l + (rgb[c] - l) * sat;
+                if (con[c] != 1.0) v = v > 0 ? 0.18 * std::pow(v / 0.18, con[c]) : v * con[c];
+                if (gam[c] != 1.0 && gam[c] > 0 && v > 0) v = std::pow(v, 1.0 / gam[c]);
+                v = v * gain[c] + off[c];
+                rgb[c] = (float)v;
+            }
+        });
+    }
+};
+
+// ------------------------------------------------------------------ DeepTransform
+// translate [x, y] (whole pixels: samples aren't filtered), zscale and ztranslate (Z' = Z * zscale
+// + ztranslate, ZBack too).
+class DeepTransformNode : public DeepOp {
+public:
+    std::pair<int, int> shift(Engine& e, double f) const {
+        auto t = params.vec<2>("translate", f, {0, 0});
+        return {(int)std::lround(t[0] * e.scale()), (int)std::lround(t[1] * e.scale())};
+    }
+    Box dod(Engine& e, double f) override {
+        Box b = input(0) ? e.dod(input(0), f) : Box();
+        auto [dx, dy] = shift(e, f);
+        return b.empty() ? b : Box(b.x1 + dx, b.y1 + dy, b.x2 + dx, b.y2 + dy);
+    }
+    Box roi(Engine& e, int, const Box& req, double f) override {
+        auto [dx, dy] = shift(e, f);
+        return Box(req.x1 - dx, req.y1 - dy, req.x2 - dx, req.y2 - dy);
+    }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        Node* in = input(0);
+        if (!in) return;
+        auto [dx, dy] = shift(a.engine, a.frame);
+        const Box& r = out.bounds;
+        DeepPtr d = a.fetchDeep(in, Box(r.x1 - dx, r.y1 - dy, r.x2 - dx, r.y2 - dy));
+        const float zs = (float)params.num("zscale", a.frame, 1.0), zt = (float)params.num("ztranslate", a.frame, 0.0);
+        const int on = out.nch(), sn = d->nch(), Z = out.zi, ZB = out.zbi;
+        std::vector<int> map(on);
+        for (int c = 0; c < on; ++c) map[c] = d->ch(out.channels[c]);
+        for (int y = r.y1; y < r.y2; ++y)
+            for (int x = r.x1; x < r.x2; ++x) {
+                const int n = d->count(x - dx, y - dy);
+                float* o = out.newPixel(n);
+                if (!n) continue;
+                const float* s = d->sample(x - dx, y - dy);
+                for (int k = 0; k < n; ++k, s += sn, o += on) {
+                    for (int c = 0; c < on; ++c) o[c] = map[c] >= 0 ? s[map[c]] : 0.0f;
+                    float z0 = o[Z] * zs + zt, z1 = o[ZB] * zs + zt;
+                    if (z1 < z0) std::swap(z0, z1);  // a negative zscale turns the slabs round
+                    o[Z] = z0;
+                    o[ZB] = z1;
+                }
+                if (zs < 0) out.sortPixel((size_t)out.pixelsAdded() - 1);
+            }
+    }
+};
+
+// ------------------------------------------------------------------ DeepCrop
+// box [x, y, r, t] (use_box; the format by default), znear / zfar (use_znear, use_zfar): samples
+// outside are removed, volumes crossing an edge cut there. outside: keep what is outside the depth
+// range instead.
+class DeepCropNode : public DeepOp {
+public:
+    Box cropBox(Engine& e, double f) {
+        Format fmt = nodeFormat(e, this, input(0), f);
+        if (!params.flag("use_box", true)) return Box(-(1 << 29), -(1 << 29), 1 << 29, 1 << 29);
+        const double sc = e.scale();
+        auto b = params.vec<4>("box", f, {0, 0, fmt.width / sc, fmt.height / sc});
+        return Box((int)std::floor(b[0] * sc), (int)std::floor(b[1] * sc), (int)std::ceil(b[2] * sc - 1e-9), (int)std::ceil(b[3] * sc - 1e-9));
+    }
+    Box dod(Engine& e, double f) override { return (input(0) ? e.dod(input(0), f) : Box()).intersect(cropBox(e, f)); }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        Node* in = input(0);
+        if (!in) return;
+        DeepPtr d = a.fetchDeep(in, out.bounds);
+        const bool zn = params.flag("use_znear", false), zf = params.flag("use_zfar", false);
+        const float nearZ = zn ? (float)params.num("znear", a.frame, 0) : -std::numeric_limits<float>::infinity();
+        const float farZ = zf ? (float)params.num("zfar", a.frame, 1e6) : std::numeric_limits<float>::infinity();
+        const bool inside = !params.flag("outside", false);
+        if (!zn && !zf) {
+            mapSamples(*d, out, [](const float*, float*) {});
+            return;
+        }
+        const int on = out.nch(), sn = d->nch();
+        std::vector<int> map(on);
+        for (int c = 0; c < on; ++c) map[c] = d->ch(out.channels[c]);
+        std::vector<float> s;
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                const int n = d->count(x, y);
+                s.clear();
+                if (n) {
+                    const float* p = d->sample(x, y);
+                    for (int k = 0; k < n; ++k, p += sn)
+                        for (int c = 0; c < on; ++c) s.push_back(map[c] >= 0 ? p[map[c]] : 0.0f);
+                    clipSamplesZ(s, on, out.zi, out.zbi, out.ai, nearZ, farZ, inside);
+                }
+                float* o = out.newPixel((int)(s.size() / on));
+                if (!s.empty()) std::memcpy(o, s.data(), sizeof(float) * s.size());
+            }
+    }
+};
+
+// ------------------------------------------------------------------ DeepReformat
+// To another format [w, h] (the project's by default). resize: "none", "width", "height", "fit",
+// "fill", "distort"; center. Each output pixel takes the samples of the input pixel under its
+// centre (samples aren't filtered).
+class DeepReformatNode : public DeepOp {
+public:
+    Format outFormat(Engine& e, double f) const {
+        Format fm = comp ? comp->format : Format();
+        if (params.has("format")) {
+            auto wh = params.vec<2>("format", f, {(double)fm.width, (double)fm.height});
+            fm.width = std::max(1, (int)wh[0]);
+            fm.height = std::max(1, (int)wh[1]);
+        }
+        return scaledFormat(fm, e.scale());
+    }
+    Format format(Engine& e, double f) override { return outFormat(e, f); }
+    // out = in * s + t
+    void mapping(Engine& e, double f, double& sx, double& sy, double& tx, double& ty) {
+        const Format in = nodeFormat(e, this, input(0), f), out = outFormat(e, f);
+        const double rx = (double)out.width / std::max(1, in.width), ry = (double)out.height / std::max(1, in.height);
+        const std::string m = params.str("resize", "width");
+        sx = sy = 1;
+        if (m == "width") sx = sy = rx;
+        else if (m == "height") sx = sy = ry;
+        else if (m == "fit") sx = sy = std::min(rx, ry);
+        else if (m == "fill") sx = sy = std::max(rx, ry);
+        else if (m == "distort") sx = rx, sy = ry;
+        tx = ty = 0;
+        if (params.flag("center", true)) {
+            tx = (out.width - in.width * sx) / 2.0;
+            ty = (out.height - in.height * sy) / 2.0;
+        }
+    }
+    Box dod(Engine& e, double f) override {
+        Box b = input(0) ? e.dod(input(0), f) : Box();
+        if (b.empty()) return b;
+        double sx, sy, tx, ty;
+        mapping(e, f, sx, sy, tx, ty);
+        return Box((int)std::floor(b.x1 * sx + tx), (int)std::floor(b.y1 * sy + ty), (int)std::ceil(b.x2 * sx + tx), (int)std::ceil(b.y2 * sy + ty));
+    }
+    Box roi(Engine& e, int, const Box& req, double f) override {
+        double sx, sy, tx, ty;
+        mapping(e, f, sx, sy, tx, ty);
+        return Box((int)std::floor((req.x1 - tx) / sx) - 1, (int)std::floor((req.y1 - ty) / sy) - 1, (int)std::ceil((req.x2 - tx) / sx) + 1,
+                   (int)std::ceil((req.y2 - ty) / sy) + 1);
+    }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        Node* in = input(0);
+        if (!in) return;
+        double sx, sy, tx, ty;
+        mapping(a.engine, a.frame, sx, sy, tx, ty);
+        DeepPtr d = a.fetchDeep(in, roi(a.engine, 0, out.bounds, a.frame));
+        const int on = out.nch(), sn = d->nch();
+        std::vector<int> map(on);
+        for (int c = 0; c < on; ++c) map[c] = d->ch(out.channels[c]);
+        for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+            for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
+                const int ix = (int)std::floor((x + 0.5 - tx) / sx), iy = (int)std::floor((y + 0.5 - ty) / sy);
+                const int n = d->count(ix, iy);
+                float* o = out.newPixel(n);
+                if (!n) continue;
+                const float* s = d->sample(ix, iy);
+                for (int k = 0; k < n; ++k, s += sn, o += on)
+                    for (int c = 0; c < on; ++c) o[c] = map[c] >= 0 ? s[map[c]] : 0.0f;
+            }
+    }
+};
+
 }  // namespace
 
 void registerDeepNodes() {
     auto& r = NodeRegistry::instance();
     r.add("DeepToImage", [] { return std::make_unique<DeepToImageNode>(); });
     r.add("DeepWrite", [] { return std::make_unique<DeepWriteNode>(); });
+    r.add("DeepMerge", [] { return std::make_unique<DeepMergeNode>(); });
+    r.add("DeepHoldout", [] { return std::make_unique<DeepHoldoutNode>(); });
+    r.add("DeepFromImage", [] { return std::make_unique<DeepFromImageNode>(); });
+    r.add("DeepRecolor", [] { return std::make_unique<DeepRecolorNode>(); });
+    r.add("DeepGrade", [] { return std::make_unique<DeepGradeNode>(); });
+    r.add("DeepColorCorrect", [] { return std::make_unique<DeepColorCorrectNode>(); });
+    r.add("DeepTransform", [] { return std::make_unique<DeepTransformNode>(); });
+    r.add("DeepCrop", [] { return std::make_unique<DeepCropNode>(); });
+    r.add("DeepReformat", [] { return std::make_unique<DeepReformatNode>(); });
 }
 
 }  // namespace strata

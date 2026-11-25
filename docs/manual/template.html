@@ -543,6 +543,10 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
       <div class="grid">
         <div class="card"><h4>DeepRead</h4><p>Reads deep EXR files, scanline or tiled, with Read's frame range and missing-frame knobs. Part picks a deep part in a multi-part file. The Metadata tab shows the sample count, the most samples in a pixel and the depth range.</p></div>
         <div class="card"><h4>DeepToImage</h4><p>Flattens deep samples into an ordinary image. Depth: 1/z (what ScanlineRender and ZDefocus read), z (the distance) or none.</p></div>
+        <div class="card"><h4>DeepMerge</h4><p>Combines any number of deep inputs by depth, with no mattes or ordering: volumes that overlap are split and mixed like two fogs. Plus adds samples at the same depth; holdout keeps B's samples, cut out by the others. Drop hidden samples trims what an opaque sample hides.</p></div>
+        <div class="card"><h4>DeepHoldout</h4><p>Flattens its main input with the holdout input cutting it out by depth: a CG element sits inside a deep plate, behind what is in front of it and in front of what is behind.</p></div>
+        <div class="card"><h4>DeepFromImage and DeepRecolor</h4><p>DeepFromImage turns a flat image into samples at its depth.Z or a constant depth, optionally with a thickness. DeepRecolor puts a flat image's colour (after grading, keying or paint) back onto a deep image's samples, so it flattens to that colour; target input alpha matches its alpha too.</p></div>
+        <div class="card"><h4>Deep colour and layout</h4><p>DeepGrade and DeepColorCorrect work on the samples' unpremultiplied colour, optionally only within a depth range. DeepTransform moves samples by whole pixels and scales or shifts depth; DeepCrop removes samples outside a box and a near / far range, cutting volumes at the edges; DeepReformat fits them to another format.</p></div>
         <div class="card"><h4>DeepWrite</h4><p>Writes deep samples as a deep scanline EXR (none, RLE or ZIPS compression; colour as half or float, depths always float). The data window is the input's bbox.</p></div>
       </div>
     </section>

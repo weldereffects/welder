@@ -80,6 +80,30 @@ void flattenDeep(const DeepImage& src, Image& out, DeepDepthOut depth = DeepDept
 // depth.Z (read as 1/z; 0 or none means infinitely far, behind everything).
 std::shared_ptr<DeepImage> deepFromFlat(const Image& src, const ChannelSet& cs);
 
+// ---- combining samples (DeepMerge, DeepHoldout)
+//
+// Samples are uniform slabs: a volume [Z, ZBack] with alpha a absorbs as 1 - (1 - a)^t over a
+// fraction t of its depth, and its colour scales with the alpha of each part. Tidying splits every
+// volume where another sample starts or ends, so no two samples partly overlap, then combines the
+// samples that cover exactly the same depth into one: "over" adds their densities (alpha =
+// 1 - prod(1 - a), colour shared by density, as two mixed fogs), "plus" adds colour and alpha.
+enum class DeepCombine { Over, Plus };
+
+// `s` holds n samples of nc channels, in any order; afterwards it holds the tidy samples, sorted.
+void tidySamples(std::vector<float>& s, int nc, int zi, int zbi, int ai, DeepCombine mode);
+
+// Removes the samples behind the point where the accumulated alpha reaches 1 (within 1e-5).
+void dropHiddenSamples(std::vector<float>& s, int nc, int ai);
+
+// The samples of `a` held out by `b`: every sample keeps a's channels and depth, its colour and
+// alpha scaled by how much of it shows through b (b in front absorbs; b at the same depth takes its
+// share). The result covers a's bounds.
+std::shared_ptr<DeepImage> deepHoldout(const DeepImage& a, const DeepImage& b);
+
+// Keeps the parts of the samples inside [zNear, zFar] (or outside it, with keepInside false):
+// volumes crossing an edge are cut there, as tidying cuts them. Sorted samples stay sorted.
+void clipSamplesZ(std::vector<float>& s, int nc, int zi, int zbi, int ai, float zNear, float zFar, bool keepInside);
+
 // Statistics for the editor's info panel.
 struct DeepStats {
     size_t samples = 0;

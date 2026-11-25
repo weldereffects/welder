@@ -9991,6 +9991,122 @@ Connections:  {
         DeepPtr kd = e2.requestDeep(c->find("K"), 1, Box(0, 0, 4, 4));
         CHECK(kd->count(1, 1) == 1 && std::isinf(kd->sample(1, 1)[kd->zi]));
     });
+    // deep phase 2: inputs made from Constants with DeepFromImage (a constant depth and thickness)
+    auto deepSlab = [](const std::string& name, json color, double z, double vol) {
+        return json::array({json{{"name", name + "_c"}, {"type", "Constant"}, {"params", {{"color", color}}}},
+                            json{{"name", name}, {"type", "DeepFromImage"}, {"inputs", {name + "_c"}},
+                                 {"params", {{"z_from", "constant"}, {"z", z}, {"volume", vol}}}}});
+    };
+    auto withNodes = [](std::initializer_list<json> parts) {
+        json all = json::array();
+        for (auto& p : parts)
+            for (auto& n : p) all.push_back(n);
+        return all;
+    };
+    test("deep: DeepMerge of overlapping volumes matches the analytic answer", [&] {
+        // A: [0, 2] alpha 0.5, red; B: [1, 3] alpha 0.5, green (premultiplied)
+        auto c = comp(withNodes({deepSlab("A", {0.5, 0, 0, 0.5}, 0, 2), deepSlab("B", {0, 0.5, 0, 0.5}, 1, 2),
+                                 json::array({json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"B", "A"}}},
+                                              json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"M"}}, {"params", {{"depth", "z"}}}}})}));
+        ImagePtr f = render(*c, "F");
+        // two uniform fogs of density u = ln 2 / 2 per unit; R = 1 - e^-u + e^-u (1 - e^-2u) / 2, and so on
+        const double u = std::log(2.0) / 2;
+        const double R = (1 - std::exp(-u)) + std::exp(-u) * (1 - std::exp(-2 * u)) / 2;
+        const double G = std::exp(-u) * (1 - std::exp(-2 * u)) / 2 + std::exp(-3 * u) * (1 - std::exp(-u));
+        std::printf("  R %.6f (analytic %.6f), G %.6f (%.6f), A %.6f (0.75)\n", px(f, 3, 3, "R"), R, px(f, 3, 3, "G"), G, px(f, 3, 3, "A"));
+        CHECK(std::fabs(px(f, 3, 3, "R") - R) < 1e-5);
+        CHECK(std::fabs(px(f, 3, 3, "G") - G) < 1e-5);
+        CHECK(std::fabs(px(f, 3, 3, "A") - 0.75) < 1e-5);
+        CHECK(std::fabs(px(f, 3, 3, "depth.Z") - 0) < 1e-6);
+        // the merged samples don't overlap: [0,1] [1,2] [1,2] merged [2,3] = 3 samples
+        Engine e;
+        DeepPtr d = e.requestDeep(c->find("M"), 1, Box(0, 0, 4, 4));
+        CHECK(d->count(1, 1) == 3);
+        // the order of the inputs doesn't matter
+        c->find("M")->inputs = {c->find("A"), c->find("B")};
+        Engine::graphChanged();
+        ImagePtr g = render(*c, "F");
+        CHECK(std::fabs(px(g, 3, 3, "R") - R) < 1e-5 && std::fabs(px(g, 3, 3, "G") - G) < 1e-5);
+    });
+
+    test("deep: hard surfaces merge as over by depth, plus adds, drop hidden", [&] {
+        auto c = comp(withNodes({deepSlab("Near", {0.2, 0, 0, 0.4}, 2, 0), deepSlab("Far", {0, 0, 1, 1}, 5, 0),
+                                 deepSlab("Same", {0, 0.3, 0, 0.3}, 2, 0),
+                                 json::array({json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Far", "Near"}}, {"params", {{"drop_hidden", true}}}},
+                                              json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"M"}}},
+                                              json{{"name", "P"}, {"type", "DeepMerge"}, {"inputs", {"Same", "Near"}}, {"params", {{"operation", "plus"}}}},
+                                              json{{"name", "PF"}, {"type", "DeepToImage"}, {"inputs", {"P"}}}})}));
+        ImagePtr f = render(*c, "F");
+        CHECK(std::fabs(px(f, 1, 1, "R") - 0.2) < 1e-6);
+        CHECK(std::fabs(px(f, 1, 1, "B") - 0.6) < 1e-6);  // far blue behind 40% near
+        CHECK(std::fabs(px(f, 1, 1, "A") - 1.0) < 1e-6);
+        CHECK(std::fabs(px(f, 1, 1, "depth.Z") - 0.5) < 1e-6);  // 1/z of the nearest
+        ImagePtr p = render(*c, "PF");
+        CHECK(std::fabs(px(p, 1, 1, "R") - 0.2) < 1e-6 && std::fabs(px(p, 1, 1, "G") - 0.3) < 1e-6);
+        CHECK(std::fabs(px(p, 1, 1, "A") - 0.7) < 1e-6);
+        Engine e;
+        CHECK(e.requestDeep(c->find("P"), 1, Box(0, 0, 2, 2))->count(1, 1) == 1);  // same depth: one sample
+    });
+
+    test("deep: holdouts (DeepHoldout, DeepMerge holdout)", [&] {
+        auto c = comp(withNodes({deepSlab("Sub", {1, 0, 0, 1}, 5, 0), deepSlab("Front", {0, 1, 0, 0.6}, 2, 0),
+                                 deepSlab("Back", {0, 1, 0, 0.6}, 8, 0), deepSlab("Fog", {0, 0, 0, 0.5}, 4, 2),
+                                 json::array({json{{"name", "H1"}, {"type", "DeepHoldout"}, {"inputs", {"Sub", "Front"}}},
+                                              json{{"name", "H2"}, {"type", "DeepHoldout"}, {"inputs", {"Sub", "Back"}}},
+                                              json{{"name", "H3"}, {"type", "DeepHoldout"}, {"inputs", {"Sub", "Fog"}}},
+                                              json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Sub", "Front"}}, {"params", {{"operation", "holdout"}}}},
+                                              json{{"name", "MF"}, {"type", "DeepToImage"}, {"inputs", {"M"}}}})}));
+        ImagePtr h1 = render(*c, "H1"), h2 = render(*c, "H2"), h3 = render(*c, "H3"), m = render(*c, "MF");
+        CHECK(std::fabs(px(h1, 2, 2, "R") - 0.4) < 1e-6 && std::fabs(px(h1, 2, 2, "A") - 0.4) < 1e-6);
+        CHECK(px(h1, 2, 2, "G") == 0);  // the holdout itself isn't in the result
+        CHECK(std::fabs(px(h2, 2, 2, "R") - 1) < 1e-6);  // behind: no effect
+        // a fog [4, 6] with alpha 0.5: the subject at 5 is behind half of it
+        CHECK(std::fabs(px(h3, 2, 2, "R") - std::sqrt(0.5)) < 1e-5);
+        CHECK(std::fabs(px(m, 2, 2, "R") - 0.4) < 1e-6 && std::fabs(px(m, 2, 2, "A") - 0.4) < 1e-6);
+    });
+
+    test("deep: DeepRecolor flattens to the flat colour", [&] {
+        auto c = comp(withNodes({deepSlab("Near", {0.1, 0.1, 0.1, 0.5}, 2, 0), deepSlab("Far", {0.2, 0.2, 0.2, 0.5}, 4, 0),
+                                 json::array({json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Far", "Near"}}},
+                                              json{{"name", "Flat"}, {"type", "Constant"}, {"params", {{"color", {0.3, 0.6, 0.15, 0.9}}}}},
+                                              json{{"name", "RC"}, {"type", "DeepRecolor"}, {"inputs", {"M", "Flat"}}},
+                                              json{{"name", "RCA"}, {"type", "DeepRecolor"}, {"inputs", {"M", "Flat"}}, {"params", {{"target_alpha", true}}}},
+                                              json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"RC"}}},
+                                              json{{"name", "FA"}, {"type", "DeepToImage"}, {"inputs", {"RCA"}}}})}));
+        ImagePtr f = render(*c, "F"), fa = render(*c, "FA");
+        // without target alpha the colour is the flat one's share of the deep alpha (0.75)
+        CHECK(std::fabs(px(f, 1, 1, "G") - 0.6) < 1e-5 && std::fabs(px(f, 1, 1, "A") - 0.75) < 1e-6);
+        CHECK(std::fabs(px(fa, 1, 1, "G") - 0.6) < 1e-5 && std::fabs(px(fa, 1, 1, "A") - 0.9) < 1e-5);
+        CHECK(std::fabs(px(fa, 1, 1, "B") - 0.15) < 1e-5);
+    });
+
+    test("deep: colour, transform, crop and reformat", [&] {
+        auto c = comp(withNodes({deepSlab("S", {0.25, 0.25, 0.25, 0.5}, 3, 2),
+                                 json::array({json{{"name", "G"}, {"type", "DeepGrade"}, {"inputs", {"S"}}, {"params", {{"multiply", {2, 2, 2, 1}}}}},
+                                              json{{"name", "GL"}, {"type", "DeepGrade"}, {"inputs", {"S"}},
+                                                   {"params", {{"multiply", {2, 2, 2, 1}}, {"limit_z", true}, {"zmin", 10}, {"zmax", 20}}}},
+                                              json{{"name", "CC"}, {"type", "DeepColorCorrect"}, {"inputs", {"S"}}, {"params", {{"saturation", 0}, {"gain", {1, 2, 1, 1}}}}},
+                                              json{{"name", "T"}, {"type", "DeepTransform"}, {"inputs", {"S"}}, {"params", {{"translate", {10, 5}}, {"ztranslate", 1}, {"zscale", 2}}}},
+                                              json{{"name", "Cr"}, {"type", "DeepCrop"}, {"inputs", {"S"}},
+                                                   {"params", {{"use_znear", true}, {"znear", 4}, {"box", {0, 0, 32, 48}}}}},
+                                              json{{"name", "Rf"}, {"type", "DeepReformat"}, {"inputs", {"S"}}, {"params", {{"format", {32, 24}}}}}})}));
+        Engine e;
+        auto one = [&](const std::string& n, int x, int y) { return e.requestDeep(c->find(n), 1, Box(x, y, x + 1, y + 1)); };
+        DeepPtr g = one("G", 4, 4), gl = one("GL", 4, 4), cc = one("CC", 4, 4), t = one("T", 12, 12), cr = one("Cr", 4, 4), cro = one("Cr", 40, 4);
+        CHECK(std::fabs(g->sample(4, 4)[g->ch("R")] - 0.5) < 1e-6 && std::fabs(g->sample(4, 4)[g->ai] - 0.5) < 1e-6);
+        CHECK(std::fabs(gl->sample(4, 4)[gl->ch("R")] - 0.25) < 1e-6);  // outside the depth range
+        CHECK(std::fabs(cc->sample(4, 4)[cc->ch("G")] - 0.5) < 1e-6 && std::fabs(cc->sample(4, 4)[cc->ch("R")] - 0.25) < 1e-6);
+        CHECK(std::fabs(t->sample(12, 12)[t->zi] - 7) < 1e-6 && std::fabs(t->sample(12, 12)[t->zbi] - 11) < 1e-6);
+        CHECK(e.dod(c->find("T"), 1) == Box(10, 5, 74, 53));
+        // crop at z 4 of the slab [3, 5]: the back half, alpha 1 - sqrt(0.5)
+        CHECK(cr->count(4, 4) == 1 && std::fabs(cr->sample(4, 4)[cr->zi] - 4) < 1e-6);
+        CHECK(std::fabs(cr->sample(4, 4)[cr->ai] - (1 - std::sqrt(0.5))) < 1e-6);
+        CHECK(cro->count(40, 4) == 0);
+        CHECK(c->find("Rf")->format(e, 1).width == 32);
+        CHECK(e.dod(c->find("Rf"), 1) == Box(0, 0, 32, 24));
+        ImagePtr rf = render(*c, "Rf");
+        CHECK(std::fabs(px(rf, 31, 23, "A") - 0.5) < 1e-6);
+    });
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;
 }
