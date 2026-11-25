@@ -915,8 +915,13 @@ public:
     // What the worker's tracking of an object on frame f depends on: model, size, and the anchors either side
     // of f (an object Re-find picks up again: all its anchors).
     uint64_t base() const {
-        return hashString(params.str("model", "large") + "|" + std::to_string((int)params.num("max_size", 0, 1280)));
+        std::string b = params.str("model", "large") + "|" + std::to_string((int)params.num("max_size", 0, 1280));
+        const double sure = params.num("min_confidence", 0, 2.0);
+        if (sure != 2.0) b += "|c" + std::to_string(sure);  // (the default keeps tracks made before it existed current)
+        return hashString(b);
     }
+    // Output: matte puts the matte in RGB: data, shown without the viewer's display transform
+    bool outputIsData() const override { return params.str("output", "alpha") == "matte"; }
     bool refinds(const tmscene::Object& o) const { return params.flag("refind", false) && !o.text.empty(); }
     std::string objectTag(const tmscene::Object& o, int f) const {
         const uint64_t b = base();
@@ -1050,15 +1055,29 @@ public:
     std::string maskOutput() const { return params.str("mask_output", params.has("prompts") ? "RAW Mask" : "Guided Smooth Mask"); }
     bool neural() const {
         const std::string m = maskOutput();
-        return m == "ViTMatte" || m == "MEMatte";
+        return m == "ViTMatte" || m == "MEMatte" || m == "SAM High-Res";
     }
     bool direct() const { return params.flag("direct_refiner", false); }
     std::string refinerModel() const {
         if (maskOutput() == "MEMatte") return "mematte";
+        if (maskOutput() == "SAM High-Res") {  // the weights it tracked with, as SAM's image model
+            const std::string m = params.str("model", "large");
+            return "sam2.1-hiera-" + (m == "base_plus" ? std::string("base-plus") : m);
+        }
         return params.str("vitmatte_size", "small") == "base" ? "vitmatte-base" : "vitmatte-small";
+    }
+    // SAM High-Res's tile, plate px (a choice: stored as text)
+    int hiresTile() const {
+        const json& v = params.has("hires_tile") ? params.data["hires_tile"] : json();
+        int t = 1024;
+        if (v.is_number()) t = v.get<int>();
+        else if (v.is_string()) t = std::atoi(v.get<std::string>().c_str());
+        return std::clamp(t, 256, 4096);
     }
     // The refine settings a refined frame depends on.
     uint64_t refineBase() const {
+        if (maskOutput() == "SAM High-Res")
+            return hashString(refinerModel() + "|hires|" + std::to_string(hiresTile()));
         return hashString(refinerModel() + "|" + std::to_string((int)params.num("trimap_erode", 0, 8)) + "|" +
                           std::to_string((int)params.num("trimap_dilate", 0, 8)) + "|" + std::to_string(params.num("crop_padding", 0, 15)));
     }
@@ -1081,6 +1100,7 @@ public:
         std::string key;
         json crop;  // [x, y, w, h], plate pixels, top row 0
         int plateW = 0, plateH = 0;
+        bool logit = false;  // SAM High-Res: logits (cut at 0 here), not a matte
     };
     // A refined matte of the object (id 0: the direct refiner's) on frame f from its current track and settings.
     Refined refinedFor(const tmscene::Object* o, int id, int f) const {
@@ -1091,7 +1111,7 @@ public:
                 if (!r->contains("crops") || !(*r)["crops"].contains(os) || !(*r)["crops"][os].contains(fs)) continue;
                 const json pl = r->value("plate", json::array());
                 if (pl.size() != 2) continue;
-                return {k, (*r)["crops"][os][fs], pl[0].get<int>(), pl[1].get<int>()};
+                return {k, (*r)["crops"][os][fs], pl[0].get<int>(), pl[1].get<int>(), r->value("kind", std::string()) == "logit"};
             }
         return {};
     }
@@ -1112,7 +1132,10 @@ public:
                 const double pxx = ((x + 0.5) * k - cx) * sx - 0.5;
                 const int x0 = (int)std::floor(pxx);
                 const double tx = pxx - x0;
-                auto at = [&](int xx, int yy) -> double { return xx < 0 || yy < 0 || xx >= img->w || yy >= img->h ? 0.0 : img->at(xx, yy, 0); };
+                auto at = [&](int xx, int yy) -> double {
+                    if (rf.logit) return img->at(std::clamp(xx, 0, img->w - 1), std::clamp(yy, 0, img->h - 1), 0);  // (the whole plate)
+                    return xx < 0 || yy < 0 || xx >= img->w || yy >= img->h ? 0.0 : img->at(xx, yy, 0);
+                };
                 m.px(x, y)[0] = (float)((1 - ty) * ((1 - tx) * at(x0, y0) + tx * at(x0 + 1, y0)) + ty * ((1 - tx) * at(x0, y0 + 1) + tx * at(x0 + 1, y0 + 1)));
             }
         }
@@ -1134,6 +1157,7 @@ public:
         bool have = false, allRefined = true, anyObj = false;
         const std::string mode = maskOutput();
         const bool nn = neural();
+        const float edgeW = (float)std::max(0.5, params.num("edge_width", frame, 1.0) * es);
         auto addTo = [&](std::array<std::vector<float>, 4>& acc, const std::string& chs, const float* v) {
             for (int c = 0; c < 4; ++c) {
                 if (chs.find(letters[c]) == std::string::npos) continue;
@@ -1147,7 +1171,11 @@ public:
             Image m(P, {"m"});
             Refined rf = nn ? refinedFor(nullptr, 0, f) : Refined{};
             if (!rf.key.empty() && fillCrop(a, m, rf, 0, f)) {
-                addTo(done, "A", m.data.data());
+                if (rf.logit) {  // SAM High-Res: cut sharp here, then smoothed like a track
+                    matteops::edgeFromLogits(m.data, W, Hh, edgeW);
+                    addTo(raw, "A", m.data.data());
+                } else
+                    addTo(done, "A", m.data.data());
             } else {
                 auto mk = a.fetch(input(1), P);
                 const int ci = mk->ch("A");
@@ -1168,14 +1196,23 @@ public:
                 if (nn) {
                     Refined rf = refinedFor(&o, o.id, f);
                     if (!rf.key.empty() && fillCrop(a, m, rf, o.id, f)) {
-                        addTo(done, o.channels, m.data.data());
+                        if (rf.logit) {
+                            matteops::edgeFromLogits(m.data, W, Hh, edgeW);
+                            addTo(raw, o.channels, m.data.data());
+                        } else
+                            addTo(done, o.channels, m.data.data());
                         have = anyObj = true;
                         continue;
                     }
                 }
                 const Source src = sourceFor(o, f);
                 if (src.key.empty()) continue;
-                if (!fillFromKey(a, m, src.key, "matte", {{0, src.channel}})) continue;
+                // the model's logits scaled up to here and cut at 0 (sharp at any plate size); RAW, and tracks
+                // made before there were logits: its soft matte as it came
+                if (mode != "RAW Mask" && fillFromKey(a, m, src.key, "logit", {{0, src.channel}}))
+                    matteops::edgeFromLogits(m.data, W, Hh, edgeW);
+                else if (!fillFromKey(a, m, src.key, "matte", {{0, src.channel}}))
+                    continue;
                 addTo(raw, o.channels, m.data.data());
                 have = anyObj = true;
                 allRefined = false;
@@ -1634,10 +1671,11 @@ public:
                     {"trimap_erode", (int)params.num("trimap_erode", 0, 8)},
                     {"trimap_dilate", (int)params.num("trimap_dilate", 0, 8)},
                     {"crop_padding", params.num("crop_padding", 0, 15)},
-                    {"tile", (int)params.num("refine_tile", 0, 1024)}};
+                    {"tile", (int)params.num("refine_tile", 0, 1024)},
+                    {"hires_tile", hiresTile()}};
         s.models = {refinerModel()};
         if (!input(0)) s.error = "connect the src input";
-        else if (!neural()) s.error = "set Mask Output to ViTMatte or MEMatte to refine";
+        else if (!neural()) s.error = "set Mask Output to ViTMatte, MEMatte or SAM High-Res to refine";
         else if (direct() && !input(1)) s.error = "Direct Refiner refines the mask input: connect it";
         else if (objs.empty()) s.error = direct() ? "every frame is already refined" : "nothing to refine: Track first (or every tracked frame is refined)";
         (void)e;
@@ -1741,6 +1779,7 @@ public:
             s.inputs.push_back(mi);
         }
         s.params["max_size"] = (int)params.num("max_size", 0, 1280);
+        s.params["min_confidence"] = params.num("min_confidence", 0, 2.0);
         s.params["model"] = model;
         s.params["objects"] = objs;
         s.params["needed"] = need;
@@ -1888,7 +1927,10 @@ TrackMaskRefinerStatus trackMaskRefinerStatus(Node* n, double fr) {
     auto* t = dynamic_cast<TrackMaskNode*>(n);
     if (!t || !t->neural()) return st;
     const std::string model = t->refinerModel();
-    const std::string name = model == "mematte" ? "MEMatte" : model == "vitmatte-base" ? "ViTMatte base" : "ViTMatte small";
+    const std::string name = model == "mematte"         ? "MEMatte"
+                             : model == "vitmatte-base"   ? "ViTMatte base"
+                             : model == "vitmatte-small"  ? "ViTMatte small"
+                                                          : "SAM High-Res";
     if (!ml::modelReady(model)) {
         st.state = TrackMaskRefinerStatus::Missing;
         st.text = name + " weights are not installed: showing Guided Smooth (install them by hand in the ML section)";

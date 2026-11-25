@@ -226,3 +226,104 @@ class Task(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAVE, "needs numpy and Pillow")
+class SamHighRes(unittest.TestCase):
+    """TrackMask's SAM High-Res edges with a stand-in for SAM's image model."""
+
+    def setUp(self):
+        from strata_ml.tasks import sam_hires
+        self.sh = sam_hires
+        self.home = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    @staticmethod
+    def plate(W, H, edge):
+        u8 = np.zeros((H, W, 3), np.uint8)
+        u8[:, edge:] = 220  # the object: bright, right of `edge`
+        return u8
+
+    @staticmethod
+    def sam(reqs):
+        # a stand-in: the bright part of each tile, as 256 x 256 logits (+-16)
+        from PIL import Image
+        out = []
+        for img, pts, lab, box, mask in reqs:
+            assert mask.shape == (1, 256, 256) and box.shape == (4,)
+            m = (img[..., 0] > 127).astype(np.float32) * 32 - 16
+            out.append(np.asarray(Image.fromarray(m).resize((256, 256), Image.BILINEAR), np.float32))
+        return out
+
+    def test_edge_moves_to_the_plates_within_the_band(self):
+        W, H = 1024, 512
+        u8 = self.plate(W, H, 500)
+        # the track's logits, 8x smaller than the plate, their edge 6 px right of the plate's
+        xs = (np.arange(128) + 0.5) * 8 - 0.5
+        Lc = np.tile(np.clip((xs - 506) * 0.1, -16, 16), (64, 1)).astype(np.float32)
+        L, used, refused = self.sh.refine_frame(self.sam, u8, Lc, tile=256)
+        self.assertEqual(L.shape, (H, W))  # tile 256: the grid is the plate's size
+        self.assertGreater(used, 0)
+        self.assertEqual(refused, 0)
+        row = L[256]
+        self.assertLess(row[497], 0)
+        self.assertGreater(row[503], 0)  # was outside the track's edge (506): now the object's
+        self.assertGreater(row[900], 0)
+        self.assertLess(row[100], 0)
+        # far from the edge the track's logits are kept as they were
+        self.assertAlmostEqual(float(row[100]), -16.0, places=3)
+
+    def test_tiles_that_lose_the_object_are_refused(self):
+        W, H = 1024, 512
+        u8 = self.plate(W, H, 500)
+        xs = (np.arange(128) + 0.5) * 8 - 0.5
+        Lc = np.tile(np.clip((xs - 506) * 0.1, -16, 16), (64, 1)).astype(np.float32)
+        lost = lambda reqs: [np.full((256, 256), -16, np.float32) for _ in reqs]  # noqa: E731
+        L, used, refused = self.sh.refine_frame(lost, u8, Lc, tile=256)
+        self.assertEqual(used, 0)
+        self.assertGreater(refused, 0)
+        self.assertGreater(L[256, 520], 0)  # the track's edge stays
+
+    def test_only_tiles_on_the_edge_run(self):
+        Lg = np.full((512, 1024), -16, np.float32)
+        Lg[100:200, 100:200] = 16
+        t = self.sh.plan_tiles(Lg, 6)
+        self.assertTrue(t)
+        for (y0, x0, h, w) in t:
+            self.assertTrue(y0 < 200 and y0 + h > 100 and x0 < 200 and x0 + w > 100)
+
+    def test_task_writes_logits_for_the_whole_plate(self):
+        from strata_ml.util import JobContext
+        W, H = 512, 256
+        tj = os.path.join(self.home, "jobs", "track", "out")
+        os.makedirs(tj)
+        xs = (np.arange(128) + 0.5) * 4 - 0.5
+        Lc = np.tile(np.clip((xs - 253) * 0.2, -16, 16), (64, 1)).astype(np.float32)
+        np.save(os.path.join(tj, "logit.7.npy"), Lc[..., None].astype(np.float16))
+        jd = os.path.join(self.home, "jobs", "hr")
+        os.makedirs(os.path.join(jd, "in"))
+        rgb = np.zeros((H, W, 4), np.float32)
+        rgb[:, 250:, :3] = 0.8
+        rgb[..., 3] = 1
+        np.save(os.path.join(jd, "in", "src.7.npy"), rgb.astype(np.float16))
+        params = {"model": "sam2.1-hiera-large", "objects": [{"id": 2, "coarse": {"7": [os.path.dirname(tj), 0]}}],
+                  "object_tags": {"2": {"7": "tg"}}, "hires_tile": 256}
+        with open(os.path.join(jd, "job.json"), "w") as f:
+            json.dump({"task": "matte_refine", "params": params,
+                       "inputs": {"src": {"frames": [7], "pattern": "in/src.%d.npy", "width": W, "height": H,
+                                          "channels": ["R", "G", "B", "A"]}}}, f)
+        ctx = JobContext(self.home, jd)
+        from strata_ml.tasks import matte_refine
+        try:
+            r = matte_refine.run(ctx, params, model_fn=lambda reqs, batch=4: self.sam(reqs))
+        finally:
+            ctx.close()
+        self.assertEqual(r["kind"], "logit")
+        self.assertEqual(r["crops"], {"2": {"7": [0, 0, W, H]}})
+        self.assertEqual(r["object_tags"], {"2": {"7": "tg"}})
+        L = np.load(os.path.join(jd, "out", "refined_2.7.npy")).astype(np.float32)[..., 0]
+        self.assertEqual(L.shape, (H, W))
+        self.assertLess(L[128, 248], 0)
+        self.assertGreater(L[128, 251], 0)

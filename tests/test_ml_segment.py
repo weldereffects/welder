@@ -168,6 +168,43 @@ class SegmentTask(unittest.TestCase):
         m = self.matte(jd, 1001)
         self.assertGreater(m[25, 32], 0.99)
 
+    def test_logits_written_with_the_matte(self):
+        """"logit" (what Welder cuts sharp at the plate's size) is written next to "matte", the same edge."""
+        frames = [1, 2, 3]
+        jd, r = self.run_task("lg", frames, {"max_size": 200, "prompts": [{"frame": 2, "points": [[100, 50, 1]]}]})
+        self.assertEqual(r["outputs"]["logit"]["frames"], frames)
+        self.assertEqual(r["outputs"]["logit"]["channels"], ["1"])
+        L = np.load(os.path.join(jd, "out", "logit.2.npy")).astype(np.float32)[..., 0]
+        m = self.matte(jd, 2)
+        self.assertGreater(L[25, 50], 15)  # sure: clipped at +16
+        self.assertLess(L[25, 150], -15)
+        self.assertAlmostEqual(float(L[25, 60]), 10.0, delta=0.1)  # the disc's own logit (20 - distance)
+        self.assertTrue(np.array_equal(L > 0, m > 0.5))
+
+    def test_unsure_leaks_are_dropped(self):
+        seg = self.seg
+        L = np.full((60, 80), -8.0, np.float32)
+        L[10:40, 10:30] = 9.0     # the object: sure
+        L[10:30, 50:70] = 0.8     # a faint leak beside it: never sure
+        L[50, 75] = 6.0           # a sure speck: too small
+        out, k = seg.clean_logits(L, 2.0, min_area=0.001)
+        self.assertEqual(k, 2)
+        self.assertTrue((out[10:40, 10:30] == 9.0).all())
+        self.assertTrue((out[10:30, 50:70] < 0).all())
+        self.assertLess(out[50, 75], 0)
+        same, k = seg.clean_logits(L, 0, min_area=0)  # off
+        self.assertEqual(k, 0)
+        self.assertTrue(np.array_equal(same, L))
+        # a sure part keeps its unsure edge (it's one part)
+        L2 = L.copy()
+        L2[10:30, 30:50] = 0.5
+        out2, _ = seg.clean_logits(L2, 2.0, min_area=0)
+        self.assertTrue((out2[10:30, 50:70] == 0.8).all())
+        # to and from mattes
+        self.assertAlmostEqual(float(seg.matte_logits(np.array([0.5]))[0]), 0.0, places=5)
+        self.assertAlmostEqual(float(seg.matte_logits(np.array([1 / (1 + np.exp(-3.0))]))[0]), 3.0, places=3)
+        self.assertGreater(float(seg.matte_logits(np.array([1.0]))[0]), 15.9)
+
     def test_frames_written_smaller_than_the_plate(self):
         """Welder writes TrackMask's plate at most max_size: the clicks stay in the plate's pixels."""
         from strata_ml.util import JobContext

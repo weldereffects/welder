@@ -791,6 +791,8 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     dp.gamma = v.gamma;
     dp.channel = v.channel;
     dp.matte = v.matte ? 1 : 0;
+    if (vn)
+        if (Node* x = vn->input(App::pipeIndex(aPipe)); x && x->outputIsData()) dp.raw = 1;
     dp.ocio = viewerTransform(app);
     if (res.image && v.tex && !v.texBounds.empty()) {
         // Texture pixels are at render scale; draw them in full-res image coordinates.

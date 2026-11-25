@@ -26,7 +26,11 @@ SAM's conditioning frames (its memory always attends to them, so a correction ke
 from both sides); after the last forwards. Runs with the same frames and anchors share one pass for all their
 objects, and every frame's image features are computed once and kept (LRU) for the other runs.
 
-Writes "matte": one channel per object (the result's "objects" says which), 0-1 soft edge from the logits.
+Writes "matte": one channel per object (the result's "objects" says which), 0-1 soft edge from the logits, and
+"logit": the same as the model's logits (+-16 where it's sure), which Welder scales up to the plate and cuts at 0
+there, so the edge is sharp at any plate size (the model's own masks are 256 x 256, so a 4.6K plate's soft
+matte has ~18 px steps). Before both, the parts of an object the model wasn't sure of anywhere (no logit of at
+least `min_confidence`, default 2) are dropped: SAM's leaks into the background are faint, never sure.
 """
 
 import os
@@ -213,6 +217,40 @@ def to_matte(logits):
     while a.ndim > 2:
         a = a[0]
     return 1.0 / (1.0 + np.exp(-np.clip(a, -30, 30)))
+
+
+LOGIT_RANGE = 16.0
+
+
+def matte_logits(m):
+    """A matte from to_matte back to the model's logits (+-LOGIT_RANGE where it's sure)."""
+    m = np.clip(np.asarray(m, np.float32), 1e-7, 1 - 1e-7)
+    return np.clip(np.log(m) - np.log1p(-m), -LOGIT_RANGE, LOGIT_RANGE).astype(np.float32)
+
+
+def clean_logits(L, sure=2.0, min_area=0.0002):
+    """Drop the parts of an object (8-connected logit > 0) with no pixel of at least `sure` in them (the model
+    was never sure of them: a leak into the background), and specks smaller than min_area of the frame. They
+    become surely-not-the-object. Returns (logits, how many parts were dropped)."""
+    L = np.asarray(L, np.float32)
+    if sure <= 0 and min_area <= 0:
+        return L, 0
+    try:
+        from scipy import ndimage
+    except Exception:  # noqa: BLE001 (setup puts scipy in; without it the matte is left as it is)
+        return L, 0
+    lab, n = ndimage.label(L > 0, structure=np.ones((3, 3), bool))
+    if n == 0:
+        return L, 0
+    idx = np.arange(1, n + 1)
+    peak = np.asarray(ndimage.maximum(L, lab, idx), np.float32)
+    area = np.asarray(ndimage.sum(np.ones_like(L), lab, idx), np.float64)
+    drop = (peak < sure) | (area < min_area * L.size)
+    if not drop.any():
+        return L, 0
+    out = L.copy()
+    out[np.concatenate([[False], drop])[lab]] = -LOGIT_RANGE
+    return out, int(drop.sum())
 
 
 # ---------------------------------------------------------------- feature cache
@@ -619,15 +657,29 @@ def run(ctx, p):
                            ctx.log, cache_mb=cache_mb)
             refound = {str(o): [frames[i] for i in v] for o, v in added.items()}
         ids = sorted(prompts)
-        written = 0
+        written = dropped = 0
+        sure = float(p.get("min_confidence", 2.0))
         for i, f in enumerate(frames):
             if i not in needed_idx:
                 continue
             if preview and not any(i in mattes[o] for o in ids):
                 continue
-            stack = np.stack([mattes[o].get(i, np.zeros((h, w), np.float32)) for o in ids], axis=-1)
-            ctx.write_frame("matte", f, stack, channels=[str(o) for o in ids], dtype=np.float16)
+            logits = []
+            for o in ids:
+                m = mattes[o].get(i)
+                if m is None:
+                    logits.append(np.full((h, w), -LOGIT_RANGE, np.float32))
+                    continue
+                L, k = clean_logits(matte_logits(m), sure)
+                dropped += k
+                logits.append(L)
+            lst = np.stack(logits, axis=-1)
+            chans = [str(o) for o in ids]
+            ctx.write_frame("matte", f, 1.0 / (1.0 + np.exp(-lst)), channels=chans, dtype=np.float16)
+            ctx.write_frame("logit", f, lst, channels=chans, dtype=np.float16)
             written += 1
+        if dropped:
+            ctx.log(f"dropped {dropped} unsure part(s) of objects (leaks into the background)")
     which = "preview" if preview else f"{written} frames"
     tags = p.get("object_tags") or {}
     out_tags = {}

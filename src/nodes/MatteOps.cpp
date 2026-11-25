@@ -134,6 +134,24 @@ void binarize(std::vector<float>& v, float threshold) {
     for (auto& x : v) x = x >= threshold ? 1.0f : 0.0f;
 }
 
+void edgeFromLogits(std::vector<float>& v, int W, int H, float width) {
+    if (v.empty() || W <= 0 || H <= 0) return;
+    const float iw = 1.0f / std::max(0.05f, width);
+    std::vector<float> o(v.size());
+    for (int y = 0; y < H; ++y) {
+        const int y0 = std::max(0, y - 1), y1 = std::min(H - 1, y + 1);
+        for (int x = 0; x < W; ++x) {
+            const int x0 = std::max(0, x - 1), x1 = std::min(W - 1, x + 1);
+            const float L = v[(size_t)y * W + x];
+            const float gx = x1 > x0 ? (v[(size_t)y * W + x1] - v[(size_t)y * W + x0]) / (float)(x1 - x0) : 0.0f;
+            const float gy = y1 > y0 ? (v[(size_t)y1 * W + x] - v[(size_t)y0 * W + x]) / (float)(y1 - y0) : 0.0f;
+            const float g = std::max(1e-4f, std::sqrt(gx * gx + gy * gy));
+            o[(size_t)y * W + x] = std::clamp(0.5f + L / g * iw, 0.0f, 1.0f);
+        }
+    }
+    v.swap(o);
+}
+
 bool growShrink(std::vector<float>& v, int W, int H, int px, bool useGpu) {
     if (px == 0 || v.empty()) return false;
     const int r = std::abs(px);

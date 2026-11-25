@@ -91,7 +91,7 @@ void* keepParams(const DisplayParams& d) {
 struct Program {
     GLuint prog = 0;
     bool failed = false;
-    GLint uProj = -1, uTex = -1, uGain = -1, uGamma = -1, uChannel = -1, uMatte = -1;
+    GLint uProj = -1, uTex = -1, uGain = -1, uGamma = -1, uChannel = -1, uMatte = -1, uRaw = -1;
     std::vector<std::pair<GLuint, GLenum>> luts;  // texture, target (units 1..n)
     std::vector<GLint> lutSamplers;
 };
@@ -124,6 +124,7 @@ uniform float Gain;
 uniform float Gamma;
 uniform int Channel;
 uniform int Matte;
+uniform int Raw;
 out vec4 Out_Color;
 )";
 const char* kSrgbDisplay = R"(
@@ -145,7 +146,8 @@ void main() {
     else if (Channel == 5) rgb = vec3(dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)));
     rgb *= Gain;
     if (Gamma != 1.0) rgb = pow(max(rgb, vec3(0.0)), vec3(1.0 / Gamma));
-    vec3 outc = clamp(OCIODisplay(vec4(rgb, 1.0)).rgb, 0.0, 1.0);
+    // a matte is data: 1 is white, not what the view transform makes of scene white (ACES: ~0.8 grey)
+    vec3 outc = (Channel == 4 || Raw != 0) ? clamp(rgb, 0.0, 1.0) : clamp(OCIODisplay(vec4(rgb, 1.0)).rgb, 0.0, 1.0);
     if (Matte != 0) outc = mix(outc, vec3(1.0, 0.25, 0.25), clamp(c.a, 0.0, 1.0) * 0.5);  // M: alpha as a red overlay
     Out_Color = vec4(outc, Frag_A);
 }
@@ -231,6 +233,7 @@ Program* program(const std::shared_ptr<const color::GpuShader>& ocio) {
     P.uGamma = pGetUniformLocation(p, "Gamma");
     P.uChannel = pGetUniformLocation(p, "Channel");
     P.uMatte = pGetUniformLocation(p, "Matte");
+    P.uRaw = pGetUniformLocation(p, "Raw");
     if (ocio) {
         GLint prevTex = 0;
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex);
@@ -263,6 +266,7 @@ void bindDisplayProgram(const ImDrawList*, const ImDrawCmd* cmd) {
     pUniform1f(P->uGamma, g_params.gamma);
     pUniform1i(P->uChannel, g_params.channel);
     pUniform1i(P->uMatte, g_params.matte);
+    pUniform1i(P->uRaw, g_params.raw);
     if (!P->luts.empty()) {
         for (size_t i = 0; i < P->luts.size(); ++i) {
             pActiveTexture(kTexture0 + 1 + (GLenum)i);
