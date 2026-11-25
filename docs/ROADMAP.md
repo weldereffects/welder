@@ -60,7 +60,10 @@
 - [x] BlenderRender: Cycles / EEVEE renders through the Welder camera with Welder geometry (visible, shadow catcher, holdout; textures and Project3D projections), cached frames, passes as channels
 - [ ] Blender next: lights and cameras from Welder 3D lights, Alembic / USD exchange, render on another machine
 - [ ] AI next: LTX text / image to video, splats in ScanlineRender (with geometry), splat editing (crop boxes), remote workers
-- [ ] Deep compositing
+- [x] Deep compositing, part 1: deep samples through the graph (any flat node sees them flattened), DeepRead (deep scanline / tiled EXR), DeepToImage, DeepWrite
+- [x] Deep compositing, part 2: DeepMerge (combine / plus / holdout; volumes split where they overlap), DeepHoldout, DeepFromImage, DeepRecolor, DeepGrade, DeepColorCorrect, DeepTransform, DeepCrop, DeepReformat
+- [x] Deep compositing, part 3: ScanlineRender as a deep source (every surface per pixel), DeepSample, DeepToPoints in the 3D viewer, deep samples from Python (`deep_samples`) and MCP (`sample_deep`)
+- [ ] Deep next: GPU flatten / merge, deep-aware ZDefocus, a per-sample readout in the viewer
 - [ ] OFX: overlays/interacts, parametric params, 8/16-bit plugins
 - [ ] .nk importer: more nodes, TCL beyond [frame] / [value]; pixel-diff test suite against the original renders
 - [ ] Windows/macOS builds and CI

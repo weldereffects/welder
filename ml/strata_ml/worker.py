@@ -84,6 +84,10 @@ def probe_packages(home=None):
     if fixed:
         info["torch_fix"] = fixed
     try:
+        from .device import torch_problem
+        broken = torch_problem()  # a half-installed PyTorch says so, rather than "no attribute 'cuda'"
+        if broken:
+            raise RuntimeError(broken)
         import torch
         info["torch"] = torch.__version__
         info["cuda"] = bool(torch.cuda.is_available())  # (ROCm's PyTorch says yes too)
@@ -129,6 +133,15 @@ class Worker:
         if r is not None:
             with self.lock:
                 self.packages = dict(self.packages, splat_env=r)
+        from .tasks.corridorkey import corridorkey_python
+        from .subtask import check_torch_env
+        ck = corridorkey_python(self.home)
+        if ck:  # a half-installed PyTorch there: the panel offers Update ML before a Key fails
+            r = check_torch_env(ck)
+            with self.lock:
+                self.packages = dict(self.packages, corridorkey_torch=r)
+                if r.get("error"):
+                    self.packages["corridorkey_env"] = False
         r = check_directml_env(self.home)  # AMD / DirectX 12 GPUs on Windows: the masking tasks run there
         if r is not None:
             with self.lock:

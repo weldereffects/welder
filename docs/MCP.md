@@ -43,6 +43,7 @@ its server is off, the client is told so.
 | `fill_track_gaps` | Fill the frames where a Tracker's tracks lost their feature (from the other tracks, or interpolated), or clear them |
 | `view_image` | A node's picture at a frame as a PNG (sRGB, 512 px by default; a region to look closer) |
 | `sample_pixels` | Exact linear values of every channel at up to 256 points |
+| `sample_deep` | Every deep sample of one pixel (colour, alpha, front and back depth), front to back |
 | `render` | Render Write nodes over a frame range |
 | `save_comp`, `open_comp`, `new_comp` | Save; open or start a comp (the editor refuses while the open one has unsaved changes) |
 | `show_in_editor` | View a node, go to a frame, select nodes, open a properties panel (editor only) |

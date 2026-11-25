@@ -348,7 +348,11 @@ def run_core(ctx, p):
         raise RuntimeError("connect the src input")
     hint = ctx.input("hint")
     root = ctx.require_model(MODEL_ID)
-    from ..device import current, requested
+    from ..device import current, requested, torch_problem
+    broken = torch_problem()
+    if broken:
+        raise RuntimeError(f"{broken} in CorridorKey's environment (venv-corridorkey): click 'Update ML' in the ML "
+                           "worker row to reinstall it, then try again")
     dev = current()
     if not dev.is_gpu and requested() != "cpu":
         raise RuntimeError("CorridorKey needs a GPU: an NVIDIA RTX (CUDA), an AMD Radeon (DirectML on Windows, ROCm on "

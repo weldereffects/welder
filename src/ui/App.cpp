@@ -3030,7 +3030,7 @@ void App::batchLoop(RenderRequest r) {
         e.clearAssembled();
         e.setCacheBudget(std::max(size_t(512) << 20, now / 2));
         for (auto& n : comp->nodes)
-            if (n->type == "Read") n->paramsChanged();  // their decoded frames
+            if (n->type == "Read" || n->type == "DeepRead") n->paramsChanged();  // their decoded frames
     };
     std::shared_lock<std::shared_timed_mutex> cl(compM);  // edits wait until the batch finishes
     if (r.proxy && comp->project.proxyScale > 0 && comp->project.proxyScale < 1) eng.setScale(comp->project.proxyScale);
@@ -3355,7 +3355,7 @@ void App::adoptComp(std::shared_ptr<Comp> loaded) {
         for (auto& n : comp->nodes) {
             n->comp = comp.get();
             // Sequences saved without a range (hand-written comps) pick it up from disk.
-            if (n->type == "Read" && !n->params.has("first")) updateReadRange(n.get());
+            if ((n->type == "Read" || n->type == "DeepRead") && !n->params.has("first")) updateReadRange(n.get());
         }
         // a script with no media yet still gets the offer when its first Read gets a file
         matchArmed = true;

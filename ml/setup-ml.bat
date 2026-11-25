@@ -85,7 +85,7 @@ echo %GPUKIND%> "%MLHOME%\gpu.txt"
 
 echo.
 echo [2/7] PyTorch 2.8 (%TORCHBUILD%, up to 3 GB)
-call uv pip install --python "%PY%" torch==2.8.0+%TORCHBUILD% torchvision==0.23.0+%TORCHBUILD% torchaudio==2.8.0+%TORCHBUILD% --index-url https://download.pytorch.org/whl/%TORCHBUILD%
+call :torch "%PY%" "torch==2.8.0+%TORCHBUILD% torchvision==0.23.0+%TORCHBUILD% torchaudio==2.8.0+%TORCHBUILD% --index-url https://download.pytorch.org/whl/%TORCHBUILD%"
 if errorlevel 1 goto :fail
 
 echo.
@@ -137,11 +137,11 @@ call :venv venv-corridorkey 3.12
 if errorlevel 1 goto :ckfail
 set "CPY=%MLHOME%\venv-corridorkey\Scripts\python.exe"
 if /i "%GPUKIND%"=="amd" goto :ckdml
-call uv pip install --python "%CPY%" torch==2.9.1+%TORCHBUILD% torchvision==0.24.1+%TORCHBUILD% --index-url https://download.pytorch.org/whl/%TORCHBUILD%
+call :torch "%CPY%" "torch==2.9.1+%TORCHBUILD% torchvision==0.24.1+%TORCHBUILD% --index-url https://download.pytorch.org/whl/%TORCHBUILD%"
 if errorlevel 1 goto :ckfail
 goto :ckreqs
 :ckdml
-call uv pip install --python "%CPY%" torch==2.4.1 torchvision==0.19.1 torch-directml==0.2.5.dev240914
+call :torch "%CPY%" "torch==2.4.1 torchvision==0.19.1 torch-directml==0.2.5.dev240914"
 if errorlevel 1 goto :ckfail
 :ckreqs
 call uv pip install --python "%CPY%" -r "%HERE%requirements-corridorkey.txt"
@@ -163,7 +163,7 @@ if /i not "%GPUKIND%"=="amd" (
 call :venv venv-directml 3.12
 if errorlevel 1 goto :dmlfail
 set "DPY=%MLHOME%\venv-directml\Scripts\python.exe"
-call uv pip install --python "%DPY%" torch==2.4.1 torchvision==0.19.1 torch-directml==0.2.5.dev240914
+call :torch "%DPY%" "torch==2.4.1 torchvision==0.19.1 torch-directml==0.2.5.dev240914"
 if errorlevel 1 goto :dmlfail
 call uv pip install --python "%DPY%" -r "%HERE%requirements-directml.txt"
 if errorlevel 1 goto :dmlfail
@@ -186,6 +186,20 @@ echo  into the HF token field of a node's ML panel.
 echo.
 pause
 exit /b 0
+
+:torch
+rem %1 = an environment's python, %2 = the PyTorch packages to install (and where from). An install or update
+rem that was cut short (or a file Windows kept locked) can leave a torch folder without its __init__.py: PyTorch
+rem then "has no attribute 'cuda'". uv counts it as installed, so check it loads, and reinstall it if not.
+call uv pip install --python "%~1" %~2
+if errorlevel 1 exit /b 1
+"%~1" -c "import sys, torch; sys.exit(0 if getattr(torch, '__file__', None) and hasattr(torch, 'cuda') else 1)" >nul 2>nul
+if not errorlevel 1 exit /b 0
+echo PyTorch there is incomplete, an earlier install was cut short: reinstalling it ...
+call uv pip install --python "%~1" --reinstall-package torch --reinstall-package torchvision %~2
+if errorlevel 1 exit /b 1
+"%~1" -c "import torch; print('torch', torch.__version__, 'loads')"
+exit /b %errorlevel%
 
 :venv
 rem %1 = the environment's folder, %2 = its Python version. One that's there is kept (packages and all).

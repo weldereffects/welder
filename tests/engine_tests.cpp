@@ -22,6 +22,9 @@
 #include "core/ThreadBudget.h"
 #include "core/NetPath.h"
 #include "core/Update.h"
+#include "core/Deep.h"
+#include "nodes/DeepNodes.h"
+#include "io/ExrIO.h"
 #include "io/ImageIO.h"
 #include "io/PsdIO.h"
 #include "io/MovieIO.h"
@@ -9956,6 +9959,347 @@ Connections:  {
             CHECK(eg / n < 0.4);
             CHECK(eg / n < ec / n + 0.02);
         }
+    });
+    // ---------------------------------------------------------------- deep
+    // A deep image with empty pixels, hard surfaces, a volume, samples given out of order, and an
+    // extra channel; its bbox starts away from the origin.
+    auto makeDeep = [] {
+        DeepImage d(Box(3, 2, 40, 30), {"R", "G", "B", "A", "id"});
+        const int nc = d.nch();
+        for (int y = d.bounds.y1; y < d.bounds.y2; ++y)
+            for (int x = d.bounds.x1; x < d.bounds.x2; ++x) {
+                const int n = (x * 7 + y * 3) % 4;  // 0..3 samples
+                float* s = d.newPixel(n);
+                for (int k = 0; k < n; ++k, s += nc) {
+                    const float a = 0.25f + 0.2f * k;
+                    s[d.ch("R")] = a * (x / 40.0f);
+                    s[d.ch("G")] = a * (y / 30.0f);
+                    s[d.ch("B")] = a * 0.5f;
+                    s[d.ai] = a;
+                    s[d.ch("id")] = (float)k;
+                    s[d.zi] = 10.0f - 3.0f * k + x * 0.01f;  // back to front: sorted on the way in
+                    s[d.zbi] = s[d.zi] + (k == 1 ? 2.0f : 0.0f);
+                }
+                d.sortPixel(d.pixelIndex(x, y));
+            }
+        d.finish();
+        return d;
+    };
+    auto sameDeep = [](const DeepImage& a, const DeepImage& b, double eps) {
+        if (a.bounds != b.bounds) return false;
+        for (int y = a.bounds.y1; y < a.bounds.y2; ++y)
+            for (int x = a.bounds.x1; x < a.bounds.x2; ++x) {
+                if (a.count(x, y) != b.count(x, y)) return false;
+                for (int k = 0; k < a.count(x, y); ++k)
+                    for (int c = 0; c < a.nch(); ++c) {
+                        const int bc = b.ch(a.channels[c]);
+                        if (bc < 0) return false;
+                        if (std::fabs(a.sample(x, y)[k * a.nch() + c] - b.sample(x, y)[k * b.nch() + bc]) > eps) return false;
+                    }
+            }
+        return true;
+    };
+    const auto deepDir = std::filesystem::temp_directory_path() / "welder_deep_test";
+    std::filesystem::create_directories(deepDir);
+
+    test("deep: samples are sorted front to back", [&] {
+        DeepImage d = makeDeep();
+        bool sorted = true;
+        for (int y = d.bounds.y1; y < d.bounds.y2; ++y)
+            for (int x = d.bounds.x1; x < d.bounds.x2; ++x)
+                for (int k = 1; k < d.count(x, y); ++k) sorted = sorted && d.sample(x, y)[(k - 1) * d.nch() + d.zi] <= d.sample(x, y)[k * d.nch() + d.zi];
+        CHECK(sorted);
+        CHECK(d.finished());
+        CHECK(d.channels.back() == "ZBack");
+    });
+
+    test("deep EXR round trip: every sample, every compression", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        for (const std::string comp : {"none", "rle", "zips"}) {
+            const std::string p = (deepDir / ("rt_" + comp + ".exr")).string();
+            DeepExrWriteOptions o;
+            o.type = ExrPixelType::Float;
+            o.compression = comp;
+            writeDeepExr(p, d, f, o);
+            DeepExrFile r = readDeepExr(p);
+            CHECK(r.header.format.width == 48 && r.header.format.height == 36);
+            CHECK(r.header.bounds == d.bounds);
+            CHECK(r.image->total() == d.total());
+            CHECK(sameDeep(d, *r.image, 0));
+            CHECK(r.header.compression == comp);
+        }
+        // half colour: close, depths exact
+        const std::string p = (deepDir / "rt_half.exr").string();
+        writeDeepExr(p, d, f, DeepExrWriteOptions{});
+        DeepExrFile r = readDeepExr(p);
+        CHECK(sameDeep(d, *r.image, 2e-3));
+        bool zExact = true;
+        for (size_t i = 0; i < d.total(); ++i) zExact = zExact && d.samples[i * d.nch() + d.zi] == r.image->samples[i * r.image->nch() + r.image->zi];
+        CHECK(zExact);
+        bool threw = false;
+        try {
+            DeepExrWriteOptions bad;
+            bad.compression = "dwaa";
+            writeDeepExr(p, d, f, bad);
+        } catch (const RenderError&) {
+            threw = true;
+        }
+        CHECK(threw);
+        threw = false;
+        try {
+            readDeepExr(p, "nope");
+        } catch (const RenderError&) {
+            threw = true;
+        }
+        CHECK(threw);
+    });
+
+    test("deep: DeepRead flattened matches Read's flattening", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        const std::string p = (deepDir / "flat_match.exr").string();
+        DeepExrWriteOptions o;
+        o.type = ExrPixelType::Float;
+        writeDeepExr(p, d, f, o);
+        auto c = comp(json::array({json{{"name", "R"}, {"type", "Read"}, {"params", {{"file", p}}}},
+                                   json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
+                                   json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"D"}}, {"params", {{"depth", "z"}}}},
+                                   json{{"name", "G"}, {"type", "Grade"}, {"inputs", {"D"}}, {"params", {{"multiply", 2}}}}}),
+                      48, 36);
+        ImagePtr a = render(*c, "R"), b = render(*c, "F", 1, 16), v = render(*c, "D", 1, 32), g = render(*c, "G");
+        double worst = 0, worstZ = 0, worstV = 0, worstG = 0;
+        for (int y = 0; y < 36; ++y)
+            for (int x = 0; x < 48; ++x) {
+                for (const char* ch : {"R", "G", "B", "A"}) {
+                    worst = std::max(worst, (double)std::fabs(px(a, x, y, ch) - px(b, x, y, ch)));
+                    worstV = std::max(worstV, (double)std::fabs(px(v, x, y, ch) - px(b, x, y, ch)));
+                    if (std::string(ch) != "A") worstG = std::max(worstG, (double)std::fabs(px(g, x, y, ch) - 2 * px(b, x, y, ch)));
+                }
+                worstZ = std::max(worstZ, (double)std::fabs(px(a, x, y, "depth.Z") - px(b, x, y, "depth.Z")));
+                // the viewer's flat answer is 1/z
+                const float z = px(b, x, y, "depth.Z");
+                if (z > 0) worstV = std::max(worstV, (double)std::fabs(px(v, x, y, "depth.Z") - 1 / z));
+            }
+        std::printf("  |Read - DeepRead flattened| rgba %.2g, z %.2g; auto-flatten %.2g; Grade on deep %.2g\n", worst, worstZ, worstV, worstG);
+        CHECK(worst < 1e-6);
+        CHECK(worstZ < 1e-6);
+        CHECK(worstV < 1e-6);
+        CHECK(worstG < 1e-5);
+        CHECK(px(b, 10, 10, "id") == px(a, 10, 10, "id"));
+    });
+
+    test("deep: DeepRead -> DeepWrite keeps every sample (tiles assembled)", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        const std::string p = (deepDir / "in.exr").string(), q = (deepDir / "out.####.exr").string();
+        DeepExrWriteOptions o;
+        o.type = ExrPixelType::Float;
+        writeDeepExr(p, d, f, o);
+        auto c = comp(json::array({json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
+                                   json{{"name", "W"}, {"type", "DeepWrite"}, {"inputs", {"D"}}, {"params", {{"file", q}, {"datatype", "float"}}}}}),
+                      48, 36);
+        EngineOptions eo;
+        eo.tileSize = 16;  // many tiles: the write assembles them
+        Engine e(eo);
+        c->find("W")->execute(e, 7);
+        DeepExrFile r = readDeepExr((deepDir / "out.0007.exr").string());
+        CHECK(sameDeep(d, *r.image, 0));
+        CHECK(r.header.compression == "zips");
+        // a request across tile edges is the same as the file
+        DeepPtr part = e.requestDeep(c->find("D"), 1, Box(5, 4, 37, 29));
+        CHECK(sameDeep(*DeepImage::crop(d, Box(5, 4, 37, 29), d.channels), *part, 0));
+        // a disabled DeepRead gives nothing; DeepWrite passes its input through to the viewer
+        CHECK(e.deepChannels(c->find("W"), 1) == d.channels);
+    });
+
+    test("deep: proxy scale and flat inputs", [&] {
+        DeepImage d = makeDeep();
+        Format f;
+        f.width = 48;
+        f.height = 36;
+        const std::string p = (deepDir / "proxy.exr").string();
+        writeDeepExr(p, d, f, DeepExrWriteOptions{});
+        auto c = comp(json::array({json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
+                                   json{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.2, 0.4, 0.6, 1}}}}},
+                                   json{{"name", "KF"}, {"type", "DeepToImage"}, {"inputs", {"K"}}, {"params", {{"depth", "none"}}}}}),
+                      48, 36);
+        Engine e;
+        e.setScale(0.5);
+        CHECK(c->find("D")->format(e, 1).width == 24);
+        ImagePtr half = renderScaled(*c, "D", 0.5);
+        CHECK(half->bounds.width() <= 24);
+        ImagePtr k = render(*c, "KF");
+        CHECK(k->ch("depth.Z") < 0);
+        CHECK(std::fabs(px(k, 5, 5, "G") - 0.4f) < 1e-6 && std::fabs(px(k, 5, 5, "A") - 1) < 1e-6);
+        Engine e2;
+        DeepPtr kd = e2.requestDeep(c->find("K"), 1, Box(0, 0, 4, 4));
+        CHECK(kd->count(1, 1) == 1 && std::isinf(kd->sample(1, 1)[kd->zi]));
+    });
+    // deep phase 2: inputs made from Constants with DeepFromImage (a constant depth and thickness)
+    auto deepSlab = [](const std::string& name, json color, double z, double vol) {
+        return json::array({json{{"name", name + "_c"}, {"type", "Constant"}, {"params", {{"color", color}}}},
+                            json{{"name", name}, {"type", "DeepFromImage"}, {"inputs", {name + "_c"}},
+                                 {"params", {{"z_from", "constant"}, {"z", z}, {"volume", vol}}}}});
+    };
+    auto withNodes = [](std::initializer_list<json> parts) {
+        json all = json::array();
+        for (auto& p : parts)
+            for (auto& n : p) all.push_back(n);
+        return all;
+    };
+    test("deep: DeepMerge of overlapping volumes matches the analytic answer", [&] {
+        // A: [0, 2] alpha 0.5, red; B: [1, 3] alpha 0.5, green (premultiplied)
+        auto c = comp(withNodes({deepSlab("A", {0.5, 0, 0, 0.5}, 0, 2), deepSlab("B", {0, 0.5, 0, 0.5}, 1, 2),
+                                 json::array({json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"B", "A"}}},
+                                              json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"M"}}, {"params", {{"depth", "z"}}}}})}));
+        ImagePtr f = render(*c, "F");
+        // two uniform fogs of density u = ln 2 / 2 per unit; R = 1 - e^-u + e^-u (1 - e^-2u) / 2, and so on
+        const double u = std::log(2.0) / 2;
+        const double R = (1 - std::exp(-u)) + std::exp(-u) * (1 - std::exp(-2 * u)) / 2;
+        const double G = std::exp(-u) * (1 - std::exp(-2 * u)) / 2 + std::exp(-3 * u) * (1 - std::exp(-u));
+        std::printf("  R %.6f (analytic %.6f), G %.6f (%.6f), A %.6f (0.75)\n", px(f, 3, 3, "R"), R, px(f, 3, 3, "G"), G, px(f, 3, 3, "A"));
+        CHECK(std::fabs(px(f, 3, 3, "R") - R) < 1e-5);
+        CHECK(std::fabs(px(f, 3, 3, "G") - G) < 1e-5);
+        CHECK(std::fabs(px(f, 3, 3, "A") - 0.75) < 1e-5);
+        CHECK(std::fabs(px(f, 3, 3, "depth.Z") - 0) < 1e-6);
+        // the merged samples don't overlap: [0,1] [1,2] [1,2] merged [2,3] = 3 samples
+        Engine e;
+        DeepPtr d = e.requestDeep(c->find("M"), 1, Box(0, 0, 4, 4));
+        CHECK(d->count(1, 1) == 3);
+        // the order of the inputs doesn't matter
+        c->find("M")->inputs = {c->find("A"), c->find("B")};
+        Engine::graphChanged();
+        ImagePtr g = render(*c, "F");
+        CHECK(std::fabs(px(g, 3, 3, "R") - R) < 1e-5 && std::fabs(px(g, 3, 3, "G") - G) < 1e-5);
+    });
+
+    test("deep: hard surfaces merge as over by depth, plus adds, drop hidden", [&] {
+        auto c = comp(withNodes({deepSlab("Near", {0.2, 0, 0, 0.4}, 2, 0), deepSlab("Far", {0, 0, 1, 1}, 5, 0),
+                                 deepSlab("Same", {0, 0.3, 0, 0.3}, 2, 0),
+                                 json::array({json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Far", "Near"}}, {"params", {{"drop_hidden", true}}}},
+                                              json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"M"}}},
+                                              json{{"name", "P"}, {"type", "DeepMerge"}, {"inputs", {"Same", "Near"}}, {"params", {{"operation", "plus"}}}},
+                                              json{{"name", "PF"}, {"type", "DeepToImage"}, {"inputs", {"P"}}}})}));
+        ImagePtr f = render(*c, "F");
+        CHECK(std::fabs(px(f, 1, 1, "R") - 0.2) < 1e-6);
+        CHECK(std::fabs(px(f, 1, 1, "B") - 0.6) < 1e-6);  // far blue behind 40% near
+        CHECK(std::fabs(px(f, 1, 1, "A") - 1.0) < 1e-6);
+        CHECK(std::fabs(px(f, 1, 1, "depth.Z") - 0.5) < 1e-6);  // 1/z of the nearest
+        ImagePtr p = render(*c, "PF");
+        CHECK(std::fabs(px(p, 1, 1, "R") - 0.2) < 1e-6 && std::fabs(px(p, 1, 1, "G") - 0.3) < 1e-6);
+        CHECK(std::fabs(px(p, 1, 1, "A") - 0.7) < 1e-6);
+        Engine e;
+        CHECK(e.requestDeep(c->find("P"), 1, Box(0, 0, 2, 2))->count(1, 1) == 1);  // same depth: one sample
+    });
+
+    test("deep: holdouts (DeepHoldout, DeepMerge holdout)", [&] {
+        auto c = comp(withNodes({deepSlab("Sub", {1, 0, 0, 1}, 5, 0), deepSlab("Front", {0, 1, 0, 0.6}, 2, 0),
+                                 deepSlab("Back", {0, 1, 0, 0.6}, 8, 0), deepSlab("Fog", {0, 0, 0, 0.5}, 4, 2),
+                                 json::array({json{{"name", "H1"}, {"type", "DeepHoldout"}, {"inputs", {"Sub", "Front"}}},
+                                              json{{"name", "H2"}, {"type", "DeepHoldout"}, {"inputs", {"Sub", "Back"}}},
+                                              json{{"name", "H3"}, {"type", "DeepHoldout"}, {"inputs", {"Sub", "Fog"}}},
+                                              json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Sub", "Front"}}, {"params", {{"operation", "holdout"}}}},
+                                              json{{"name", "MF"}, {"type", "DeepToImage"}, {"inputs", {"M"}}}})}));
+        ImagePtr h1 = render(*c, "H1"), h2 = render(*c, "H2"), h3 = render(*c, "H3"), m = render(*c, "MF");
+        CHECK(std::fabs(px(h1, 2, 2, "R") - 0.4) < 1e-6 && std::fabs(px(h1, 2, 2, "A") - 0.4) < 1e-6);
+        CHECK(px(h1, 2, 2, "G") == 0);  // the holdout itself isn't in the result
+        CHECK(std::fabs(px(h2, 2, 2, "R") - 1) < 1e-6);  // behind: no effect
+        // a fog [4, 6] with alpha 0.5: the subject at 5 is behind half of it
+        CHECK(std::fabs(px(h3, 2, 2, "R") - std::sqrt(0.5)) < 1e-5);
+        CHECK(std::fabs(px(m, 2, 2, "R") - 0.4) < 1e-6 && std::fabs(px(m, 2, 2, "A") - 0.4) < 1e-6);
+    });
+
+    test("deep: DeepRecolor flattens to the flat colour", [&] {
+        auto c = comp(withNodes({deepSlab("Near", {0.1, 0.1, 0.1, 0.5}, 2, 0), deepSlab("Far", {0.2, 0.2, 0.2, 0.5}, 4, 0),
+                                 json::array({json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Far", "Near"}}},
+                                              json{{"name", "Flat"}, {"type", "Constant"}, {"params", {{"color", {0.3, 0.6, 0.15, 0.9}}}}},
+                                              json{{"name", "RC"}, {"type", "DeepRecolor"}, {"inputs", {"M", "Flat"}}},
+                                              json{{"name", "RCA"}, {"type", "DeepRecolor"}, {"inputs", {"M", "Flat"}}, {"params", {{"target_alpha", true}}}},
+                                              json{{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"RC"}}},
+                                              json{{"name", "FA"}, {"type", "DeepToImage"}, {"inputs", {"RCA"}}}})}));
+        ImagePtr f = render(*c, "F"), fa = render(*c, "FA");
+        // without target alpha the colour is the flat one's share of the deep alpha (0.75)
+        CHECK(std::fabs(px(f, 1, 1, "G") - 0.6) < 1e-5 && std::fabs(px(f, 1, 1, "A") - 0.75) < 1e-6);
+        CHECK(std::fabs(px(fa, 1, 1, "G") - 0.6) < 1e-5 && std::fabs(px(fa, 1, 1, "A") - 0.9) < 1e-5);
+        CHECK(std::fabs(px(fa, 1, 1, "B") - 0.15) < 1e-5);
+    });
+
+    test("deep: colour, transform, crop and reformat", [&] {
+        auto c = comp(withNodes({deepSlab("S", {0.25, 0.25, 0.25, 0.5}, 3, 2),
+                                 json::array({json{{"name", "G"}, {"type", "DeepGrade"}, {"inputs", {"S"}}, {"params", {{"multiply", {2, 2, 2, 1}}}}},
+                                              json{{"name", "GL"}, {"type", "DeepGrade"}, {"inputs", {"S"}},
+                                                   {"params", {{"multiply", {2, 2, 2, 1}}, {"limit_z", true}, {"zmin", 10}, {"zmax", 20}}}},
+                                              json{{"name", "CC"}, {"type", "DeepColorCorrect"}, {"inputs", {"S"}}, {"params", {{"saturation", 0}, {"gain", {1, 2, 1, 1}}}}},
+                                              json{{"name", "T"}, {"type", "DeepTransform"}, {"inputs", {"S"}}, {"params", {{"translate", {10, 5}}, {"ztranslate", 1}, {"zscale", 2}}}},
+                                              json{{"name", "Cr"}, {"type", "DeepCrop"}, {"inputs", {"S"}},
+                                                   {"params", {{"use_znear", true}, {"znear", 4}, {"box", {0, 0, 32, 48}}}}},
+                                              json{{"name", "Rf"}, {"type", "DeepReformat"}, {"inputs", {"S"}}, {"params", {{"format", {32, 24}}}}}})}));
+        Engine e;
+        auto one = [&](const std::string& n, int x, int y) { return e.requestDeep(c->find(n), 1, Box(x, y, x + 1, y + 1)); };
+        DeepPtr g = one("G", 4, 4), gl = one("GL", 4, 4), cc = one("CC", 4, 4), t = one("T", 12, 12), cr = one("Cr", 4, 4), cro = one("Cr", 40, 4);
+        CHECK(std::fabs(g->sample(4, 4)[g->ch("R")] - 0.5) < 1e-6 && std::fabs(g->sample(4, 4)[g->ai] - 0.5) < 1e-6);
+        CHECK(std::fabs(gl->sample(4, 4)[gl->ch("R")] - 0.25) < 1e-6);  // outside the depth range
+        CHECK(std::fabs(cc->sample(4, 4)[cc->ch("G")] - 0.5) < 1e-6 && std::fabs(cc->sample(4, 4)[cc->ch("R")] - 0.25) < 1e-6);
+        CHECK(std::fabs(t->sample(12, 12)[t->zi] - 7) < 1e-6 && std::fabs(t->sample(12, 12)[t->zbi] - 11) < 1e-6);
+        CHECK(e.dod(c->find("T"), 1) == Box(10, 5, 74, 53));
+        // crop at z 4 of the slab [3, 5]: the back half, alpha 1 - sqrt(0.5)
+        CHECK(cr->count(4, 4) == 1 && std::fabs(cr->sample(4, 4)[cr->zi] - 4) < 1e-6);
+        CHECK(std::fabs(cr->sample(4, 4)[cr->ai] - (1 - std::sqrt(0.5))) < 1e-6);
+        CHECK(cro->count(40, 4) == 0);
+        CHECK(c->find("Rf")->format(e, 1).width == 32);
+        CHECK(e.dod(c->find("Rf"), 1) == Box(0, 0, 32, 24));
+        ImagePtr rf = render(*c, "Rf");
+        CHECK(std::fabs(px(rf, 31, 23, "A") - 0.5) < 1e-6);
+    });
+    test("deep: ScanlineRender gives every surface; DeepSample; DeepToPoints", [&] {
+        auto c = comp(json::array({{{"name", "Red"}, {"type", "Constant"}, {"params", {{"color", {1, 0, 0, 1}}}}},
+                                   {{"name", "Blue"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 1, 1}}}}},
+                                   {{"name", "Near"}, {"type", "Card"}, {"inputs", {"Red"}}, {"params", {{"translate", {0, 0, -3}}, {"uniform_scale", 0.5}}}},
+                                   {{"name", "Far"}, {"type", "Card"}, {"inputs", {"Blue"}}, {"params", {{"translate", {0, 0, -10}}, {"uniform_scale", 20}}}},
+                                   {{"name", "Sc"}, {"type", "Scene"}, {"inputs", {"Near", "Far"}}},
+                                   {{"name", "Cam"}, {"type", "Camera"}},
+                                   {{"name", "SR"}, {"type", "ScanlineRender"}, {"inputs", {nullptr, "Sc", "Cam"}}},
+                                   {{"name", "F"}, {"type", "DeepToImage"}, {"inputs", {"SR"}}},
+                                   {{"name", "DS"}, {"type", "DeepSample"}, {"inputs", {"SR"}}, {"params", {{"pos", {32, 24}}}}},
+                                   {{"name", "DP"}, {"type", "DeepToPoints"}, {"inputs", {"SR", "Cam"}}, {"params", {{"density", 1}}}}}),
+                      64, 48);
+        Engine e;
+        DeepPtr d = e.requestDeep(c->find("SR"), 1, Box(32, 24, 33, 25));
+        CHECK(d->count(32, 24) == 2);  // the red card and the blue one hidden behind it
+        if (d->count(32, 24) == 2) {
+            CHECK(std::fabs(d->sample(32, 24)[d->zi] - 3) < 1e-3 && std::fabs(d->sample(32, 24)[d->nch() + d->zi] - 10) < 1e-3);
+            CHECK(std::fabs(d->sample(32, 24)[d->ch("R")] - 1) < 1e-4 && std::fabs(d->sample(32, 24)[d->nch() + d->ch("B")] - 1) < 1e-4);
+        }
+        // flattened, it is the ordinary render (but for antialiased edges)
+        ImagePtr flat = render(*c, "SR"), f = render(*c, "F");
+        double worst = 0, worstFar = 0;
+        int edge = 0;
+        for (int y = 0; y < 48; ++y)
+            for (int x = 0; x < 64; ++x) {
+                double dd = 0;
+                for (const char* ch : {"R", "G", "B", "A"}) dd = std::max(dd, (double)std::fabs(px(flat, x, y, ch) - px(f, x, y, ch)));
+                if (dd > 1e-3) ++edge;
+                worst = std::max(worst, dd);
+                if (px(flat, x, y, "R") == 0) worstFar = std::max(worstFar, std::fabs(1.0 - px(f, x, y, "A")));  // inner mesh edges don't show
+            }
+        std::printf("  flat vs deep flattened: %d edge pixels differ (worst %.3f); far card alpha off by %.2g\n", edge, worst, worstFar);
+        CHECK(edge < 40);
+        CHECK(worstFar < 1e-4);
+        json si = c->find("DS")->info(e, 1);
+        CHECK(si.value("samples", 0) == 2);
+        CHECK(si["metadata"].contains("sample 02"));
+        auto pts = deepPointsOf(c->find("DP"), 1, &e);
+        CHECK(pts && pts->points.size() > 64 * 48);
+        bool nearPoint = false;
+        for (auto& q : pts->points) nearPoint = nearPoint || (std::fabs(q.z + 3) < 0.01 && std::fabs(q.x) < 0.05 && std::fabs(q.y) < 0.05);
+        CHECK(nearPoint);
     });
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

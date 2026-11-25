@@ -38,6 +38,8 @@ struct InputSpec {
     bool required = false;
     std::optional<int> frame;  // only this frame (a still: LTX's style); by default every frame of the job
     std::vector<int> frames;   // or only these frames (TrackMask's mask input: its anchors' frames)
+    int maxSize = 0;           // > 0: written with the long side at most this (the model works smaller anyway);
+                               // the worker gets the plate's size as plate_width / plate_height
 };
 
 struct JobSpec {

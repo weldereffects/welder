@@ -435,6 +435,71 @@ struct Writer {
                 copy("first");
                 copy("last");
             }
+        } else if (type == "DeepRead") {
+            b.cls = "DeepRead";
+            copy("file");
+            copy("first");
+            copy("last");
+            copy("before");
+            copy("after");
+            copy("origfirst");
+            copy("origlast");
+            copy("colorspace");
+            if (p.value("raw", false)) raw("raw", "true");
+        } else if (type == "DeepToImage") {
+            b.cls = "DeepToImage";
+            mainMask(1, -1);
+        } else if (type == "DeepWrite") {
+            b.cls = "DeepWrite";
+            mainMask(1, -1);
+            copy("file");
+            if (p.value("use_limit", false)) {
+                raw("use_limit", "true");
+                copy("first");
+                copy("last");
+            }
+        } else if (type == "DeepMerge") {
+            b.cls = "DeepMerge";
+            const int ni = (int)n.value("inputs", json::array()).size();
+            mainMask(std::max(2, ni), -1);
+            copy("operation");
+            if (p.value("drop_hidden", false)) raw("drop_hidden", "true");
+        } else if (type == "DeepHoldout") {
+            b.cls = "DeepHoldout2";
+            mainMask(2, -1);
+        } else if (type == "DeepRecolor") {
+            b.cls = "DeepRecolor";
+            mainMask(2, -1);
+            if (p.value("target_alpha", false)) raw("target_input_alpha", "true");
+        } else if (type == "DeepSample") {
+            b.cls = "DeepSample";
+            mainMask(1, -1);
+            copy("pos");
+        } else if (type == "DeepToPoints") {
+            b.cls = "DeepToPoints";
+            mainMask(2, -1);
+        } else if (type == "DeepFromImage") {
+            b.cls = "DeepFromImage";
+            mainMask(1, -1);
+            if (p.value("z_from", "depth.Z") == "constant") {
+                raw("set_z", "true");
+                copy("z");
+            }
+        } else if (type == "DeepGrade" || type == "DeepColorCorrect" || type == "DeepTransform" || type == "DeepCrop" ||
+                   type == "DeepReformat") {
+            b.cls = type;
+            mainMask(1, -1);
+            for (const char* k : {"blackpoint", "whitepoint", "lift", "gain", "multiply", "offset", "gamma", "saturation", "contrast",
+                                  "mix", "zscale", "znear", "zfar", "resize"})
+                copy(k);
+            if (type == "DeepCrop" && has("box")) copy("box", "bbox");
+            for (const char* k : {"use_znear", "use_zfar"})
+                if (p.value(k, false)) raw(k, "true");
+            if (has("translate") && p["translate"].is_array() && p["translate"].size() >= 2 && p["translate"][0].is_number() &&
+                p["translate"][1].is_number()) {
+                const double zt = has("ztranslate") && p["ztranslate"].is_number() ? p["ztranslate"].get<double>() : 0.0;
+                raw("translate", "{" + p["translate"][0].dump() + " " + p["translate"][1].dump() + " " + json(zt).dump() + "}");
+            }
         } else if (type == "Constant" || type == "CheckerBoard") {
             b.cls = type == "Constant" ? "Constant" : "CheckerBoard2";
             if (type == "Constant") copy("color");

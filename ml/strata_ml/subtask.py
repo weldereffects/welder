@@ -61,6 +61,38 @@ _SPLAT_CHECK = (
 )
 
 
+# ---------------------------------------------------------------- CorridorKey's environment
+_TORCH_CHECK = (
+    "import sys, json\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "from strata_ml.winfix import fix_torch_openmp\n"
+    "fix_torch_openmp()\n"
+    "from strata_ml.device import torch_problem\n"
+    "r = {}\n"
+    "p = torch_problem()\n"
+    "if p:\n"
+    "    r['error'] = p\n"
+    "else:\n"
+    "    import torch\n"
+    "    r['torch'] = torch.__version__\n"
+    "    r['cuda'] = bool(torch.cuda.is_available())\n"
+    "print(json.dumps(r))\n"
+)
+
+
+def check_torch_env(python):
+    """Does PyTorch load in that environment? {"torch", "cuda"}, or {"error"}."""
+    try:
+        out = subprocess.run([python, "-c", _TORCH_CHECK, HERE], capture_output=True, text=True, timeout=180,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        lines = [ln for ln in out.stdout.strip().splitlines() if ln.startswith("{")]
+        if lines:
+            return json.loads(lines[-1])
+        return {"error": (out.stderr.strip().splitlines() or ["the environment's python failed"])[-1]}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 # ---------------------------------------------------------------- the DirectML environment
 # PyTorch has no AMD build for Windows that covers the Radeon range, so on a Windows PC without an NVIDIA or
 # Intel Arc GPU ML setup makes venv-directml: Python 3.12, PyTorch 2.4.1 and Microsoft's torch-directml, which

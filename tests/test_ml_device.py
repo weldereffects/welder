@@ -214,6 +214,64 @@ class Failures(unittest.TestCase):
             segment.infer_masks = old
 
 
+class BrokenTorch(unittest.TestCase):
+    """A half-installed PyTorch (a torch folder without __init__.py, which uv still counts as installed) is named,
+    instead of failing later with "module 'torch' has no attribute 'cuda'"."""
+
+    def run_py(self, code, extra_path):
+        import subprocess
+        # -S: no site-packages, so the empty torch folder is the only torch there is (as in a broken environment)
+        out = subprocess.run([sys.executable, "-S", "-c", "import sys; sys.path[:0] = sys.argv[1:]\n" + code, extra_path, ML],
+                             capture_output=True, text=True, timeout=120)
+        return out.stdout.strip() + out.stderr.strip()
+
+    def test_namespace_torch_is_named(self):
+        d = tempfile.mkdtemp(prefix="strata_nstorch_")
+        try:
+            os.makedirs(os.path.join(d, "torch", "lib"))
+            out = self.run_py("from strata_ml.device import torch_problem, detect\n"
+                              "print(torch_problem()); print(detect().kind)", d)
+            self.assertIn("PyTorch is incomplete", out)
+            self.assertIn(os.path.join(d, "torch"), out)
+            self.assertTrue(out.endswith("cpu"), out)  # no crash: the CPU
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_fine_torch(self):
+        with Modules(torch=fake_torch(cuda=True)):
+            self.assertIsNone(device.torch_problem())
+        with Modules(torch=types.ModuleType("torch")):  # no cuda attribute
+            self.assertIn("incomplete", device.torch_problem())
+
+    def test_corridorkey_says_update_ml(self):
+        from strata_ml.tasks import corridorkey
+        from strata_ml.util import JobContext
+        home = tempfile.mkdtemp(prefix="strata_ck_broken_")
+        try:
+            jd = os.path.join(home, "jobs", "a")
+            os.makedirs(jd)
+            ctx = JobContext(home, jd)
+            ctx.input = lambda name: object() if name == "src" else None
+            ctx.require_model = lambda m: home
+            with Modules(torch=types.ModuleType("torch")):
+                with self.assertRaisesRegex(RuntimeError, "PyTorch is incomplete.*Update ML"):
+                    corridorkey.run_core(ctx, {})
+            ctx.close()
+        finally:
+            import shutil
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_check_torch_env(self):
+        from strata_ml.subtask import check_torch_env
+        r = check_torch_env(sys.executable)
+        if HAVE_TORCH:
+            self.assertIn("torch", r)
+        else:
+            self.assertIn("error", r)
+        self.assertIn("error", check_torch_env(os.path.join(tempfile.gettempdir(), "no-such-python")))
+
+
 class Routing(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="strata_dev_")

@@ -43,6 +43,15 @@ fi
 # (an offline one, say): Welder points the environments at it there.
 export UV_PYTHON_INSTALL_DIR="$MLHOME/python"
 export UV_PYTHON_PREFERENCE=only-managed
+# An install or update cut short can leave a torch folder without its __init__.py ("module 'torch' has no
+# attribute 'cuda'"), which uv counts as installed: check PyTorch loads, and reinstall it if not.
+torchok() {  # $1 python, then the packages / index
+    py="$1"; shift
+    uv pip install --python "$py" "$@" || return 1
+    "$py" -c "import sys, torch; sys.exit(0 if getattr(torch, '__file__', None) and hasattr(torch, 'cuda') else 1)" 2>/dev/null && return 0
+    echo "PyTorch there is incomplete, an earlier install was cut short: reinstalling it ..."
+    uv pip install --python "$py" --reinstall-package torch --reinstall-package torchvision "$@"
+}
 mkvenv() {  # $1 folder, $2 Python version; packages already there are kept
     uv venv --python "$2" --allow-existing "$MLHOME/$1" && echo portable > "$MLHOME/$1/.welder-portable"
 }
@@ -50,7 +59,7 @@ echo "[1/6] Python 3.12 environment"
 mkvenv venv 3.12
 PY="$MLHOME/venv/bin/python"
 echo "[2/6] PyTorch 2.8 ($TORCHBUILD)"
-uv pip install --python "$PY" "torch==2.8.0+$TORCHBUILD" "torchvision==0.23.0+$TORCHBUILD" "torchaudio==2.8.0+$TORCHBUILD" --index-url "https://download.pytorch.org/whl/$TORCHBUILD"
+torchok "$PY" "torch==2.8.0+$TORCHBUILD" "torchvision==0.23.0+$TORCHBUILD" "torchaudio==2.8.0+$TORCHBUILD" --index-url "https://download.pytorch.org/whl/$TORCHBUILD"
 echo "[3/6] LTX-2.5 pipelines, MapAnything and the rest"
 uv pip install --python "$PY" --no-sources -r "$HERE/requirements.txt"
 cp "$HERE/requirements.txt" "$MLHOME/requirements-installed.txt"   # Welder offers "Update ML" when a newer one differs
@@ -68,7 +77,7 @@ else
 fi
 echo "[6/6] CorridorKey environment (Python 3.12, PyTorch 2.9.1, $TORCHBUILD)"
 if mkvenv venv-corridorkey 3.12 &&
-   uv pip install --python "$MLHOME/venv-corridorkey/bin/python" "torch==2.9.1+$TORCHBUILD" "torchvision==0.24.1+$TORCHBUILD" --index-url "https://download.pytorch.org/whl/$TORCHBUILD" &&
+   torchok "$MLHOME/venv-corridorkey/bin/python" "torch==2.9.1+$TORCHBUILD" "torchvision==0.24.1+$TORCHBUILD" --index-url "https://download.pytorch.org/whl/$TORCHBUILD" &&
    uv pip install --python "$MLHOME/venv-corridorkey/bin/python" -r "$HERE/requirements-corridorkey.txt"
 then :
 else

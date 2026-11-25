@@ -81,12 +81,15 @@ def load_predictor(ctx, size):
 
 
 def write_jpegs(frames_linear, folder, max_size):
-    """The frames as 00000.jpg ... (sRGB), the long side at most max_size. Returns (w, h, scale)."""
+    """The frames as 00000.jpg ... (sRGB), the long side at most max_size. Returns (w, h, scale).
+    frames_linear can be any iterable (a generator reading one frame at a time keeps memory flat)."""
     from PIL import Image
-    H, W = frames_linear[0].shape[:2]
-    s = min(1.0, float(max_size) / max(H, W)) if max_size and max_size > 0 else 1.0
-    w, h = max(16, int(round(W * s))), max(16, int(round(H * s)))
+    W = H = w = h = None
     for i, im in enumerate(frames_linear):
+        if W is None:
+            H, W = im.shape[:2]
+            s = min(1.0, float(max_size) / max(H, W)) if max_size and max_size > 0 else 1.0
+            w, h = max(16, int(round(W * s))), max(16, int(round(H * s)))
         u8 = (np.clip(srgb_encode(np.asarray(im, np.float32)[..., :3]), 0, 1) * 255 + 0.5).astype(np.uint8)
         img = Image.fromarray(u8)
         if (w, h) != (W, H):
@@ -316,7 +319,9 @@ def infer_masks(pred, dev, folder, prompts, n, needed=None, preview=False, repor
     total = sum(len(r[5]) and (abs(r[1] - r[0]) + 1) for r in runs) or 1
     mattes = {o: {} for o in prompts}
     with ctx_inf, ctx_amp:
-        state = pred.init_state(folder, offload_video_to_cpu=n > 60, offload_state_to_cpu=n > 300)
+        # long shots: frames read from their JPEGs when needed, not all held as 1024 x 1024 float tensors
+        lazy = {"async_loading_frames": "lazy"} if n > 60 else {}
+        state = pred.init_state(folder, offload_video_to_cpu=n > 60, offload_state_to_cpu=n > 300, **lazy)
         cache = FeatureCache(pred, state, cache_mb * 1024 * 1024)
         done = 0
         try:
@@ -570,7 +575,11 @@ def run(ctx, p):
     ctx.progress(0.01, f"reading {len(frames)} frame(s)", force=True)
     cache_mb = int(p.get("embed_cache_mb", 0)) or auto_cache_mb()
     with tempfile.TemporaryDirectory(dir=ctx.jobdir) as td:
-        w, h, (sx, sy) = write_jpegs([src.rgb(f) for f in frames], td, int(p.get("max_size", 1280)))
+        # one frame at a time: a list of every frame would hold the whole shot in memory (a 4.6K plate is 222 MB
+        # a frame as float32, so 1600 frames won't fit)
+        w, h, _ = write_jpegs((src.rgb(f) for f in frames), td, int(p.get("max_size", 1280)))
+        # the clicks are in the plate's pixels; the frames may have been written smaller than the plate
+        sx, sy = w / max(1, src.plate_width), h / max(1, src.plate_height)
         prompts, texts = {}, {}
         for o in objects:
             oid = int(o.get("id", 1))

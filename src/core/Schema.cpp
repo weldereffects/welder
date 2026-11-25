@@ -1961,6 +1961,97 @@ std::vector<NodeDef> build() {
                  "Warps the picture so the source grid lands on the destination grid. Drag the grid points in the viewer "
                  "(the grid chosen in 'edit in the viewer'; shift-drag moves a point of the other one)."});
     const std::vector<std::string> rotOrders = {"XYZ", "XZY", "YXZ", "YZX", "ZXY", "ZYX"};
+    // ---------------------------------------------------------------- Deep
+    d.push_back({"DeepRead", "Deep",
+                 {File("file", "File"),
+                  InfoRow("read_format", "Format"),
+                  Field(I("first", "Frame Range", 1, -100000, 100000), 64),
+                  Same(Width(C("before", "", "hold", {"hold", "loop", "bounce", "black", "error"}), 74), true),
+                  Same(Field(I("last", "", 1, -100000, 100000), 64), true),
+                  Same(Width(C("after", "", "hold", {"hold", "loop", "bounce", "black", "error"}), 74), true),
+                  Width(C("frame_mode", "Frame", "expression", {"expression", "start at", "offset"}), 110),
+                  Same(Tip(Width(S("frame", "", ""), 0), "expression: the file frame for each frame (empty = the same frame); "
+                                                         "start at: the frame the clip starts at; offset: frames to shift by"), true),
+                  Field(I("origfirst", "Original Range", 1, -100000, 100000), 64),
+                  Same(Field(I("origlast", "", 1, -100000, 100000), 64), true),
+                  Width(C("missing_frames", "Missing Frames", "error", {"error", "black", "nearest frame"}), 130),
+                  Same(Btn("read_reload", "reload", "read the files again"), true),
+                  Width(CS("colorspace", "Input Transform", "default", {"default", "working"}), 200),
+                  Same(B("raw", "Raw Data", false)),
+                  Tip(S("part", "Part", ""), "the deep part to read, by name (empty: the first deep part in the file)"),
+                  OnTab(InfoRow("metadata", ""), "Metadata")},
+                 "Reads deep EXR files (scanline or tiled) as samples: colour, alpha and depth per sample. "
+                 "Deep nodes take them as they are; any other node sees them flattened."});
+    d.push_back({"DeepToImage", "Deep",
+                 {Tip(Width(C("depth", "depth", "1/z", {"1/z", "z", "none"}), 90),
+                      "depth.Z of the nearest visible sample: 1/z (what ScanlineRender and ZDefocus use), z (the distance) or none")},
+                 "Flattens deep samples front to back into an ordinary image."});
+    auto zlimit = [](std::vector<KnobDef> k) {
+        k.push_back(Div("Depth range"));
+        k.push_back(B("limit_z", "limit to depths", false));
+        k.push_back(EnableIf(F("zmin", "near", 0, 0, 1000), "limit_z=true"));
+        k.push_back(EnableIf(F("zmax", "far", 1000, 0, 1000), "limit_z=true"));
+        k.push_back(F("mix", "mix", 1, 0, 1));
+        return k;
+    };
+    d.push_back({"DeepMerge", "Deep",
+                 {Tip(Width(C("operation", "operation", "combine", {"combine", "plus", "holdout"}), 100),
+                      "combine: every input's samples by depth (overlapping volumes are split and mixed); plus: the same, but "
+                      "samples at one depth add up; holdout: B's samples held out by the other inputs"),
+                  Tip(B("drop_hidden", "drop hidden samples", false), "leave out samples behind the point where the result is opaque")},
+                 "Combines deep inputs by depth: no mattes or ordering needed."});
+    d.push_back({"DeepHoldout", "Deep",
+                 {Tip(Width(C("depth", "depth", "1/z", {"1/z", "z", "none"}), 90), "depth.Z of the result, as DeepToImage")},
+                 "Flattens the main input with the holdout input cutting it out by depth."});
+    d.push_back({"DeepFromImage", "Deep",
+                 {Tip(Width(C("z_from", "depth from", "depth.Z", {"depth.Z", "constant"}), 100),
+                      "depth.Z: the input's depth.Z, read as 1/z (0 = infinitely far); constant: the depth below"),
+                  EnableIf(F("z", "depth", 1, 0, 1000), "z_from=constant"),
+                  Tip(F("volume", "volume", 0, 0, 100), "thickness of each sample (0: a hard surface)"),
+                  B("keep_zero_alpha", "keep empty pixels", false)},
+                 "Turns a flat image into deep samples, one a pixel."});
+    d.push_back({"DeepRecolor", "Deep",
+                 {Tip(B("target_alpha", "target input alpha", false), "also scale the samples' alphas so the result flattens to the colour input's alpha")},
+                 "Puts a flat image's colour (graded, keyed, painted) back onto a deep image's samples."});
+    d.push_back({"DeepGrade", "Deep",
+                 zlimit({Col("blackpoint", "blackpoint", 0, -1, 1), Col("whitepoint", "whitepoint", 1), Col("lift", "lift", 0, -1, 1),
+                         Col("gain", "gain", 1), Col("multiply", "multiply", 1), Col("offset", "offset", 0, -1, 1),
+                         Col("gamma", "gamma", 1, 0.2, 5), B("black_clamp", "black clamp", true), Same(B("white_clamp", "white clamp", false))}),
+                 "Grade on every sample's colour, optionally only within a depth range."});
+    d.push_back({"DeepColorCorrect", "Deep",
+                 zlimit({F("saturation", "saturation", 1, 0, 4), Col("contrast", "contrast", 1, 0, 4), Col("gamma", "gamma", 1, 0.2, 5),
+                         Col("gain", "gain", 1), Col("offset", "offset", 0, -1, 1)}),
+                 "Saturation, contrast, gamma, gain and offset on every sample, optionally only within a depth range."});
+    d.push_back({"DeepTransform", "Deep",
+                 {XY("translate", "translate", json::array({0, 0}), -2000, 2000), F("zscale", "z scale", 1, -10, 10),
+                  F("ztranslate", "z translate", 0, -1000, 1000)},
+                 "Moves deep samples by whole pixels and scales or shifts their depth."});
+    d.push_back({"DeepCrop", "Deep",
+                 {B("use_box", "crop to box", true), {"box", "box", Knob::Box, "$box", 0, 4096, {}, ""},
+                  B("use_znear", "znear", false), Same(EnableIf(Field(F("znear", "", 0, 0, 100000), 70), "use_znear=true"), true),
+                  B("use_zfar", "zfar", false), Same(EnableIf(Field(F("zfar", "", 1000, 0, 100000), 70), "use_zfar=true"), true),
+                  Tip(B("outside", "keep outside the depth range", false), "keep the samples outside znear / zfar instead")},
+                 "Removes deep samples outside a box and a depth range (volumes are cut at the edges)."});
+    d.push_back({"DeepReformat", "Deep",
+                 {Fmt("format", "output format"),
+                  Width(C("resize", "resize type", "width", {"none", "width", "height", "fit", "fill", "distort"}), 90), B("center", "center", true)},
+                 "Fits deep samples to another format (each pixel takes the samples under its centre)."});
+    d.push_back({"DeepSample", "Deep",
+                 {XY("pos", "position", json::array({0, 0}), 0, 4096), InfoRow("metadata", "")},
+                 "Lists the deep samples of one pixel (depth, colour, alpha and how much of each shows)."});
+    d.push_back({"DeepToPoints", "Deep",
+                 {Tip(I("density", "every n pixels", 2, 1, 16), "1: a point for every sample of every pixel; 2: every other pixel..."),
+                  F("alpha_threshold", "alpha threshold", 0.01, 0, 1), I("max_points", "max points", 500000, 1000, 5000000),
+                  InfoRow("status", "")},
+                 "Shows deep samples as a point cloud in the 3D viewer, placed through the camera input."});
+    d.push_back({"DeepWrite", "Deep",
+                 {Width(C("channels", "channels", "all", {"all", "rgba"}), 90), File("file", "file"),
+                  Width(CS("colorspace", "Output Transform", "default", {"default", "working"}), 200),
+                  Tip(Width(C("datatype", "datatype", "half", {"half", "float"}), 90), "colour and alpha; depths are always float"),
+                  Width(C("compression", "compression", "zips", {"none", "rle", "zips"}), 90),
+                  B("use_limit", "limit to range", false), Same(EnableIf(Field(I("first", "", 1, -100000, 100000), 64), "use_limit=true"), true),
+                  Same(EnableIf(Field(I("last", "", 100, -100000, 100000), 64), "use_limit=true"), true)},
+                 "Writes deep samples as a deep scanline EXR (the data window is the input's bbox)."});
     d.push_back({"Camera", "3D",
                  {XYZ("translate", "translate", json::array({0, 0, 0}), -100, 100), XYZ("rotate", "rotate", json::array({0, 0, 0}), -180, 180),
                   C("rot_order", "rotation order", "ZXY", rotOrders), Div("Projection"),
@@ -2586,7 +2677,7 @@ const NodeDef* nodeDef(const std::string& type) {
 }
 
 const std::vector<std::string>& categories() {
-    static std::vector<std::string> c = {"Image", "Draw", "Time", "Channel", "Color", "Filter", "Keyer", "Merge", "Transform", "Stylize", "MoGraph", "3D", "Value", "AI", "Other", "OFX"};
+    static std::vector<std::string> c = {"Image", "Draw", "Time", "Channel", "Color", "Filter", "Keyer", "Merge", "Transform", "Stylize", "MoGraph", "3D", "Deep", "Value", "AI", "Other", "OFX"};
     return c;
 }
 
@@ -2599,7 +2690,7 @@ std::string categoryOf(const std::string& type) {
 unsigned int categoryColor(const std::string& c) {
     static const std::map<std::string, unsigned int> m = {
         {"Image", 0xFF8C8C8C}, {"Draw", 0xFF7C8FD8}, {"Keyer", 0xFF62B35E}, {"Time", 0xFF7FB89C}, {"Channel", 0xFFB8A15E}, {"Color", 0xFF6FA88A},
-        {"Filter", 0xFF5E8FC9}, {"Merge", 0xFFC98A4E}, {"Transform", 0xFFB97AA7}, {"3D", 0xFFC2B04A}, {"AI", 0xFF8A6AD8}, {"Other", 0xFF9A9A9A},
+        {"Filter", 0xFF5E8FC9}, {"Merge", 0xFFC98A4E}, {"Transform", 0xFFB97AA7}, {"3D", 0xFFC2B04A}, {"Deep", 0xFF5A7FB0}, {"AI", 0xFF8A6AD8}, {"Other", 0xFF9A9A9A},
         {"OFX", 0xFF4FA3C4}, {"Stylize", 0xFF5AB3D6}, {"Value", 0xFFE66E78}, {"MoGraph", 0xFFA86AE8}};
     auto it = m.find(c);
     return it == m.end() ? 0xFF4A4AB8 : it->second;  // unknown: red

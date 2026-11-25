@@ -113,7 +113,13 @@ void workerSection(App& app, const std::string& needPkg) {
         if (ImGui::SmallButton("stop")) ml::stopWorker();
         if (!needPkg.empty() && needPkg != "gsplat" && w.packages.is_object() && !w.packages.value(needPkg, false)) {
             label("");
-            if (needPkg == "corridorkey_env")
+            const json ckt = w.packages.value("corridorkey_torch", json());
+            if (needPkg == "corridorkey_env" && ckt.is_object() && ckt.contains("error")) {
+                ImGui::PushTextWrapPos(0);
+                ImGui::TextColored(kBad, "CorridorKey's environment: %s. Click Update ML to reinstall it.",
+                                   ckt.value("error", std::string()).c_str());
+                ImGui::PopTextWrapPos();
+            } else if (needPkg == "corridorkey_env")
                 ImGui::TextColored(kBad, "CorridorKey's Python environment isn't set up: click Update ML");
             else
                 ImGui::TextColored(kBad, "the worker's Python has no '%s': click Update ML", needPkg.c_str());
@@ -390,6 +396,12 @@ void drawMLPanel(App& app, UiState& ui, Node* n) {
             ImGui::ProgressBar(ex.total ? (float)ex.done / ex.total : 0.0f, ImVec2(-70, 0), b);
             ImGui::SameLine();
             if (ImGui::SmallButton("cancel")) app.cancelMLJob(n->name, slot);
+        } else if (ex.failed && ex.node == n->name && ex.slot == slot && (job.empty() || job == res || st.state.empty())) {
+            // the job couldn't be written (a frame that doesn't render, the cache disk full, ...): say so here,
+            // not only in the message line for a few seconds
+            ImGui::PushTextWrapPos(0);
+            ImGui::TextColored(kBad, "couldn't start: %s", ex.label.c_str());
+            ImGui::PopTextWrapPos();
         } else if (stale) {
             ImGui::TextColored(kWarn, "interrupted at %.0f%%: the worker stopped (start it to resume)", st.progress * 100);
         } else if (st.state == "queued" || st.state == "running") {

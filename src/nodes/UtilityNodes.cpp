@@ -306,6 +306,7 @@ void registerMarkupNode();
 void registerBlenderNodes();
 void registerCreativeNodes();
 void registerCGNodes();
+void registerDeepNodes();
 void registerGroupNodes();
 void registerCryptomatteNode();
 namespace geo {
@@ -371,6 +372,7 @@ void registerBuiltinNodes() {
     registerBlenderNodes();
     registerCreativeNodes();
     registerCGNodes();
+    registerDeepNodes();
     registerGroupNodes();
     registerCryptomatteNode();
 }

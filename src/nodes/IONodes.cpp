@@ -16,6 +16,7 @@
 #include "../io/MovieIO.h"
 #include "../io/RasterIO.h"
 #include "Cryptomatte.h"
+#include "DeepUtil.h"
 #include "NodeUtils.h"
 
 namespace strata {
@@ -528,6 +529,183 @@ private:
     std::map<std::string, ExrHeader> headers_;  // path@mtime -> what its headers say (peek)
 };
 
+// ------------------------------------------------------------------ DeepRead
+// Read's file, frame range, missing frames and input transform knobs, plus part (the deep part to
+// read, "" = the first). The samples stay samples for deep nodes; everything else sees them
+// flattened. Missing frames: "checkerboard" gives black, as a deep checkerboard means nothing.
+// Below full resolution (proxy, the viewer's scale) each pixel takes the samples of the one under
+// its centre.
+class DeepReadNode : public ReadNode {
+public:
+    bool isDeep() const override { return true; }
+    void paramsChanged() override {
+        ReadNode::paramsChanged();
+        std::lock_guard<std::mutex> l(dm_);
+        frames_.clear();
+        dheaders_.clear();
+    }
+
+    // The file for `frame`, or "" for black.
+    std::string filePath(double frame) const {
+        auto ff = fileFrame(frame);
+        if (!ff) return "";
+        std::string p = path(*ff);
+        if (!fileStat(p).exists) {
+            const std::string ms = params.str("missing_frames", "error");
+            if (ms == "black" || ms == "checkerboard") return "";
+            if (ms == "nearest frame")
+                if (auto g = nearestFrame(*ff)) p = path(*g);
+            if (!fileStat(p).exists) throw RenderError(name + ": file not found: " + p);
+        }
+        return p;
+    }
+    std::string keyOf(const std::string& p) const {
+        return p + "@" + std::to_string(fileStat(p).mtime) + "|" + params.str("part", "");
+    }
+
+    std::optional<DeepExrHeader> header(double frame) {
+        const std::string p = filePath(frame);
+        if (p.empty()) return std::nullopt;
+        const std::string k = keyOf(p);
+        {
+            std::lock_guard<std::mutex> l(dm_);
+            auto it = dheaders_.find(k);
+            if (it != dheaders_.end()) return it->second;
+        }
+        DeepExrHeader h = readDeepExrHeader(p, params.str("part", ""));
+        std::lock_guard<std::mutex> l(dm_);
+        if (dheaders_.size() > 20000) dheaders_.clear();
+        dheaders_[k] = h;
+        return h;
+    }
+    static int factor(double scale) { return std::max(1, (int)std::lround(1.0 / scale)); }
+    static Box scaledBox(const Box& b, int f) {
+        if (f == 1 || b.empty()) return b;
+        auto fd = [](int a, int d) { return a >= 0 ? a / d : -((-a + d - 1) / d); };
+        return Box(fd(b.x1, f), fd(b.y1, f), fd(b.x2 - 1, f) + 1, fd(b.y2 - 1, f) + 1);
+    }
+
+    // The frame's samples at `scale` (null: black), decoded once and kept for a few frames.
+    DeepPtr loadDeep(double frame, double scale) {
+        const std::string p = filePath(frame);
+        if (p.empty()) return nullptr;
+        const std::string cs = sourceSpace(p), working = color::workingOf(comp);
+        const std::string key0 = keyOf(p) + "|" + cs + "|" + working + "|" + color::configOf(comp);
+        const int f = factor(scale);
+        const std::string key = key0 + "@" + std::to_string(f);
+        auto find = [&](const std::string& k) -> DeepPtr {
+            std::lock_guard<std::mutex> l(dm_);
+            for (auto it = frames_.begin(); it != frames_.end(); ++it)
+                if (it->first == k) {
+                    frames_.splice(frames_.begin(), frames_, it);
+                    return frames_.front().second;
+                }
+            return nullptr;
+        };
+        auto keep = [&](const std::string& k, DeepPtr d) {
+            std::lock_guard<std::mutex> l(dm_);
+            frames_.emplace_front(k, d);
+            size_t bytes = 0, n = 0;
+            for (auto it = frames_.begin(); it != frames_.end();) {
+                bytes += it->second->bytes();
+                if (++n > 2 && (bytes > fileCacheBytes() || n > 8)) it = frames_.erase(it);
+                else ++it;
+            }
+        };
+        if (DeepPtr hit = find(key)) return hit;
+        std::lock_guard<std::mutex> once(loadM_);  // one decode at a time: deep frames are big
+        if (DeepPtr hit = find(key)) return hit;
+        DeepPtr full = find(key0 + "@1");
+        if (!full) {
+            DeepExrFile file = readDeepExr(p, params.str("part", ""));
+            if (!cs.empty()) {
+                std::string err;
+                auto t = color::convert(color::configOf(comp), cs, working, &err);
+                if (!t) throw RenderError(name + ": " + err);
+                convertDeepColour(*file.image, *t);
+            }
+            full = file.image;
+            keep(key0 + "@1", full);
+        }
+        if (f == 1) return full;
+        // each scaled pixel takes the samples under its centre
+        const Box sb = scaledBox(full->bounds, f);
+        auto r = std::make_shared<DeepImage>(sb, full->channels);
+        const size_t nc = r->channels.size();
+        for (int y = sb.y1; y < sb.y2; ++y)
+            for (int x = sb.x1; x < sb.x2; ++x) {
+                const int sx = x * f + f / 2, sy = y * f + f / 2;
+                const int n = full->count(sx, sy);
+                float* d = r->newPixel(n);
+                if (n) std::memcpy(d, full->sample(sx, sy), sizeof(float) * n * nc);
+            }
+        r->finish();
+        keep(key, r);
+        return r;
+    }
+
+    Box dod(Engine& e, double frame) override {
+        auto h = header(frame);
+        return h ? scaledBox(h->bounds, factor(e.scale())) : Box();
+    }
+    ChannelSet deepChannels(Engine&, double frame) override {
+        auto h = header(frame);
+        return h ? h->channels : deepChannelsOf(rgbaChannels());
+    }
+    ChannelSet channels(Engine& e, double frame) override { return flatChannelsOf(deepChannels(e, frame)); }
+    Format format(Engine& e, double frame) override {
+        std::optional<DeepExrHeader> h;
+        try {
+            h = header(frame);
+        } catch (const RenderError&) {
+        }
+        return scaledFormat(h ? h->format : (comp ? comp->format : Format()), e.scale());
+    }
+    json info(Engine& e, double frame) override {
+        json j = json::object();
+        auto ff = fileFrame(frame);
+        if (!ff) return j;
+        j["path"] = path(*ff);
+        j["file_frame"] = *ff;
+        auto h = header(frame);
+        if (!h) return j;
+        j["format"] = {h->format.width, h->format.height};
+        j["pixel_aspect"] = h->format.pixelAspect;
+        j["bbox"] = {h->bounds.x1, h->bounds.y1, h->bounds.x2, h->bounds.y2};
+        j["channels"] = h->channels;
+        json md = json::object();
+        md["input/filename"] = path(*ff);
+        md["input/frame"] = *ff;
+        md["input/width"] = h->format.width;
+        md["input/height"] = h->format.height;
+        md["exr/compression"] = h->compression;
+        md["exr/deep_part"] = h->part;
+        md["exr/deep_parts"] = h->deepParts;
+        if (DeepPtr d = loadDeep(frame, 1.0)) {
+            const DeepStats st = deepStats(*d);
+            md["deep/samples"] = (long long)st.samples;
+            md["deep/max_samples_per_pixel"] = st.maxPerPixel;
+            md["deep/depth_range"] = {st.zMin, st.zMax};
+        }
+        if (h->attributes.is_object())
+            for (auto& [k, v] : h->attributes.items()) md["exr/" + k] = v;
+        j["metadata"] = md;
+        (void)e;
+        return j;
+    }
+    void renderDeep(RenderArgs& a, DeepImage& out) override {
+        DeepPtr d = loadDeep(a.frame, a.engine.scale());
+        if (!d) return;
+        out = std::move(*DeepImage::crop(*d, out.bounds, out.channels));
+    }
+    void render(RenderArgs& a, Image& out) override { renderDeepFlattened(this, a, out); }
+
+private:
+    std::mutex dm_, loadM_;
+    std::list<std::pair<std::string, DeepPtr>> frames_;
+    std::map<std::string, DeepExrHeader> dheaders_;
+};
+
 // ------------------------------------------------------------------ Write
 // params: file, channels ("all" | "rgba" | "rgb" | list), datatype ("half" |
 //         "float"), compression (none rle zips zip piz pxr24 b44 b44a dwaa dwab),
@@ -744,6 +922,7 @@ void registerIONodes() {
     auto& r = NodeRegistry::instance();
     r.add("Read", [] { return std::make_unique<ReadNode>(); });
     r.add("Write", [] { return std::make_unique<WriteNode>(); });
+    r.add("DeepRead", [] { return std::make_unique<DeepReadNode>(); });
     r.add("Constant", [] { return std::make_unique<ConstantNode>(); });
     r.add("CheckerBoard", [] { return std::make_unique<CheckerBoardNode>(); });
     r.add("Radial", [] { return std::make_unique<RadialNode>(); });

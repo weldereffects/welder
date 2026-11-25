@@ -2008,8 +2008,6 @@ class Translator:
 
         # ---------------------------------------------------- I/O
         if klass in ("Read", "DeepRead"):
-            if klass == "DeepRead":
-                warn("deep data is not supported; reading as a flat image")
             f = str(k.get("file", ""))
             if "[" in f:
                 warn("file path contains TCL expressions; it must be fixed by hand: " + f)
@@ -2057,7 +2055,111 @@ class Translator:
                 if oe in ("black", "checkerboard", "nearest frame", "nearest"):
                     params["missing_frames"] = "nearest frame" if oe.startswith("nearest") else oe
             self.translated += 1
+            if klass == "DeepRead":  # deep samples kept: DeepRead has no proxy / premultiplied / auto alpha
+                for knob in ("proxy", "format", "premultiplied", "auto_alpha"):
+                    params.pop(knob, None)
+                if params.get("missing_frames") == "checkerboard":
+                    params["missing_frames"] = "black"
+                return self.emit(nk_name, klass, "DeepRead", [], params, k)
             return self.emit(nk_name, klass, "Read", [], params, k)
+
+        # deep compositing (Welder's own Deep* nodes; the knobs that map, the rest left at defaults)
+        if klass == "DeepMerge":
+            op = str(k.get("operation", "combine")).strip('"')
+            params["operation"] = op if op in ("combine", "holdout", "plus") else "combine"
+            if op not in ("combine", "holdout", "plus"):
+                warn("DeepMerge operation '%s' is not supported; using combine" % op)
+            if flag("drop_hidden"):
+                params["drop_hidden"] = True
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepMerge", main, params, k)
+        if klass in ("DeepHoldout", "DeepHoldout2"):
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepHoldout", main[:2], params, k)
+        if klass == "DeepFromImage":
+            if flag("set_z"):
+                params["z_from"] = "constant"
+                num("z", dest="z")
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepFromImage", main[:1], params, k)
+        if klass == "DeepRecolor":
+            if flag("target_input_alpha"):
+                params["target_alpha"] = True
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepRecolor", main[:2], params, k)
+        if klass in ("DeepColorCorrect", "DeepColorCorrect2", "DeepGrade"):
+            for knob in (("blackpoint", "whitepoint", "lift", "gain", "multiply", "offset", "gamma") if klass == "DeepGrade"
+                         else ("saturation", "contrast", "gamma", "gain", "offset")):
+                num(knob, dest=knob)
+            if "mix" in k:
+                num("mix", dest="mix")
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepGrade" if klass == "DeepGrade" else "DeepColorCorrect", main[:1], params, k)
+        if klass == "DeepTransform":
+            t = num("translate")
+            if isinstance(t, list) and len(t) >= 2:
+                params["translate"] = [t[0], t[1]]
+                if len(t) >= 3 and t[2]:
+                    params["ztranslate"] = t[2]
+            num("zscale", dest="zscale")
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepTransform", main[:1], params, k)
+        if klass == "DeepCrop":
+            b = num("bbox")
+            if isinstance(b, list) and len(b) == 4:
+                params["box"] = b
+            for knob in ("use_znear", "use_zfar"):
+                if flag(knob):
+                    params[knob] = True
+            num("znear", dest="znear")
+            num("zfar", dest="zfar")
+            if flag("outside_zrange") or flag("outside"):
+                params["outside"] = True
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepCrop", main[:1], params, k)
+        if klass == "DeepSample":
+            pos = num("pos")
+            if isinstance(pos, list) and len(pos) >= 2:
+                params["pos"] = [pos[0], pos[1]]
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepSample", main[:1], params, k)
+        if klass == "DeepToPoints":
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepToPoints", main[:2], params, k)
+        if klass == "DeepReformat":
+            if "format" in k:
+                f = parse_format(k["format"], self.formats)
+                if f:
+                    params["format"] = [f[0], f[1]]
+            if "resize" in k:
+                params["resize"] = str(k["resize"]).strip('"')
+            if "center" in k:
+                params["center"] = flag("center")
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepReformat", main[:1], params, k)
+
+        if klass == "DeepToImage":
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepToImage", main[:1], params, k)
+
+        if klass == "DeepWrite":
+            params["file"] = str(k.get("file", ""))
+            if "channels" in k and channel_set(k["channels"]) == "rgba":
+                params["channels"] = "rgba"
+            dt = str(k.get("datatype", ""))
+            if dt:
+                params["datatype"] = "float" if "32" in dt else "half"
+            if "compression" in k:
+                comp = str(k["compression"]).lower()
+                params["compression"] = "none" if comp.startswith("none") else "rle" if "rle" in comp else "zips"
+            if flag("use_limit"):
+                params["use_limit"] = True
+                num("first", dest="first")
+                num("last", dest="last")
+            if flag("disable"):
+                params["disable"] = True
+            self.translated += 1
+            return self.emit(nk_name, klass, "DeepWrite", main[:1], params, k)
 
         if klass == "Write":
             params["file"] = str(k.get("file", ""))

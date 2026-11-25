@@ -1,4 +1,5 @@
 #include "Engine.h"
+#include "Deep.h"
 
 #include <optional>
 #include "ThreadBudget.h"
@@ -8,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -69,6 +71,13 @@ ImagePtr RenderArgs::fetch(Node* in, const Box& box) const { return engine.reque
 ImagePtr RenderArgs::fetch(Node* in, const Box& box, double atFrame) const {
     return engine.request(in, atFrame, box);
 }
+
+DeepPtr RenderArgs::fetchDeep(Node* in, const Box& box) const { return engine.requestDeep(in, frame, box); }
+DeepPtr RenderArgs::fetchDeep(Node* in, const Box& box, double atFrame) const {
+    return engine.requestDeep(in, atFrame, box);
+}
+
+ChannelSet Node::deepChannels(Engine& e, double frame) { return deepChannelsOf(e.channels(this, frame)); }
 
 NodeRegistry& NodeRegistry::instance() {
     static NodeRegistry r;
@@ -498,9 +507,15 @@ ImagePtr Engine::request(Node* n, double frame, const Box& box) {
 }
 
 void Engine::clearAssembled() {
-    std::lock_guard<std::mutex> l(asmM_);
-    asm_.clear();
-    asmBytes_ = 0;
+    {
+        std::lock_guard<std::mutex> l(asmM_);
+        asm_.clear();
+        asmBytes_ = 0;
+    }
+    std::lock_guard<std::mutex> l(deepM_);
+    deepCache_.clear();
+    deepOrder_.clear();
+    deepBytes_ = 0;
 }
 
 ImagePtr Engine::findAssembled(uint64_t h, const Box& box) {
@@ -587,6 +602,180 @@ ImagePtr Engine::renderRegion(Node* n, double frame, const Box& box) {
     }
     if (err) std::rethrow_exception(err);
     return out;
+}
+
+// ---------------------------------------------------------------- deep
+
+Node* Engine::deepTarget(Node* n, double& frame) {
+    for (int guard = 0; n && guard < 10000; ++guard) {
+        if (n->bypassed(frame)) {
+            n = n->input(0);
+            continue;
+        }
+        Node* to = nullptr;
+        if (n->redirect(*this, frame, to)) {
+            n = to;
+            continue;
+        }
+        const int id = n->identityInput(frame);
+        if (id >= 0) {
+            Node* in = n->input(id);
+            frame = n->inputTime(id, frame);
+            n = in;
+            continue;
+        }
+        return n;
+    }
+    return n;
+}
+
+ChannelSet Engine::deepChannels(Node* n, double frame) {
+    n = deepTarget(n, frame);
+    if (!n) return deepChannelsOf(rgbaChannels());
+    return n->isDeep() ? n->deepChannels(*this, frame) : deepChannelsOf(channels(n, frame));
+}
+
+DeepPtr Engine::deepTile(Node* n, double frame, uint64_t h, int tx, int ty, const Box& dodBox) {
+    const TileCache::Key k{h, tx, ty};
+    {
+        std::lock_guard<std::mutex> l(deepM_);
+        auto it = deepCache_.find(k);
+        if (it != deepCache_.end()) {
+            deepOrder_.splice(deepOrder_.begin(), deepOrder_, it->second.pos);
+            return it->second.img;
+        }
+    }
+    const Box region = Box(tx * tile_, ty * tile_, (tx + 1) * tile_, (ty + 1) * tile_).intersect(dodBox);
+    auto out = std::make_shared<DeepImage>(region, n->deepChannels(*this, frame));
+    RenderArgs args{*this, frame, region};
+    const auto t0 = std::chrono::steady_clock::now();
+    n->renderDeep(args, *out);
+    out->finish();
+    if (profile_) {
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::lock_guard<std::mutex> l(profM_);
+        auto& p = prof_[n->name];
+        p.first += ms;
+        p.second += 1;
+    }
+    DeepPtr img = out;
+    std::lock_guard<std::mutex> l(deepM_);
+    if (deepCache_.count(k)) return deepCache_[k].img;  // another thread made it meanwhile
+    const size_t budget = std::max(size_t(256) << 20, cache_.stats().budget / 4);
+    deepOrder_.push_front(k);
+    deepCache_[k] = {img, deepOrder_.begin()};
+    deepBytes_ += img->bytes();
+    while (deepBytes_ > budget && deepOrder_.size() > 1) {
+        auto it = deepCache_.find(deepOrder_.back());
+        deepBytes_ -= it->second.img->bytes();
+        deepCache_.erase(it);
+        deepOrder_.pop_back();
+    }
+    return img;
+}
+
+namespace {
+// One image from tiles laid out on the grid (each covering its tile of `box`).
+std::shared_ptr<DeepImage> assembleDeep(const Box& box, const ChannelSet& cs, const std::vector<DeepPtr>& tiles, int tile) {
+    auto out = std::make_shared<DeepImage>(box, cs);
+    if (tiles.empty()) {
+        out->finish();
+        return out;
+    }
+    const size_t nc = out->channels.size();
+    const int tx0 = floordiv(box.x1, tile), ty0 = floordiv(box.y1, tile);
+    const int ntx = floordiv(box.x2 - 1, tile) - tx0 + 1;
+    size_t tot = 0;
+    for (auto& t : tiles)
+        if (t) tot += t->total();
+    out->samples.reserve(tot * nc);
+    for (int y = box.y1; y < box.y2; ++y)
+        for (int x = box.x1; x < box.x2; ++x) {
+            const DeepImage* t = tiles[(size_t)(floordiv(y, tile) - ty0) * ntx + (floordiv(x, tile) - tx0)].get();
+            const int n = t ? t->count(x, y) : 0;
+            float* d = out->newPixel(n);
+            if (n) std::memcpy(d, t->sample(x, y), sizeof(float) * n * nc);
+        }
+    out->finish();
+    return out;
+}
+}  // namespace
+
+DeepPtr Engine::requestDeep(Node* n, double frame, const Box& box) {
+    EngineScope scope(this);
+    if (cancel_) throw RenderCancelled();
+    n = deepTarget(n, frame);
+    auto empty = [&](ChannelSet cs) {
+        auto e = std::make_shared<DeepImage>(box, std::move(cs));
+        e->finish();
+        return DeepPtr(e);
+    };
+    if (!n) return empty(deepChannelsOf(rgbaChannels()));
+    if (!n->isDeep()) {
+        ImagePtr flat = request(n, frame, box);
+        return deepFromFlat(*flat, deepChannelsOf(flat->channels));
+    }
+    const ChannelSet cs = n->deepChannels(*this, frame);
+    const Box d = dod(n, frame);
+    const Box need = box.intersect(d);
+    if (need.empty()) return empty(cs);
+    const uint64_t h = hash(n, frame);
+    const int tx0 = floordiv(need.x1, tile_), tx1 = floordiv(need.x2 - 1, tile_);
+    const int ty0 = floordiv(need.y1, tile_), ty1 = floordiv(need.y2 - 1, tile_);
+    if (tx0 == tx1 && ty0 == ty1) {
+        DeepPtr t = deepTile(n, frame, h, tx0, ty0, d);
+        if (t->bounds == box && t->channels == cs) return t;
+        return DeepImage::crop(*t, box, cs);
+    }
+    // the tiles on the grid of `box` (null where the request reaches outside the dod)
+    const int bx0 = floordiv(box.x1, tile_), bx1 = floordiv(box.x2 - 1, tile_);
+    const int by0 = floordiv(box.y1, tile_), by1 = floordiv(box.y2 - 1, tile_);
+    std::vector<DeepPtr> tiles((size_t)(bx1 - bx0 + 1) * (by1 - by0 + 1));
+    for (int ty = ty0; ty <= ty1; ++ty)
+        for (int tx = tx0; tx <= tx1; ++tx) {
+            DeepPtr t = deepTile(n, frame, h, tx, ty, d);
+            tiles[(size_t)(ty - by0) * (bx1 - bx0 + 1) + (tx - bx0)] = t->channels == cs ? t : DeepImage::crop(*t, t->bounds, cs);
+        }
+    return assembleDeep(box, cs, tiles, tile_);
+}
+
+DeepPtr Engine::renderDeepRegion(Node* n, double frame, const Box& box) {
+    // warm the deep cache (or, for a flat node, the tile cache) on every thread, then assemble
+    std::vector<Box> tiles;
+    const int tx0 = floordiv(box.x1, tile_), tx1 = floordiv(box.x2 - 1, tile_);
+    const int ty0 = floordiv(box.y1, tile_), ty1 = floordiv(box.y2 - 1, tile_);
+    for (int ty = ty0; ty <= ty1; ++ty)
+        for (int tx = tx0; tx <= tx1; ++tx)
+            tiles.push_back(Box(tx * tile_, ty * tile_, (tx + 1) * tile_, (ty + 1) * tile_).intersect(box));
+    std::vector<DeepPtr> parts(tiles.size());
+    const int nt = std::max(1, std::min<int>(threads_, (int)tiles.size()));
+    std::atomic<size_t> next{0};
+    std::atomic<bool> stop{false};
+    std::exception_ptr err;
+    std::mutex errM;
+    auto worker = [&](int) {
+        EngineScope scope(this);
+        for (;;) {
+            size_t i = next++;
+            if (i >= tiles.size() || stop) return;
+            try {
+                if (cancel_) throw RenderCancelled();
+                parts[i] = requestDeep(n, frame, tiles[i]);
+            } catch (...) {
+                std::lock_guard<std::mutex> l(errM);
+                if (!err) err = std::current_exception();
+                stop = true;
+            }
+        }
+    };
+    {
+        strata::threads::Helpers helpers(nt - 1, worker);
+        worker(0);
+    }
+    if (err) std::rethrow_exception(err);
+    if (parts.size() == 1) return parts[0];
+    ChannelSet cs = parts.empty() ? deepChannels(n, frame) : parts[0]->channels;
+    return assembleDeep(box, cs, parts, tile_);
 }
 
 }  // namespace strata
