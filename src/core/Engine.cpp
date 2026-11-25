@@ -629,6 +629,11 @@ Node* Engine::deepTarget(Node* n, double& frame) {
     return n;
 }
 
+bool Engine::isDeepSource(Node* n, double frame) {
+    n = deepTarget(n, frame);
+    return n && n->isDeep();
+}
+
 ChannelSet Engine::deepChannels(Node* n, double frame) {
     n = deepTarget(n, frame);
     if (!n) return deepChannelsOf(rgbaChannels());

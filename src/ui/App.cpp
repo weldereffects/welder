@@ -2914,6 +2914,25 @@ ImagePtr App::pickImage(const std::string& name, int input, const Box& box, doub
     }
 }
 
+DeepPtr App::deepSamplesAt(const std::string& name, int x, int y, double f) {
+    Node* n = node(name);
+    if (!n) return nullptr;
+    if (!pickEngine_) {
+        EngineOptions o;
+        o.cacheBytes = size_t(256) << 20;
+        pickEngine_ = std::make_unique<Engine>(o);
+    }
+    try {
+        pickEngine_->clearMemo();
+        pickEngine_->setScale(1.0);
+        if (!pickEngine_->isDeepSource(n, f)) return nullptr;
+        return pickEngine_->requestDeep(n, f, Box(x, y, x + 1, y + 1));
+    } catch (const std::exception& e) {
+        message(std::string("deep samples: ") + e.what());
+        return nullptr;
+    }
+}
+
 bool App::samplePixels(const std::string& name, int input, const Box& box, double f, float rgba[4]) {
     Node* n = node(name);
     if (!n || box.empty()) return false;

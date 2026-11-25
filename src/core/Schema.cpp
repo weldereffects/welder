@@ -14,7 +14,7 @@ KnobDef F(const char* n, const char* l, double def, double lo, double hi, const 
     return {n, l, Knob::Float, def, lo, hi, {}, tip};
 }
 KnobDef I(const char* n, const char* l, int def, double lo, double hi) { return {n, l, Knob::Int, def, lo, hi, {}, ""}; }
-KnobDef B(const char* n, const char* l, bool def) { return {n, l, Knob::Bool, def, 0, 1, {}, ""}; }
+KnobDef B(const char* n, const char* l, bool def, const char* tip = "") { return {n, l, Knob::Bool, def, 0, 1, {}, tip}; }
 KnobDef C(const char* n, const char* l, const char* def, std::vector<std::string> opts) {
     return {n, l, Knob::Choice, def, 0, 1, std::move(opts), ""};
 }
@@ -1667,9 +1667,13 @@ std::vector<NodeDef> build() {
                             When(XY("focus_point", "focus point", "$center", 0, 4096), "use_focus_point=true"),
                             F("depth_of_field", "depth of field", 0, 0, 100), F("size", "size", 20, 0, 200),
                             F("maximum", "maximum", 40, 0, 500), I("layers", "layers", 16, 2, 64),
-                            C("output", "output", "result", {"result", "focal plane setup", "coc"}), F("mix", "mix", 1, 0, 1)}),
-                     "Depth of field from a depth channel (depth.Z from ScanlineRender / BlenderRender is 1 / distance). "
-                     "Blur = size x |1 - focus / distance|, up to maximum; 'pick focus' sets the focus plane from the viewer."});
+                            C("output", "output", "result", {"result", "focal plane setup", "coc"}),
+                            B("use_deep", "use deep samples", true,
+                              "With a deep input (DeepRead, ScanlineRender ...): every sample is blurred at its own depth, so what's "
+                              "behind an out-of-focus edge shows through its blur. Off: the flattened image and its depth.Z."),
+                            F("mix", "mix", 1, 0, 1)}),
+                     "Depth of field from a depth channel (depth.Z from ScanlineRender / BlenderRender is 1 / distance), or from "
+                     "a deep input's samples. Blur = size x |1 - focus / distance|, up to maximum; 'pick focus' sets the focus plane from the viewer."});
         d.push_back({"Defocus", "Filter",
                      bokeh({F("defocus", "defocus (px)", 10, 0, 500), F("mix", "mix", 1, 0, 1)}),
                      "A lens blur: every pixel spread over the bokeh shape."});

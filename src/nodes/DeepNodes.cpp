@@ -213,10 +213,13 @@ public:
             maps[i].resize(on);
             for (int c = 0; c < on; ++c) maps[i][c] = ins[i]->ch(out.channels[c]);
         }
+        // every pixel's samples, then all of them tidied at once (on the GPU when that's faster)
         std::vector<float> s;
+        std::vector<uint32_t> offs{0}, tidy;
+        offs.reserve((size_t)out.bounds.area() + 1);
+        tidy.reserve((size_t)out.bounds.area());
         for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
             for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
-                s.clear();
                 int sources = 0;
                 for (size_t i = 0; i < ins.size(); ++i) {
                     const DeepImage& d = *ins[i];
@@ -227,11 +230,15 @@ public:
                     for (int k = 0; k < n; ++k, p += dn)
                         for (int c = 0; c < on; ++c) s.push_back(maps[i][c] >= 0 ? p[maps[i][c]] : 0.0f);
                 }
-                if (sources > 1) tidySamples(s, on, out.zi, out.zbi, out.ai, mode);
-                if (drop) dropHiddenSamples(s, on, out.ai);
-                float* d = out.newPixel((int)(s.size() / on));
-                if (!s.empty()) std::memcpy(d, s.data(), sizeof(float) * s.size());
+                offs.push_back((uint32_t)(s.size() / on));
+                tidy.push_back(sources > 1 ? 1 : 0);
             }
+        tidyPixels(offs, s, tidy, on, out.zi, out.zbi, out.ai, mode, drop);
+        for (size_t i = 0; i + 1 < offs.size(); ++i) {
+            const uint32_t n = offs[i + 1] - offs[i];
+            float* d = out.newPixel((int)n);
+            if (n) std::memcpy(d, s.data() + (size_t)offs[i] * on, sizeof(float) * n * on);
+        }
     }
 };
 

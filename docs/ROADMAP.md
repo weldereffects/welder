@@ -48,7 +48,7 @@
 - [ ] Creative next: feedback (recursive) loops, a reaction-diffusion / flow-field generator, noise as a 3D texture on geometry, more gradient presets and saving your own
 - [x] CG passes: VectorBlur, ZDefocus / Defocus (bokeh shapes, focus picking), Cryptomatte keyer with viewer picking, ScanlineRender motion blur and motion vectors
 - [x] .nk panel parity: Read (frame modes, loop / bounce, missing frames, proxy, premultiplied, auto alpha, Metadata tab), Transform (every classic filter with downscale footprint, clamp, black outside, skew X / Y, motion blur with shutter), Reformat (to box, turn, pbb), Merge / Copy layers, Grade reverse, (un)premult by, the Node tab (label, lifetime, hide input)
-- [ ] Next: deep-aware defocus, Cryptomatte preview in the viewer's overlay
+- [ ] Next: Cryptomatte preview in the viewer's overlay
 - [ ] GPU rendering (OFX GPU suites; native nodes in compute shaders)
 - [x] Camera tracking: CameraTracker (automatic KLT feature tracks, masks, structure-from-motion solve with bundle adjustment and focal-length solve, error display, ground plane / origin / scale), Camera and Card3D nodes, exports to Camera nodes, cards on tracked points, .nk, .chan and Blender
 - [x] Lens distortion: solved jointly with the camera (k1 / k2), LensDistortion undistort / redistort and ST map output, STMap
@@ -63,7 +63,7 @@
 - [x] Deep compositing, part 1: deep samples through the graph (any flat node sees them flattened), DeepRead (deep scanline / tiled EXR), DeepToImage, DeepWrite
 - [x] Deep compositing, part 2: DeepMerge (combine / plus / holdout; volumes split where they overlap), DeepHoldout, DeepFromImage, DeepRecolor, DeepGrade, DeepColorCorrect, DeepTransform, DeepCrop, DeepReformat
 - [x] Deep compositing, part 3: ScanlineRender as a deep source (every surface per pixel), DeepSample, DeepToPoints in the 3D viewer, deep samples from Python (`deep_samples`) and MCP (`sample_deep`)
-- [ ] Deep next: GPU flatten / merge, deep-aware ZDefocus, a per-sample readout in the viewer
+- [x] Deep compositing, part 4: flatten and DeepMerge on the GPU (CPU fallback), deep-aware ZDefocus, deep samples under the viewer cursor
 - [ ] OFX: overlays/interacts, parametric params, 8/16-bit plugins
 - [ ] .nk importer: more nodes, TCL beyond [frame] / [value]; pixel-diff test suite against the original renders
 - [ ] Windows/macOS builds and CI

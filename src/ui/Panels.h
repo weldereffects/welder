@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/Deep.h"
 #include "core/Schema.h"
 #include "App.h"
 #include "nodes/Roto.h"
@@ -89,6 +90,14 @@ struct ViewerState {
     std::string builtWith;   // the compare settings the textures were built with
     int wipeDrag = 0;        // 1 dragging the centre, 2 the rotate handle
     bool hasB = false;       // the textures hold a B image
+    // A deep node's samples under the cursor, listed once it rests on a pixel for a moment
+    bool deepReadout = true;
+    int deepX = 0, deepY = 0;
+    double deepFrame = 0, deepSince = 0;
+    uint64_t deepContent = 0;
+    std::string deepNode;
+    bool deepAsked = false;
+    DeepPtr deepAt;
 };
 
 // The Viewer's 3D mode (Tab): Maya-style navigation and manipulators.
@@ -698,6 +707,7 @@ void testSelectInBrowser(const std::string& name);
 void graphDropFiles(App& app, UiState& ui, const std::vector<std::string>& paths, ImVec2 screenPos);
 extern ImVec2 gTestKnobPos;  // STRATA_TEST_ALTKEY (Properties.cpp)
 extern ImVec2 gTest3DOrigin, gTest3DSize;  // STRATA_TEST_SCENE3D: the (first) 3D view drawn (Viewer3D.cpp)
+extern ImVec2 gTestDeepHover;  // STRATA_TEST_DEEPHOVER: the screen position of the pixel to rest on (Viewer.cpp)
 extern ImVec2 gTestXformCentre;  // STRATA_TEST_VIEWERCLICK: the open Transform's centre handle (TransformTool.cpp)
 bool graphTestPipe(App& app, UiState& ui, int frame);
 

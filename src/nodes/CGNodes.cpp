@@ -17,6 +17,7 @@
 
 #include "../gpu/Gpu.h"
 #include "../core/Comp.h"
+#include "../core/Deep.h"
 #include "../core/Engine.h"
 #include "NodeUtils.h"
 
@@ -585,27 +586,99 @@ public:
         // (no banding). A soft split, not a random pick: dithering left each layer full of
         // one-pixel holes that the blurred neighbour layer only part filled, which showed as
         // hard black grain where focus turns to bokeh (#86).
-        const int BW = B.width();
-        std::vector<int8_t> layerOf((size_t)BW * B.height(), 0);  // the nearer layer (signed)
-        std::vector<int8_t> outerOf((size_t)BW * B.height(), 0);  // the next one out (same side)
-        std::vector<float> share((size_t)BW * B.height(), 0.0f);  // the outer layer's weight
+        struct Split {
+            int8_t layer = 0, outer = 0;  // the nearer layer (signed), the next one out (same side)
+            float share = 0;              // the outer layer's weight
+        };
         std::vector<Box> lbox(2 * K + 1);
-        for (int y = B.y1; y < B.y2; ++y)
-            for (int x = B.x1; x < B.x2; ++x) {
-                float c = coc.at(x, y)[0], ac = std::fabs(c);
-                int k = 0;
-                while (k < K && radii[k + 1] <= ac) ++k;
-                float t = 0;
-                if (k < K) t = (float)std::clamp((ac - radii[k]) / std::max(1e-9, radii[k + 1] - radii[k]), 0.0, 1.0);
-                const int sgn = c < 0 ? -1 : 1;
-                const size_t i = (size_t)(y - B.y1) * BW + (x - B.x1);
-                layerOf[i] = (int8_t)(sgn * k);
-                outerOf[i] = (int8_t)(sgn * std::min(k + 1, K));
-                share[i] = t;
-                const Box px(x, y, x + 1, y + 1);
-                if (t < 1) lbox[sgn * k + K] = lbox[sgn * k + K].unite(px);
-                if (t > 0) lbox[sgn * (k + 1) + K] = lbox[sgn * (k + 1) + K].unite(px);
-            }
+        auto split = [&](float c, int x, int y) {
+            const float ac = std::fabs(c);
+            int k = 0;
+            while (k < K && radii[k + 1] <= ac) ++k;
+            float t = 0;
+            if (k < K) t = (float)std::clamp((ac - radii[k]) / std::max(1e-9, radii[k + 1] - radii[k]), 0.0, 1.0);
+            const int sgn = c < 0 ? -1 : 1;
+            const Box px(x, y, x + 1, y + 1);
+            if (t < 1) lbox[sgn * k + K] = lbox[sgn * k + K].unite(px);
+            if (t > 0) lbox[sgn * (k + 1) + K] = lbox[sgn * (k + 1) + K].unite(px);
+            return Split{(int8_t)(sgn * k), (int8_t)(sgn * std::min(k + 1, K)), t};
+        };
+        auto weightIn = [](const Split& s, int L) { return L == s.layer ? 1 - s.share : L == s.outer ? s.share : 0.0f; };
+        const int BW = B.width();
+        std::vector<Split> splits((size_t)BW * B.height());
+
+        // Deep input: every sample goes to the layers of its own depth, so what's hidden behind
+        // something out of focus is there to show through its blur (no dark or smeared halo
+        // around it). Each layer holds its samples composited front to back, and covers as much
+        // of the pixel as its samples do (a pixel with none is far away, as a flat one with no depth).
+        DeepPtr deep;
+        if (math != "direct" && params.flag("use_deep", true) && a.engine.isDeepSource(input(0), f)) deep = a.fetchDeep(input(0), B);
+        std::vector<Split> sampleSplit;
+        auto cocAt = [&](double D) {
+            if (std::fabs(D - F) <= dof / 2) D = F;
+            else D += D > F ? -dof / 2 : dof / 2;
+            return (float)std::clamp(size * (1 - F / D), -maxR, maxR);
+        };
+        if (deep) {
+            const int nc = deep->nch(), Z = deep->zi, ZB = deep->zbi;
+            sampleSplit.resize(deep->total());
+            for (int y = B.y1; y < B.y2; ++y)
+                for (int x = B.x1; x < B.x2; ++x) {
+                    if (!src->bounds.contains(x, y)) continue;
+                    const int n = deep->count(x, y);
+                    if (!n) {
+                        splits[(size_t)(y - B.y1) * BW + (x - B.x1)] = split(cocAt(1e30), x, y);
+                        continue;
+                    }
+                    const size_t first = deep->offsets[deep->pixelIndex(x, y)];
+                    const float* s = deep->sample(x, y);
+                    for (int k = 0; k < n; ++k, s += nc) {
+                        const double z = s[ZB] > s[Z] && std::isfinite(s[ZB]) ? 0.5 * (s[Z] + s[ZB]) : s[Z];
+                        sampleSplit[first + k] = split(cocAt(z > 0 && std::isfinite(z) ? z : 1e30), x, y);
+                    }
+                }
+        } else
+            for (int y = B.y1; y < B.y2; ++y)
+                for (int x = B.x1; x < B.x2; ++x) splits[(size_t)(y - B.y1) * BW + (x - B.x1)] = split(coc.at(x, y)[0], x, y);
+        const int dR = deep ? deep->ch("R") : -1, dG = deep ? deep->ch("G") : -1, dB = deep ? deep->ch("B") : -1, DA = deep ? deep->ai : -1;
+        // layer L's pixels (rgba premultiplied, coverage) over sb
+        auto fillLayer = [&](int L, const Box& sb, Buf& layer) {
+            for (int y = sb.y1; y < sb.y2; ++y)
+                for (int x = sb.x1; x < sb.x2; ++x) {
+                    if (!src->bounds.contains(x, y)) continue;
+                    const size_t i = (size_t)(y - B.y1) * BW + (x - B.x1);
+                    float* d = layer.at(x, y);
+                    const int n = deep ? deep->count(x, y) : 0;
+                    if (n) {
+                        const int nc = deep->nch();
+                        const size_t first = deep->offsets[deep->pixelIndex(x, y)];
+                        const float* s = deep->sample(x, y);
+                        float T = 1, open = 1;
+                        for (int k = 0; k < n; ++k, s += nc) {
+                            const float w = weightIn(sampleSplit[first + k], L);
+                            if (w <= 0) continue;
+                            float c[4] = {dR >= 0 ? s[dR] : 0.0f, dG >= 0 ? s[dG] : 0.0f, dB >= 0 ? s[dB] : 0.0f, std::clamp(s[DA], 0.0f, 1.0f)};
+                            boostHighlights(c, thr, gain);
+                            for (int q = 0; q < 4; ++q) d[q] += T * w * c[q];
+                            T *= 1 - w * c[3];
+                            open *= 1 - w;
+                        }
+                        d[4] = 1 - open;
+                        continue;
+                    }
+                    const float w = weightIn(splits[i], L);
+                    if (w <= 0) continue;
+                    d[4] = w;
+                    if (deep) continue;  // an empty deep pixel: only its coverage
+                    const float* s = src->px(x, y);
+                    d[0] = s[R];
+                    d[1] = s[G];
+                    d[2] = s[Bc];
+                    d[3] = A >= 0 ? s[A] : 1.0f;
+                    boostHighlights(d, thr, gain);
+                    for (int c = 0; c < 4; ++c) d[c] *= w;
+                }
+        };
         // far to near: +K ... 0 ... -K, each blurred and laid over the result. A fifth channel
         // carries coverage (how much of the frame each layer holds), composited like alpha: the
         // split layers' blurs do not quite sum back to whole, and dividing by it makes them so.
@@ -618,24 +691,7 @@ public:
             if (lb.pad(reach, reach).intersect(a.region).empty()) continue;
             Box sb = lb.intersect(B);
             Buf layer(sb, 5);
-            for (int y = sb.y1; y < sb.y2; ++y)
-                for (int x = sb.x1; x < sb.x2; ++x) {
-                    if (!src->bounds.contains(x, y)) continue;
-                    const size_t i = (size_t)(y - B.y1) * BW + (x - B.x1);
-                    float w = 0;
-                    if (L == layerOf[i]) w = 1 - share[i];
-                    else if (L == outerOf[i]) w = share[i];
-                    if (w <= 0) continue;
-                    const float* s = src->px(x, y);
-                    float* d = layer.at(x, y);
-                    d[0] = s[R];
-                    d[1] = s[G];
-                    d[2] = s[Bc];
-                    d[3] = A >= 0 ? s[A] : 1.0f;
-                    boostHighlights(d, thr, gain);
-                    for (int c = 0; c < 4; ++c) d[c] *= w;
-                    d[4] = w;
-                }
+            fillLayer(L, sb, layer);
             // only where this layer can reach: its pixels' box grown by its blur
             const Box ob = lb.pad(reach, reach).intersect(a.region);
             Buf blurred;

@@ -818,6 +818,25 @@ int main(int argc, char** argv) {
                                     n->params.data[tk].dump().c_str(), n->params.data.value("translate", json()).dump().c_str(),
                                     (int)typingInText(), ui.picker.active ? ui.picker.node.c_str() : "off");
         }
+        // STRATA_TEST_DEEPHOVER=<x>,<y>: rest the cursor on that pixel of the viewed (deep) node and
+        // print the samples the viewer lists for it; the screenshot shows the list.
+        bool deepHoverTest = false;
+        if (const char* th = std::getenv("STRATA_TEST_DEEPHOVER"); th && *th && !opt.screenshot.empty()) {
+            static int phase = 0, wait = 0;
+            deepHoverTest = phase < 2 && frameCount < 600;
+            if (phase == 0 && frameCount > 20 && !app.rendering() && gTestDeepHover.x >= 0) {
+                ImGui::GetIO().AddMousePosEvent(gTestDeepHover.x, gTestDeepHover.y);
+                if (ui.viewer.deepAsked && ++wait > 5) {
+                    const DeepPtr& d = ui.viewer.deepAt;
+                    const int n = d ? d->count(ui.viewer.deepX, ui.viewer.deepY) : -1;
+                    std::printf("DEEPHOVER %d,%d: %d samples", ui.viewer.deepX, ui.viewer.deepY, n);
+                    for (int k = 0; k < n; ++k) std::printf(" z=%g", d->sample(ui.viewer.deepX, ui.viewer.deepY)[k * d->nch() + d->zi]);
+                    std::printf("\n");
+                    std::fflush(stdout);
+                    phase = 1;
+                }
+            } else if (phase == 1 && ++wait > 12) phase = 2;  // (a few frames for the tooltip in the screenshot)
+        }
         // STRATA_TEST_VIEWERDRAG=<seconds>: drag the open Transform's centre handle steadily for that long
         // (a step every 16 ms, as a hand would), then let go; print how often the viewer got a new
         // image while dragging, at what scale, how stale each was, and how long the final one took.
@@ -1973,7 +1992,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !deepHoverTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

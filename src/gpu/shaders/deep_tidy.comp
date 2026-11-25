@@ -1,0 +1,179 @@
+// Deep sample tidying (core/Deep.cpp tidySamples, then dropHiddenSamples), one invocation a pixel.
+// Every pixel's depth boundaries are gathered and sorted; the depth slots are the volumes between
+// two neighbouring boundaries that some volume spans, and the samples that can't be split (hard
+// surfaces, volumes of infinite length) as they are. Each slot, front to back, gets the parts of
+// the samples that cover it, combined: "over" mixes them as fogs by density, "plus" adds them.
+// Pixel i's samples are [offs[i], offs[i+1]); it writes at most 3n samples from 3 * offs[i] and
+// their number to counts[i], using 8n floats of scratch from 8 * offs[i].
+#version 450
+layout(local_size_x = 64, local_size_y = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Off { uint offs[]; };
+layout(std430, set = 0, binding = 1) readonly buffer S { float s[]; };
+layout(std430, set = 0, binding = 2) readonly buffer F { uint flags[]; };   // 1: tidy this pixel
+layout(std430, set = 0, binding = 3) writeonly buffer O { float o[]; };
+layout(std430, set = 0, binding = 4) writeonly buffer C { uint counts[]; };
+layout(std430, set = 0, binding = 5) buffer W { float w[]; };              // scratch
+
+layout(push_constant) uniform P {
+    uint npix, nc;
+    int zi, zbi, ai;
+    int plus, drop;
+    uint width;
+} p;
+
+bool finiteF(float v) { return !isinf(v) && !isnan(v); }
+bool splittable(float z0, float z1) { return z1 > z0 && finiteF(z1 - z0); }
+// log(1 + x) and exp(x) - 1 without losing the small values: GLSL has neither, and a GPU's log and
+// exp near 1 aren't exact enough, so small arguments take the series.
+float log1pF(float x) {
+    if (abs(x) < 1e-3) return x * (1.0 - x * (0.5 - x * (1.0 / 3.0 - x * 0.25)));
+    return log(1.0 + x);
+}
+float expm1F(float x) {
+    if (abs(x) < 1e-3) return x * (1.0 + x * (0.5 + x * (1.0 / 6.0 + x / 24.0)));
+    return exp(x) - 1.0;
+}
+float partAlpha(float a, float t) {
+    if (a >= 1.0) return 1.0;
+    if (a <= 0.0) return 0.0;
+    if (t >= 1.0) return a;
+    return -expm1F(t * log1pF(-a));
+}
+
+// A slab's optical density, kept finite for opaque ones (as the CPU's).
+float density(float a) { return a >= 1.0 - 1e-7 ? -log(1e-7) : -log1pF(-a); }
+
+// key (a, b) before key (c, d)
+bool before(float a, float b, float c, float d) { return a < c || (a == c && b < d); }
+
+void main() {
+    uint i = gl_GlobalInvocationID.y * p.width + gl_GlobalInvocationID.x;
+    if (i >= p.npix) return;
+    const uint b = offs[i], n = offs[i + 1] - b, nc = p.nc;
+    const uint ob = 3u * b;
+    uint written = 0;
+    float Tacc = 1.0;
+    if (flags[i] == 0u || n == 0u) {
+        for (uint k = 0; k < n; ++k) {
+            for (uint c = 0; c < nc; ++c) o[(ob + k) * nc + c] = s[(b + k) * nc + c];
+            ++written;
+            if (p.drop != 0) {
+                Tacc *= 1.0 - clamp(s[(b + k) * nc + uint(p.ai)], 0.0, 1.0);
+                if (Tacc <= 1e-5) break;
+            }
+        }
+        counts[i] = written;
+        return;
+    }
+    // the boundaries, sorted, without repeats: w[cb .. cb + m)
+    const uint cb = 8u * b;
+    uint m = 0;
+    for (uint k = 0; k < 2u * n; ++k) {
+        float v = s[(b + k / 2u) * nc + uint((k & 1u) == 0u ? p.zi : p.zbi)];
+        uint j = m;
+        bool dup = false;
+        while (j > 0u && !(w[cb + j - 1u] < v)) {
+            if (w[cb + j - 1u] == v) { dup = true; break; }
+            --j;
+        }
+        if (dup) continue;
+        for (uint q = m; q > j; --q) w[cb + q] = w[cb + q - 1u];
+        w[cb + j] = v;
+        ++m;
+    }
+    // the slots, sorted, without repeats: pairs at w[kb .. kb + 2 nk)
+    const uint kb = cb + 2u * n;
+    uint nk = 0;
+    for (uint k = 0; k < n + m; ++k) {
+        float ka, kz;
+        if (k < n) {
+            ka = s[(b + k) * nc + uint(p.zi)];
+            kz = s[(b + k) * nc + uint(p.zbi)];
+            if (splittable(ka, kz)) continue;
+        } else {
+            uint j = k - n;
+            if (j + 1u >= m) continue;
+            ka = w[cb + j];
+            kz = w[cb + j + 1u];
+            bool spanned = false;
+            for (uint q = 0; q < n && !spanned; ++q) {
+                float z0 = s[(b + q) * nc + uint(p.zi)], z1 = s[(b + q) * nc + uint(p.zbi)];
+                spanned = splittable(z0, z1) && z0 <= ka && kz <= z1;
+            }
+            if (!spanned) continue;
+        }
+        uint j = nk;
+        bool dup = false;
+        while (j > 0u && !before(w[kb + 2u * (j - 1u)], w[kb + 2u * (j - 1u) + 1u], ka, kz)) {
+            if (w[kb + 2u * (j - 1u)] == ka && w[kb + 2u * (j - 1u) + 1u] == kz) { dup = true; break; }
+            --j;
+        }
+        if (dup) continue;
+        for (uint q = nk; q > j; --q) {
+            w[kb + 2u * q] = w[kb + 2u * (q - 1u)];
+            w[kb + 2u * q + 1u] = w[kb + 2u * (q - 1u) + 1u];
+        }
+        w[kb + 2u * j] = ka;
+        w[kb + 2u * j + 1u] = kz;
+        ++nk;
+    }
+    // each slot: the parts of the samples in it
+    for (uint j = 0; j < nk; ++j) {
+        const float ka = w[kb + 2u * j], kz = w[kb + 2u * j + 1u];
+        const bool slab = splittable(ka, kz);
+        // first pass: how many parts, their densities and transmission
+        uint cnt = 0, only = 0;
+        float onlyScale = 1.0, onlyAlpha = 0.0;
+        float U = 0.0, T = 1.0, asum = 0.0;
+        for (uint q = 0; q < n; ++q) {
+            float z0 = s[(b + q) * nc + uint(p.zi)], z1 = s[(b + q) * nc + uint(p.zbi)];
+            bool inside = slab ? (splittable(z0, z1) && z0 <= ka && kz <= z1) : (!splittable(z0, z1) && z0 == ka && z1 == kz);
+            if (!inside) continue;
+            float a = s[(b + q) * nc + uint(p.ai)], pa = a, k = 1.0;
+            if (slab) {
+                float t = (kz - ka) / (z1 - z0);
+                pa = partAlpha(a, t);
+                k = a > 0.0 ? pa / a : t;
+            }
+            if (cnt == 0u) { only = q; onlyScale = k; onlyAlpha = pa; }
+            ++cnt;
+            U += density(pa);
+            T *= 1.0 - clamp(pa, 0.0, 1.0);
+            asum += pa;
+        }
+        if (cnt == 0u) continue;
+        const uint d = (ob + written) * nc;
+        float alpha;
+        if (cnt == 1u) {
+            for (uint c = 0; c < nc; ++c) o[d + c] = s[(b + only) * nc + c] * onlyScale;
+            alpha = onlyAlpha;
+        } else {
+            alpha = p.plus != 0 ? min(1.0, asum) : 1.0 - T;
+            for (uint c = 0; c < nc; ++c) o[d + c] = 0.0;
+            for (uint q = 0; q < n; ++q) {
+                float z0 = s[(b + q) * nc + uint(p.zi)], z1 = s[(b + q) * nc + uint(p.zbi)];
+                bool inside = slab ? (splittable(z0, z1) && z0 <= ka && kz <= z1) : (!splittable(z0, z1) && z0 == ka && z1 == kz);
+                if (!inside) continue;
+                float a = s[(b + q) * nc + uint(p.ai)], pa = a, k = 1.0;
+                if (slab) {
+                    float t = (kz - ka) / (z1 - z0);
+                    pa = partAlpha(a, t);
+                    k = a > 0.0 ? pa / a : t;
+                }
+                // a part with no alpha only adds light; the others share the mix by density
+                float wt = p.plus != 0 ? 1.0 : (pa > 1e-9 ? (U > 0.0 ? density(pa) / U * alpha / pa : 0.0) : 1.0);
+                for (uint c = 0; c < nc; ++c) o[d + c] += s[(b + q) * nc + c] * k * wt;
+            }
+        }
+        o[d + uint(p.ai)] = alpha;
+        o[d + uint(p.zi)] = ka;
+        o[d + uint(p.zbi)] = kz;
+        ++written;
+        if (p.drop != 0) {
+            Tacc *= 1.0 - clamp(alpha, 0.0, 1.0);
+            if (Tacc <= 1e-5) break;
+        }
+    }
+    counts[i] = written;
+}

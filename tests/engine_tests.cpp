@@ -10129,18 +10129,26 @@ Connections:  {
         }
         // flattened, it is the ordinary render (but for antialiased edges)
         ImagePtr flat = render(*c, "SR"), f = render(*c, "F");
-        double worst = 0, worstFar = 0;
+        double worst = 0, worstFar = 0, edgeOff = 0;
         int edge = 0;
         for (int y = 0; y < 48; ++y)
             for (int x = 0; x < 64; ++x) {
                 double dd = 0;
                 for (const char* ch : {"R", "G", "B", "A"}) dd = std::max(dd, (double)std::fabs(px(flat, x, y, ch) - px(f, x, y, ch)));
                 if (dd > 1e-3) ++edge;
+                // where they differ (the near card's outline, its texture's filtered edge part
+                // transparent): deep has the blue card behind showing through, the flat render none
+                if (dd > 1e-3) edgeOff = std::max(edgeOff, std::fabs(px(f, x, y, "R") + px(f, x, y, "B") - 1.0) + std::fabs(px(f, x, y, "A") - 1.0));
+                if (dd > 1e-3 && std::getenv("STRATA_DEEP_DEBUG"))
+                    std::printf("    %d,%d flat %g %g %g %g deep %g %g %g %g\n", x, y, px(flat, x, y, "R"), px(flat, x, y, "G"), px(flat, x, y, "B"),
+                                px(flat, x, y, "A"), px(f, x, y, "R"), px(f, x, y, "G"), px(f, x, y, "B"), px(f, x, y, "A"));
                 worst = std::max(worst, dd);
                 if (px(flat, x, y, "R") == 0) worstFar = std::max(worstFar, std::fabs(1.0 - px(f, x, y, "A")));  // inner mesh edges don't show
             }
-        std::printf("  flat vs deep flattened: %d edge pixels differ (worst %.3f); far card alpha off by %.2g\n", edge, worst, worstFar);
-        CHECK(edge < 40);
+        std::printf("  flat vs deep flattened: %d edge pixels differ (worst %.3f, red over blue there within %.2g); far card alpha off by %.2g\n", edge,
+                    worst, edgeOff, worstFar);
+        CHECK(edge < 80);  // (the outline of the 22 x 16 pixel card)
+        CHECK(edgeOff < 1e-4);
         CHECK(worstFar < 1e-4);
         json si = c->find("DS")->info(e, 1);
         CHECK(si.value("samples", 0) == 2);
@@ -10150,6 +10158,140 @@ Connections:  {
         bool nearPoint = false;
         for (auto& q : pts->points) nearPoint = nearPoint || (std::fabs(q.z + 3) < 0.01 && std::fabs(q.x) < 0.05 && std::fabs(q.y) < 0.05);
         CHECK(nearPoint);
+    });
+    test("deep: ZDefocus blurs each sample at its own depth (the background shows through a blurred edge)", [&] {
+        // an opaque red square at 1 in front of an opaque green wall at 10, focused on the wall
+        json nodes = withNodes({deepSlab("Wall", {0, 1, 0, 1}, 10, 0),
+                                json::array({json{{"name", "Sq_r"}, {"type", "Rectangle"}, {"params", {{"area", {32, 16, 64, 48}}, {"color", {1, 0, 0, 1}}}}},
+                                             json{{"name", "Sq"}, {"type", "DeepFromImage"}, {"inputs", {"Sq_r"}}, {"params", {{"z_from", "constant"}, {"z", 1}}}},
+                                             json{{"name", "M"}, {"type", "DeepMerge"}, {"inputs", {"Wall", "Sq"}}},
+                                             json{{"name", "Flat"}, {"type", "DeepToImage"}, {"inputs", {"M"}}},
+                                             json{{"name", "ZD"}, {"type", "ZDefocus"}, {"inputs", {"M"}},
+                                                  {"params", {{"focus_plane", 10}, {"size", 8}, {"maximum", 8}}}},
+                                             json{{"name", "ZF"}, {"type", "ZDefocus"}, {"inputs", {"Flat"}},
+                                                  {"params", {{"focus_plane", 10}, {"size", 8}, {"maximum", 8}}}},
+                                             json{{"name", "ZS"}, {"type", "ZDefocus"}, {"inputs", {"Sq"}},
+                                                  {"params", {{"focus_plane", 10}, {"size", 8}, {"maximum", 8}}}},
+                                             json{{"name", "ZSF"}, {"type", "ZDefocus"}, {"inputs", {"Sq_flat"}},
+                                                  {"params", {{"focus_plane", 10}, {"size", 8}, {"maximum", 8}}}},
+                                             json{{"name", "Sq_flat"}, {"type", "DeepToImage"}, {"inputs", {"Sq"}}}})});
+        auto c = comp(nodes, 96, 64);
+        ImagePtr d = render(*c, "ZD"), f = render(*c, "ZF");
+        // two pixels inside the square's left edge: its blur is part transparent there
+        const double dg = px(d, 34, 32, "G"), dr = px(d, 34, 32, "R"), fg = px(f, 34, 32, "G");
+        std::printf("  inside the edge: deep R %.3f G %.3f A %.3f, flat G %.3f\n", dr, dg, px(d, 34, 32, "A"), fg);
+        CHECK(dg > 0.15);                          // the wall behind shows through
+        CHECK(fg < 0.05);                          // (flattened, there's no wall there to show)
+        CHECK(std::fabs(dr + dg - 1) < 0.08);      // and the two add up to the whole pixel
+        CHECK(std::fabs(px(d, 34, 32, "A") - 1) < 1e-3);
+        // far from the square: the wall as it is
+        CHECK(std::fabs(px(d, 4, 4, "G") - 1) < 1e-4 && std::fabs(px(d, 4, 4, "R")) < 1e-4);
+        // one sample a pixel (a flat image made deep): the same as the flat ZDefocus
+        ImagePtr s = render(*c, "ZS"), sf = render(*c, "ZSF");
+        double worst = 0;
+        for (size_t k = 0; k < s->data.size() && k < sf->data.size(); ++k) worst = std::max(worst, (double)std::fabs(s->data[k] - sf->data[k]));
+        std::printf("  single samples vs flat: max diff %.2g\n", worst);
+        CHECK(s->channels == sf->channels);
+        CHECK(worst < 1e-4);
+    });
+    test("deep GPU: flattening and tidying (DeepMerge) match the CPU", [&] {
+        if (!gpu::available()) {
+            std::printf("  (no GPU: %s)\n", gpu::status().c_str());
+            return;
+        }
+        // random pixels: hard surfaces, volumes (overlapping, touching, inside each other), shared
+        // depths, transparent and opaque samples, samples at infinity
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<float> U(0, 1);
+        const ChannelSet cs = deepChannelsOf(rgbaChannels());
+        DeepImage d(Box(0, 0, 61, 37), cs);
+        const int nc = d.nch();
+        std::vector<uint32_t> offs{0}, tidy;
+        std::vector<float> s;
+        const float inf = std::numeric_limits<float>::infinity();
+        for (int i = 0; i < 61 * 37; ++i) {
+            const int n = i % 11 == 0 ? 0 : (int)(U(rng) * (i % 7 == 0 ? 40 : 6));
+            for (int k = 0; k < n; ++k) {
+                std::vector<float> p(nc);
+                const float a = U(rng) < 0.1f ? 1.0f : U(rng) < 0.1f ? 0.0f : U(rng);
+                p[d.ai] = a;
+                for (const char* c : {"R", "G", "B"}) p[d.ch(c)] = U(rng) * std::max(a, 0.2f);
+                float z0 = std::floor(U(rng) * 8) * 0.5f + 1, z1 = z0;
+                const float r = U(rng);
+                if (r < 0.4f) z1 = z0 + std::floor(U(rng) * 6) * 0.5f + 0.25f;
+                else if (r < 0.45f) z0 = z1 = inf;
+                else if (r < 0.5f) z1 = inf;
+                p[d.zi] = z0;
+                p[d.zbi] = z1;
+                s.insert(s.end(), p.begin(), p.end());
+            }
+            offs.push_back((uint32_t)(s.size() / nc));
+            tidy.push_back(i % 5 == 0 ? 0 : 1);
+        }
+        for (int mode = 0; mode < 4; ++mode) {
+            const DeepCombine cm = mode & 1 ? DeepCombine::Plus : DeepCombine::Over;
+            const bool drop = mode & 2;
+            auto o1 = offs, o2 = offs;
+            auto s1 = s, s2 = s;
+            gpu::setRoute(gpu::RouteMode::Cpu);
+            tidyPixels(o1, s1, tidy, nc, d.zi, d.zbi, d.ai, cm, drop);
+            gpu::setRoute(gpu::RouteMode::Gpu);
+            const auto jobs = gpu::routedGpuJobs("deep_tidy");
+            tidyPixels(o2, s2, tidy, nc, d.zi, d.zbi, d.ai, cm, drop);
+            gpu::setRoute(gpu::RouteMode::Auto);
+            const bool used = gpu::routedGpuJobs("deep_tidy") > jobs;
+            double worst = 0;
+            if (o1 == o2 && std::getenv("STRATA_DEEP_DEBUG"))
+                for (size_t k = 0; k < s1.size(); ++k)
+                    if (std::fabs(s1[k] - s2[k]) > 1e-4) {
+                        size_t smp = k / nc, px = 0;
+                        while (o1[px + 1] <= smp) ++px;
+                        std::printf("    px %zu sample %zu ch %zu: cpu %g gpu %g; in:\n", px, smp - o1[px], k % nc, s1[k], s2[k]);
+                        for (uint32_t q = offs[px]; q < offs[px + 1]; ++q) {
+                            std::printf("     ");
+                            for (int c = 0; c < nc; ++c) std::printf(" %g", s[q * nc + c]);
+                            std::printf("\n");
+                        }
+                        std::printf("    cpu out:\n");
+                        for (uint32_t q = o1[px]; q < o1[px + 1]; ++q) {
+                            std::printf("     ");
+                            for (int c = 0; c < nc; ++c) std::printf(" %g/%g", s1[q * nc + c], s2[q * nc + c]);
+                            std::printf("\n");
+                        }
+                        break;
+                    }
+            if (o1 == o2)
+                for (size_t k = 0; k < s1.size(); ++k)
+                    if (!(s1[k] == s2[k])) worst = std::max(worst, std::isnan(s2[k]) ? 1e9 : (double)(std::fabs(s1[k] - s2[k]) / std::max(1.0f, std::fabs(s1[k]))));
+            std::printf("  tidy %s%s: %u samples in, %u out, same counts %d, max |cpu - gpu| %.2g, gpu used %d\n", cm == DeepCombine::Plus ? "plus" : "over",
+                        drop ? " + drop hidden" : "", offs.back(), o1.back(), o1 == o2, worst, used);
+            CHECK(used);
+            CHECK(o1 == o2);
+            CHECK(worst < 1e-4);
+        }
+        // flatten: the tidy image, whole and through a region larger than it
+        auto o = offs;
+        auto ss = s;
+        gpu::setRoute(gpu::RouteMode::Cpu);
+        tidyPixels(o, ss, tidy, nc, d.zi, d.zbi, d.ai, DeepCombine::Over, false);
+        d.offsets = o;
+        d.samples = ss;
+        for (Box b : {d.bounds, Box(-5, 3, 70, 30)})
+            for (DeepDepthOut dm : {DeepDepthOut::InverseZ, DeepDepthOut::Z}) {
+                Image f1(b, flatChannelsOf(cs)), f2(b, flatChannelsOf(cs));
+                gpu::setRoute(gpu::RouteMode::Cpu);
+                flattenDeep(d, f1, dm);
+                gpu::setRoute(gpu::RouteMode::Gpu);
+                const auto jobs = gpu::routedGpuJobs("deep_flatten");
+                flattenDeep(d, f2, dm);
+                gpu::setRoute(gpu::RouteMode::Auto);
+                double worst = 0;
+                for (size_t k = 0; k < f1.data.size(); ++k)
+                    if (!(f1.data[k] == f2.data[k])) worst = std::max(worst, (double)(std::fabs(f1.data[k] - f2.data[k]) / std::max(1.0f, std::fabs(f1.data[k]))));
+                std::printf("  flatten %dx%d: max |cpu - gpu| %.2g\n", b.width(), b.height(), worst);
+                CHECK(gpu::routedGpuJobs("deep_flatten") > jobs);
+                CHECK(worst < 1e-5);
+            }
     });
     std::printf("\n%d checks, %d failed\n", g_checks, g_failed);
     return g_failed ? 1 : 0;

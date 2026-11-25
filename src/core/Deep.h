@@ -70,7 +70,8 @@ ChannelSet deepChannelsOf(const ChannelSet& flat);
 
 enum class DeepDepthOut { InverseZ, Z, None };
 
-// Composites each pixel's samples front to back into `out` (bounds and channels already set):
+// Composites each pixel's samples front to back into `out` (bounds and channels already set), on
+// the GPU when that's faster (with the CPU behind it):
 // a channel the deep image has is accumulated over (premultiplied colour, alpha by alpha);
 // "depth.Z" is the front depth of the nearest sample that isn't fully transparent, as 1/z (the
 // convention ScanlineRender and ZDefocus use) or as the distance. Pixels without samples are 0.
@@ -94,6 +95,13 @@ void tidySamples(std::vector<float>& s, int nc, int zi, int zbi, int ai, DeepCom
 
 // Removes the samples behind the point where the accumulated alpha reaches 1 (within 1e-5).
 void dropHiddenSamples(std::vector<float>& s, int nc, int ai);
+
+// Tidies many pixels at once (DeepMerge): pixel i's samples are [offs[i], offs[i+1]) of `s`, nc
+// floats each, and pixels with tidy[i] == 0 keep theirs as they are. With `drop`, the hidden samples
+// go too (dropHiddenSamples). Runs on the GPU when that's faster, else (or when the GPU call fails)
+// on the CPU; offs and s are replaced by the result.
+void tidyPixels(std::vector<uint32_t>& offs, std::vector<float>& s, const std::vector<uint32_t>& tidy, int nc, int zi, int zbi, int ai,
+                DeepCombine mode, bool drop);
 
 // The samples of `a` held out by `b`: every sample keeps a's channels and depth, its colour and
 // alpha scaled by how much of it shows through b (b in front absorbs; b at the same depth takes its

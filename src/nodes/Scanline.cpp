@@ -224,8 +224,9 @@ public:
         if (input(0)) c = unionChannels(c, e.channels(input(0), f));
         return deepChannelsOf(c);
     }
-    // Every surface covering part of a pixel, in front or hidden, becomes a sample: its colour
-    // shaded at the middle of the part it covers, alpha scaled by that coverage, at its depth.
+    // Every surface covering part of a pixel, in front or hidden, becomes a sample: each of its
+    // triangles shaded at the middle of the part it covers (as the flat render), alpha scaled by
+    // the coverage, at its depth.
     // Triangles of one object meeting in a pixel at about the same depth (a mesh's neighbouring
     // faces) are one sample, so a mesh's inner edges don't show. The bg input, when connected, is
     // behind (at its depth.Z, or infinitely far). No motion blur in the samples.
@@ -237,9 +238,9 @@ public:
         auto P = cache_.get(key, [&] { return prepare(a, a.frame, a.frame, false); });
         const int n = std::clamp(samples(), 1, 8), ns = n * n;
         struct Frag {
-            int tri, mat, cnt;
-            float iz;  // 1 / depth at the first sample
-            double cx, cy;
+            int mat, cnt;
+            float iz;      // 1 / depth at the first part
+            float col[4];  // each triangle's part shaded at its middle, times its samples (as the flat render)
         };
         std::vector<std::vector<Frag>> px((size_t)w * h);
         for (int ti = 0; ti < (int)P->tris.size(); ++ti) {
@@ -265,18 +266,19 @@ public:
                     const double mx = cx / cnt, my = cy / cnt;
                     const float iz = (float)(t.z[0] * mx + t.z[1] * my + t.z[2]);
                     if (!(iz > 0)) continue;
+                    float c[4];
+                    shade(*P, t, mx, my, iz, fmode, c);
                     auto& L = px[(size_t)(y - R.y1) * w + (x - R.x1)];
                     // the same object at about the same depth: one surface
                     bool merged = false;
                     for (auto& f : L)
                         if (f.mat == t.mat && std::fabs(f.iz - iz) <= 0.01f * std::max(f.iz, iz)) {
                             f.cnt += cnt;
-                            f.cx += cx;
-                            f.cy += cy;
+                            for (int k = 0; k < 4; ++k) f.col[k] += c[k] * cnt;
                             merged = true;
                             break;
                         }
-                    if (!merged) L.push_back({ti, t.mat, cnt, iz, cx, cy});
+                    if (!merged) L.push_back({t.mat, cnt, iz, {c[0] * cnt, c[1] * cnt, c[2] * cnt, c[3] * cnt}});
                 }
         }
         DeepPtr bg = input(0) ? a.fetchDeep(input(0), R) : nullptr;
@@ -293,16 +295,12 @@ public:
                 const int nb = bg ? bg->count(x, y) : 0;
                 float* d = out.newPixel((int)L.size() + nb);
                 for (auto& f : L) {
-                    const Tri& t = P->tris[f.tri];
-                    const double sx = f.cx / f.cnt, sy = f.cy / f.cnt;
-                    const double Z = t.z[0] * sx + t.z[1] * sy + t.z[2];
-                    float c[4];
-                    shade(*P, t, sx, sy, Z, fmode, c);
-                    const float cov = std::min(1.0f, (float)f.cnt / ns);
+                    // coverage-weighted: a surface over more than the pixel (overlapping parts) is capped at all of it
+                    const float k1 = f.cnt > ns ? 1.0f / f.cnt : 1.0f / ns;
                     std::fill(d, d + on, 0.0f);
                     for (int k = 0; k < 4; ++k)
-                        if (oc[k] >= 0) d[oc[k]] = c[k] * cov;
-                    d[out.zi] = d[out.zbi] = (float)(1.0 / std::max(Z, 1e-12));
+                        if (oc[k] >= 0) d[oc[k]] = f.col[k] * k1;
+                    d[out.zi] = d[out.zbi] = (float)(1.0 / std::max((double)f.iz, 1e-12));
                     d += on;
                 }
                 if (nb) {

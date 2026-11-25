@@ -6,6 +6,8 @@
 #include <limits>
 #include <numeric>
 
+#include "../gpu/Gpu.h"
+
 namespace strata {
 
 DeepImage::DeepImage(const Box& b, ChannelSet cs) : bounds(b), channels(std::move(cs)) {
@@ -105,8 +107,51 @@ ChannelSet deepChannelsOf(const ChannelSet& flat) {
     return r;
 }
 
+static void flattenCpu(const DeepImage& src, Image& out, const Box& r, const std::vector<int>& map, int dz, DeepDepthOut depth);
+
+namespace {
+
+// The work groups for one invocation an element, 64 to a group.
+void groupsFor(size_t count, gpu::Dispatch& d, uint32_t& width) {
+    const uint32_t groups = (uint32_t)((count + 63) / 64);
+    d.gx = std::max<uint32_t>(1, std::min<uint32_t>(groups, 65535));
+    d.gy = std::max<uint32_t>(1, (groups + d.gx - 1) / d.gx);
+    width = d.gx * 64;
+}
+
+// flattenDeep on the GPU (deep_flatten.comp), over region r (inside both images).
+bool flattenGpu(const DeepImage& src, Image& out, const Box& r, const std::vector<int>& map, int dz, DeepDepthOut depth) {
+    const int on = out.nch();
+    const size_t count = (size_t)r.area();
+    if (src.samples.empty() || !src.finished()) return false;
+    struct Push {
+        int rx1, ry1, rw, rh, sx1, sy1, sw, on, sn, ai, zi, dz, depthMode;
+        uint32_t width;
+    } pc{r.x1, r.y1, r.width(), r.height(), src.bounds.x1, src.bounds.y1, src.bounds.width(), on, src.nch(), src.ai, src.zi, dz,
+         depth == DeepDepthOut::Z ? 1 : 0, 0};
+    gpu::Dispatch d;
+    groupsFor(count, d, pc.width);
+    std::memcpy(d.push, &pc, sizeof pc);
+    const bool whole = r == out.bounds;
+    std::vector<float> tmp;
+    if (!whole) tmp.resize(count * on);
+    float* dst = whole ? out.data.data() : tmp.data();
+    if (!gpu::runSequence("deep_flatten",
+                          {{src.offsets.data(), nullptr, src.offsets.size() * sizeof(uint32_t)},
+                           {src.samples.data(), nullptr, src.samples.size() * sizeof(float)},
+                           {map.data(), nullptr, map.size() * sizeof(int)},
+                           {nullptr, dst, count * on * sizeof(float)}},
+                          {d}))
+        return false;
+    if (!whole)
+        for (int y = r.y1; y < r.y2; ++y)
+            std::memcpy(out.px(r.x1, y), tmp.data() + (size_t)(y - r.y1) * r.width() * on, sizeof(float) * r.width() * on);
+    return true;
+}
+
+}  // namespace
+
 void flattenDeep(const DeepImage& src, Image& out, DeepDepthOut depth) {
-    std::fill(out.data.begin(), out.data.end(), 0.0f);
     const int on = out.nch(), sn = src.nch();
     std::vector<int> map(on, -1);
     int dz = -1;
@@ -118,6 +163,19 @@ void flattenDeep(const DeepImage& src, Image& out, DeepDepthOut depth) {
         map[c] = src.ch(out.channels[c]);
     }
     const Box r = out.bounds.intersect(src.bounds);
+    std::fill(out.data.begin(), out.data.end(), 0.0f);
+    if (r.area() <= 0 || on <= 0) return;
+    gpu::Routed rt("deep_flatten", 0, src.total() * sn + (size_t)r.area() * on);
+    const bool onGpu = rt.gpu() && flattenGpu(src, out, r, map, dz, depth);
+    if (!onGpu) {
+        if (rt.gpu()) std::fill(out.data.begin(), out.data.end(), 0.0f);  // a failed GPU call may have written some
+        flattenCpu(src, out, r, map, dz, depth);
+    }
+    rt.done(onGpu);
+}
+
+static void flattenCpu(const DeepImage& src, Image& out, const Box& r, const std::vector<int>& map, int dz, DeepDepthOut depth) {
+    const int on = out.nch(), sn = src.nch();
     const int A = src.ai, Z = src.zi;
     for (int y = r.y1; y < r.y2; ++y) {
         for (int x = r.x1; x < r.x2; ++x) {
@@ -307,6 +365,79 @@ void dropHiddenSamples(std::vector<float>& s, int nc, int ai) {
             return;
         }
     }
+}
+
+namespace {
+
+// tidyPixels on the GPU (deep_tidy.comp). False: too big for it, or the call failed.
+bool tidyGpu(std::vector<uint32_t>& offs, std::vector<float>& s, const std::vector<uint32_t>& tidy, int nc, int zi, int zbi, int ai,
+             DeepCombine mode, bool drop) {
+    const size_t npix = offs.size() - 1, total = offs.back();
+    uint32_t maxN = 0;
+    for (size_t i = 0; i < npix; ++i) maxN = std::max(maxN, offs[i + 1] - offs[i]);
+    // the kernel's work grows with the square of a pixel's samples, and every index is 32 bits
+    if (total == 0 || maxN > 512 || (double)total * 3 * nc >= 4.0e9 || (double)total * (3 * nc + 8) * 4 > 1.0e9) return false;
+    std::vector<float> out(total * 3 * nc);
+    std::vector<uint32_t> counts(npix);
+    struct Push {
+        uint32_t npix, nc;
+        int zi, zbi, ai, plus, drop;
+        uint32_t width;
+    } pc{(uint32_t)npix, (uint32_t)nc, zi, zbi, ai, mode == DeepCombine::Plus ? 1 : 0, drop ? 1 : 0, 0};
+    gpu::Dispatch d;
+    groupsFor(npix, d, pc.width);
+    std::memcpy(d.push, &pc, sizeof pc);
+    if (!gpu::runSequence("deep_tidy",
+                          {{offs.data(), nullptr, offs.size() * sizeof(uint32_t)},
+                           {s.data(), nullptr, s.size() * sizeof(float)},
+                           {tidy.data(), nullptr, tidy.size() * sizeof(uint32_t)},
+                           {nullptr, out.data(), out.size() * sizeof(float)},
+                           {nullptr, counts.data(), counts.size() * sizeof(uint32_t)},
+                           {nullptr, nullptr, total * 8 * sizeof(float)}},
+                          {d}))
+        return false;
+    // close the gaps: pixel i's samples start at 3 offs[i]
+    std::vector<uint32_t> no(npix + 1, 0);
+    size_t at = 0;
+    for (size_t i = 0; i < npix; ++i) {
+        const uint32_t c = std::min(counts[i], 3 * (offs[i + 1] - offs[i]));
+        if (c) std::memmove(out.data() + at * nc, out.data() + (size_t)offs[i] * 3 * nc, sizeof(float) * c * nc);
+        at += c;
+        no[i + 1] = (uint32_t)at;
+    }
+    out.resize(at * nc);
+    offs.swap(no);
+    s.swap(out);
+    return true;
+}
+
+}  // namespace
+
+void tidyPixels(std::vector<uint32_t>& offs, std::vector<float>& s, const std::vector<uint32_t>& tidy, int nc, int zi, int zbi, int ai,
+                DeepCombine mode, bool drop) {
+    if (offs.size() < 2) return;
+    bool any = drop;
+    for (uint32_t t : tidy) any = any || t;
+    if (!any) return;
+    gpu::Routed rt("deep_tidy", (mode == DeepCombine::Plus ? 1 : 0) | (drop ? 2 : 0), s.size());
+    if (rt.gpu() && tidyGpu(offs, s, tidy, nc, zi, zbi, ai, mode, drop)) {
+        rt.done(true);
+        return;
+    }
+    const size_t npix = offs.size() - 1;
+    std::vector<uint32_t> no(npix + 1, 0);
+    std::vector<float> out, px;
+    out.reserve(s.size());
+    for (size_t i = 0; i < npix; ++i) {
+        px.assign(s.begin() + (size_t)offs[i] * nc, s.begin() + (size_t)offs[i + 1] * nc);
+        if (tidy[i]) tidySamples(px, nc, zi, zbi, ai, mode);
+        if (drop) dropHiddenSamples(px, nc, ai);
+        out.insert(out.end(), px.begin(), px.end());
+        no[i + 1] = (uint32_t)(out.size() / nc);
+    }
+    offs.swap(no);
+    s.swap(out);
+    rt.done(false);
 }
 
 void clipSamplesZ(std::vector<float>& s, int nc, int zi, int zbi, int ai, float zNear, float zFar, bool keepInside) {

@@ -101,6 +101,8 @@ public:
     DeepPtr renderDeepRegion(Node* n, double frame, const Box& box);
     // What requestDeep's images hold, following bypasses, groups and pass-throughs.
     ChannelSet deepChannels(Node* n, double frame);
+    // n gives deep samples of its own (not a flat image made deep): ZDefocus uses them.
+    bool isDeepSource(Node* n, double frame);
     // Every tile of `box` is in the RAM cache (renderRegion would be quick).
     bool isCached(Node* n, double frame, const Box& box);
 

@@ -1,0 +1,42 @@
+// Deep flattening (core/Deep.cpp flattenDeep): each pixel's samples composited front to back,
+// one invocation a pixel. The output is the region of the flat image that the deep image covers;
+// map[c] is the deep channel for output channel c (-1: none), dz the depth.Z channel (-1: none).
+#version 450
+layout(local_size_x = 64, local_size_y = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Off { uint offs[]; };   // pixels of the deep image + 1
+layout(std430, set = 0, binding = 1) readonly buffer S { float s[]; };       // samples, sn floats each
+layout(std430, set = 0, binding = 2) readonly buffer M { int map[]; };       // on entries
+layout(std430, set = 0, binding = 3) writeonly buffer O { float o[]; };      // rw * rh * on
+
+layout(push_constant) uniform P {
+    int rx1, ry1, rw, rh;   // the region (in image coordinates)
+    int sx1, sy1, sw;       // the deep image's bounds origin and width
+    int on, sn, ai, zi, dz;
+    int depthMode;          // 0: 1/z, 1: z
+    uint width;             // invocations to a row of work groups
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.y * p.width + gl_GlobalInvocationID.x;
+    if (i >= uint(p.rw * p.rh)) return;
+    int x = p.rx1 + int(i % uint(p.rw)), y = p.ry1 + int(i / uint(p.rw));
+    uint pix = uint((y - p.sy1) * p.sw + (x - p.sx1));
+    uint b = offs[pix], n = offs[pix + 1] - b;
+    uint ob = i * uint(p.on);
+    for (int c = 0; c < p.on; ++c) o[ob + c] = 0.0;
+    float T = 1.0;
+    bool haveZ = false;
+    for (uint k = 0; k < n && T > 0.0; ++k) {
+        uint sb = (b + k) * uint(p.sn);
+        for (int c = 0; c < p.on; ++c)
+            if (map[c] >= 0) o[ob + c] += T * s[sb + uint(map[c])];
+        float a = s[sb + uint(p.ai)];
+        if (p.dz >= 0 && !haveZ && a > 0.0) {
+            float z = s[sb + uint(p.zi)];
+            o[ob + p.dz] = p.depthMode == 1 ? z : (z > 0.0 && !isinf(z) && !isnan(z) ? 1.0 / z : 0.0);
+            haveZ = true;
+        }
+        T *= clamp(1.0 - a, 0.0, 1.0);
+    }
+}

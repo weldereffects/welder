@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <set>
 
 #include "GL.h"
@@ -230,6 +231,60 @@ void viewerProcessCombo(App& app) {
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Viewer transform (OCIO): %s, %s\nThe image is in %s", d.c_str(), view.c_str(),
                           color::workingOf(app.comp.get()).c_str());
+}
+
+ImVec2 gTestDeepHover(-1, -1);
+
+// A deep node's samples at full-resolution pixel (x, y): their number on the info bar, and the
+// list in a tooltip. They're rendered once the cursor has rested on the pixel for a moment.
+static void drawDeepReadout(App& app, ViewerState& v, int x, int y) {
+    const ViewResult& res = v.res;
+    const double now = ImGui::GetTime();
+    if (x != v.deepX || y != v.deepY || res.frame != v.deepFrame || res.content != v.deepContent || res.node != v.deepNode) {
+        v.deepX = x, v.deepY = y, v.deepFrame = res.frame, v.deepContent = res.content, v.deepNode = res.node;
+        v.deepSince = now;
+        v.deepAsked = false;
+        v.deepAt.reset();
+        return;
+    }
+    if (!v.deepAsked) {
+        if (now - v.deepSince < 0.3 || ImGui::IsAnyMouseDown()) return;
+        v.deepAsked = true;
+        v.deepAt = app.deepSamplesAt(res.node, x, y, res.frame);
+    }
+    if (!v.deepAt) return;
+    const DeepImage& d = *v.deepAt;
+    const int n = d.count(x, y);
+    ImGui::SameLine(0, 16);
+    ImGui::TextDisabled("deep: %d sample%s", n, n == 1 ? "" : "s");
+    if (!n) return;
+    const int R = d.ch("R"), G = d.ch("G"), B = d.ch("B");
+    ImGui::BeginTooltip();
+    ImGui::TextDisabled("%d deep sample%s at %d, %d (front to back)", n, n == 1 ? "" : "s", x, y);
+    if (ImGui::BeginTable("deep_samples", 7, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
+        for (const char* h : {"Z", "ZBack", "R", "G", "B", "A", "shows"}) ImGui::TableSetupColumn(h);
+        ImGui::TableHeadersRow();
+        const float* s = d.sample(x, y);
+        double T = 1;
+        const int shown = std::min(n, 32);
+        for (int k = 0; k < shown; ++k, s += d.nch()) {
+            const float a = s[d.ai];
+            const double vis = T * std::clamp((double)a, 0.0, 1.0);
+            T *= 1 - std::clamp((double)a, 0.0, 1.0);
+            const float vals[6] = {s[d.zi], s[d.zbi], R >= 0 ? s[R] : 0.0f, G >= 0 ? s[G] : 0.0f, B >= 0 ? s[B] : 0.0f, a};
+            ImGui::TableNextRow();
+            for (int c = 0; c < 6; ++c) {
+                ImGui::TableSetColumnIndex(c);
+                if (c < 2 && std::isinf(vals[c])) ImGui::TextUnformatted("inf");
+                else ImGui::Text(c < 2 ? "%.4g" : "%.4f", vals[c]);
+            }
+            ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%.1f%%", vis * 100);
+        }
+        ImGui::EndTable();
+    }
+    if (n > 32) ImGui::TextDisabled("... and %d more", n - 32);
+    ImGui::EndTooltip();
 }
 
 // Cryptomatte / focus picking: one click in the viewer, read from the node's input.
@@ -681,6 +736,10 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     auto toImage = [&](ImVec2 s) {
         return ImVec2(v.pan.x + (s.x - center.x) / v.zoom, v.pan.y - (s.y - center.y) / v.zoom);
     };
+    if (static const char* tdh = std::getenv("STRATA_TEST_DEEPHOVER"); tdh && *tdh) {
+        int tx = 0, ty = 0;
+        if (std::sscanf(tdh, "%d,%d", &tx, &ty) == 2) gTestDeepHover = toScreen(tx + 0.5, ty + 0.5);
+    }
 
     // Navigation: wheel zooms about the cursor, middle / alt+left drag pans.
     ImGuiIO& io = ImGui::GetIO();
@@ -958,6 +1017,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
                 ImGui::SameLine(0, 12);
                 ImGui::TextColored(cols[c], "%.5f", im.at(sx, sy, m[c]));
             }
+            if (v.deepReadout) drawDeepReadout(app, v, x, y);
         }
     }
     ImGui::Dummy(ImVec2(0, 0));
@@ -977,6 +1037,9 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ImGui::Checkbox("full resolution (no automatic downscale)", &v.fullRes);
         ImGui::Checkbox("overlays (shapes, handles, format, bbox)  [Q]", &v.overlays);
         ImGui::Checkbox("matte overlay  [M]", &v.matte);
+        ImGui::Checkbox("deep samples under the cursor", &v.deepReadout);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Viewing a deep node: rest the cursor on a pixel to list its samples (depth, colour, alpha).");
         bool paused = app.viewPaused;
         if (ImGui::Checkbox("pause updates  [P]", &paused)) app.viewPaused = paused;
         ImGui::EndPopup();

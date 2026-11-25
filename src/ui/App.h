@@ -422,6 +422,9 @@ public:
     bool samplePixels(const std::string& node, int input, const Box& box, double frame, float rgba[4]);
     // Every channel of `box` from a node (or its input), full resolution; null on failure.
     ImagePtr pickImage(const std::string& node, int input, const Box& box, double frame);
+    // The deep samples of a node at full-resolution pixel (x, y), rendered now (the viewer's
+    // readout); null when the node gives no deep samples of its own, or on failure.
+    DeepPtr deepSamplesAt(const std::string& node, int x, int y, double frame);
     // Range the timeline shows (its Global / Input / Custom menu): the project
     // range, the viewed node's input range, or the custom range.
     std::pair<double, double> visibleRange() const;
