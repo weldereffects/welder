@@ -1,6 +1,6 @@
-// A small TCP server on the loopback interface (127.0.0.1 only), for the
-// scripting API (core/ScriptApi.h): one connection at a time, messages are
-// lines of UTF-8 text. Linux, macOS and Windows (winsock).
+// A small TCP server on the loopback interface (127.0.0.1 only, unless asked otherwise), for
+// the scripting API (core/ScriptApi.h) and the MCP server (core/Mcp.h): messages are lines of
+// UTF-8 text (or HTTP, which is lines and then a body). Linux, macOS and Windows (winsock).
 #pragma once
 
 #include <memory>
@@ -17,9 +17,19 @@ public:
     // The next line, without its newline. False when the peer closed the connection or on an
     // error. Lines longer than maxBytes fail too (a client that isn't speaking the protocol).
     bool readLine(std::string& line, size_t maxBytes = size_t(256) << 20);
+    // Exactly n bytes (after what readLine has buffered). False when the peer is gone.
+    bool readBytes(std::string& out, size_t n);
     // Sends `line` and a newline. False when the peer is gone.
     bool writeLine(const std::string& line);
+    bool write(const std::string& bytes);
+    // Reads give up (fail) after ms milliseconds without data (0: wait forever).
+    void setTimeout(int ms);
     void close();
+    // Ends the connection from another thread (a read blocked in readLine returns false).
+    void shutdown();
+
+    // A connection to 127.0.0.1:port. Null (with *err) when nothing listens there.
+    static std::unique_ptr<LocalConnection> connect(int port, std::string* err);
 
 private:
     friend class LocalServer;
@@ -30,8 +40,9 @@ private:
 
 class LocalServer {
 public:
-    // Listens on 127.0.0.1 at a port the system picks. Null (with *err) on failure.
-    static std::unique_ptr<LocalServer> listen(std::string* err);
+    // Listens on 127.0.0.1 at `port` (0: one the system picks); with anyInterface, on every
+    // network interface (other machines can connect). Null (with *err) on failure.
+    static std::unique_ptr<LocalServer> listen(std::string* err, int port = 0, bool anyInterface = false);
     ~LocalServer();
     LocalServer(const LocalServer&) = delete;
     LocalServer& operator=(const LocalServer&) = delete;

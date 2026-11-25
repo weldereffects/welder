@@ -21,6 +21,7 @@ welder bench  shot.weld Write1 Grade1        # cold / cached / after-edit times 
 python3 tools/nk2strata.py shot.nk             # .nk script -> shot.weld
 welder nk shot.weld -o shot.nk                # and back: a Welder comp as a .nk script
 welder python build.py --comp shot.weld       # run a Python script that drives Welder (docs/PYTHON.md)
+welder mcp                                    # MCP server for AI assistants: Claude drives the editor (docs/MCP.md)
 ```
 
 Welder was called Strata while it was being built: `.strata` comps still open (new ones
@@ -82,6 +83,7 @@ Bug...** in Welder opens it). Say what you did, what happened and what you expec
 | Animation | Keyframes on any numeric parameter, with per-key interpolation (linear / smooth / constant / user tangents). |
 | OpenFX | OFX 1.4 host: plugin discovery (`OFX_PLUGIN_PATH`, standard dirs), filter / general / generator contexts, parameters (animated), regions of definition / interest, identity, temporal clip access, thread-safety levels, multithread / memory / message suites. Tested against the OpenFX sample plugins. |
 | Python | The `welder` module builds, edits, renders and inspects comps: nodes, knobs, keys, expressions, pixels as numpy arrays, Write renders, the editor's selection, frame and viewer. In the editor: Scripts › Script Editor (run, stop, output; each run one undo step), a Scripts menu from a folder of .py files, `init.py` at startup. On the command line: `welder python script.py`. Any Python 3.8+ (your own venv too); scripts run in their own process. See [docs/PYTHON.md](docs/PYTHON.md). |
+| AI assistants (MCP) | A built-in MCP server (Edit › Preferences › MCP server, off by default, 127.0.0.1 only, token-protected): Claude or another AI client makes and connects nodes, sets knobs and keys, renders, reads pixels and looks at PNG previews of any node. Each change is one undo step. `welder mcp` connects Claude Desktop / Claude Code to the editor; `welder mcp --headless` works without it. See [docs/MCP.md](docs/MCP.md). |
 | .nk import | `tools/nk2strata.py` parses .nk scripts (node stack, groups with their knobs, gizmos, clones, curves, expressions, backdrops) and maps ~40 node classes, including OFX nodes; it also turns the classic clipboard into nodes for pasting. The other way, copying in Welder puts the classic clipboard format on the clipboard, and `welder nk` writes comps as .nk scripts. Everything it can't translate is listed in a report. See [docs/NK_IMPORT.md](docs/NK_IMPORT.md). |
 
 ## Build

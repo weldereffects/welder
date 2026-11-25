@@ -191,14 +191,15 @@ commands are `app.info`, `message`, `comp.open`, `comp.new`, `comp.save`, `comp.
 `comp.set`, `comp.nodes`, `comp.types`, `node.create`, `node.delete`, `node.rename`,
 `node.info`, `node.set_input`, `node.set_position`, `knob.list`, `knob.get`, `knob.set`,
 `knob.set_key`, `knob.set_expression`, `knob.keys`, `knob.clear_animation`, `render.info`,
-`render.sample`, `render.image`, `render.write` and `batch`, and in the editor `editor.selected`,
-`editor.select`, `editor.frame`, `editor.set_frame`, `editor.view`, `editor.viewed`,
-`editor.show_panel` and `editor.watch`, `node.add_button` and `node.remove_button`, and
-`events.next` (waits up to `timeout` seconds for the next event a watch asked for; `null` when
-none came); `src/core/ScriptApi.cpp` and `src/ui/ScriptRunner.cpp` have their
+`render.sample`, `render.image`, `render.png` (a small sRGB preview, base64), `render.write` and
+`batch`, and in the editor `editor.selected`, `editor.select`, `editor.frame`,
+`editor.set_frame`, `editor.view`, `editor.viewed`, `editor.show_panel` (and `editor.undo` /
+`editor.redo`, for the [MCP server](MCP.md)) and `editor.watch`, `node.add_button` and
+`node.remove_button`, and `events.next` (waits up to `timeout` seconds for the next event a
+watch asked for; `null` when none came); `src/core/ScriptApi.cpp` and `src/ui/ScriptRunner.cpp` have their
 arguments. The editor passes the address in a file rather than in the environment
 (`tools/python/_welder_run.py`), so the token never shows on a command line.
 
-## Coming next
+## AI assistants
 
-An MCP server, so AI assistants can drive Welder through the same commands.
+The [MCP server](MCP.md) lets AI assistants drive Welder through the same commands.

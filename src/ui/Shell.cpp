@@ -11,7 +11,9 @@
 #include <sstream>
 
 #include "Panels.h"
+#include "McpService.h"
 #include "ScriptRunner.h"
+#include "core/Mcp.h"
 #include "core/NetPath.h"
 #include "PanelKit.h"
 #include "core/CacheDir.h"
@@ -1020,6 +1022,79 @@ static void drawPreferences(App& app, UiState& ui) {
         if (kit::checkbox("Run init.py at startup", &app.runInitScript,
                           ("Run " + (fs::path(brand::configDir()) / "init.py").string() + " when Welder starts, if it exists").c_str()))
             app.saveSettings();
+    }
+    ImGui::SeparatorText("MCP server");
+    {
+        McpService& mcpS = McpService::instance();
+        const bool byEnv = std::getenv("WELDER_MCP_PORT") && *std::getenv("WELDER_MCP_PORT");
+        bool on = app.mcpEnabled || byEnv;
+        ImGui::BeginDisabled(byEnv);
+        if (kit::checkbox("Let AI clients drive Welder", &on,
+                          "Runs an MCP (Model Context Protocol) server, so Claude or another AI client can build and change\n"
+                          "the open comp: make and connect nodes, set knobs, render, and look at the result. Every change it\n"
+                          "makes is one undo step. It answers on this computer only (127.0.0.1), to clients that have the token.")) {
+            app.mcpEnabled = on;
+            app.saveSettings();
+            mcpS.apply(app);
+        }
+        ImGui::EndDisabled();
+        if (byEnv) ImGui::TextDisabled("(on: WELDER_MCP_PORT is set)");
+        ImGui::BeginDisabled(!on);
+        kit::rowLabel("port", "The server's port on 127.0.0.1 (9471 unless something else uses it)");
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7);
+        int port = app.mcpPort;
+        if (ImGui::InputInt("##mcpport", &port, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue) && port > 0 && port < 65536 && port != app.mcpPort) {
+            app.mcpPort = port;
+            app.saveSettings();
+            mcpS.apply(app);
+        }
+        if (kit::checkbox("Allow other computers", &app.mcpAllowRemote,
+                          "Listen on every network interface, so a client on another machine can connect (with the token).\n"
+                          "The connection is plain HTTP: use it on a network you trust only.")) {
+            app.saveSettings();
+            mcpS.apply(app);
+        }
+        if (mcpS.running())
+            ImGui::TextDisabled("listening on http://127.0.0.1:%d/mcp  (%llu requests)", mcpS.port(), (unsigned long long)mcpS.requests());
+        else if (!mcpS.error().empty())
+            ImGui::TextColored(ImVec4(1, 0.45f, 0.4f, 1), "can't start: %s", mcpS.error().c_str());
+        else
+            ImGui::TextDisabled("off");
+#ifdef _WIN32
+        const std::string cli = (platform::executableDir() / "welder.exe").string();
+#else
+        const std::string cli = (platform::executableDir() / "welder").string();
+#endif
+        auto quoted = [](const std::string& s) { return "\"" + s + "\""; };
+        if (ImGui::Button("Copy Claude Code command")) {
+            ImGui::SetClipboardText(("claude mcp add welder -- " + quoted(cli) + " mcp").c_str());
+            app.message("copied: paste it into a terminal");
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("claude mcp add welder -- \"%s\" mcp\n(welder mcp passes the client's calls on to this editor)", cli.c_str());
+        ImGui::SameLine();
+        if (ImGui::Button("Copy Claude Desktop config")) {
+            json cfg = {{"mcpServers", {{"welder", {{"command", cli}, {"args", {"mcp"}}}}}}};
+            ImGui::SetClipboardText(cfg.dump(2).c_str());
+            app.message("copied: add it to claude_desktop_config.json (Claude > Settings > Developer > Edit Config)");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Copy HTTP address and token")) {
+            const std::string url = "http://127.0.0.1:" + std::to_string(mcpS.running() ? mcpS.port() : app.mcpPort) + "/mcp";
+            ImGui::SetClipboardText(("claude mcp add --transport http welder " + url + " --header \"Authorization: Bearer " +
+                                     mcp::loadToken() + "\"").c_str());
+            app.message("copied: the server's address and token (keep the token to yourself)");
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("For clients that connect over HTTP themselves: the address and the\n"
+                              "\"Authorization: Bearer <token>\" header they must send");
+        ImGui::SameLine();
+        if (ImGui::Button("New token")) {
+            mcp::renewToken();
+            mcpS.restart(app);
+            app.message("MCP server: a new token (HTTP clients set up with the old one must be given it)");
+        }
+        ImGui::EndDisabled();
     }
     ImGui::SeparatorText("Updates");
     ImGui::BeginDisabled(update::disabledByEnv());

@@ -26,6 +26,7 @@
 
 #include "GL.h"
 #include "Panels.h"
+#include "McpService.h"
 #include "ScriptRunner.h"
 #include "nodes/Scene3D.h"
 #include "Tablet.h"
@@ -457,6 +458,8 @@ int main(int argc, char** argv) {
     if (opt.smoke) smoke::start(opt.smokeItems);
     if (!opt.callbacksScript.empty()) ui::ScriptRunner::callbacks().restart(app, opt.callbacksScript);
     else if (interactive && !opt.smoke && opt.runScript.empty()) ui::ScriptRunner::callbacks().runStartup(app);  // <config>/init.py
+    if ((opt.screenshot.empty() && !opt.smoke) || std::getenv("WELDER_MCP_PORT"))
+        ui::McpService::instance().apply(app);  // (if Preferences turned it on)
     bool scriptStarted = false;  // --run-script
     ui.updateAutoCheck = interactive && !opt.smoke;  // (Shell.cpp: at most every 12 hours, if allowed)
     if (const char* tr = std::getenv("STRATA_TEST_RECOVERY"); tr && *tr && !opt.screenshot.empty())  // screenshots: the offer
@@ -515,7 +518,7 @@ int main(int argc, char** argv) {
         // when something must advance every frame.
         // Keys pressed faster than frames are trickled in one per frame by ImGui; keep
         // polling while any are queued so a burst of hotkeys is never held back.
-        if (app.playing || app.editsPending() || ui::ScriptRunner::instance().running() || ui::ScriptRunner::callbacks().needsFrames() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
+        if (app.playing || app.editsPending() || ui::ScriptRunner::instance().running() || ui::ScriptRunner::callbacks().needsFrames() || ui::McpService::instance().busy() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
             glfwPollEvents();
         else glfwWaitEventsTimeout(app.rendering() ? 0.05 : 0.5);
         const auto frameWorkStart = std::chrono::steady_clock::now();  // (WELDER_DEBUG_FRAMES)
@@ -1846,6 +1849,7 @@ int main(int argc, char** argv) {
         app.setGesture(ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle));
         app.applyEdits();
         ui::ScriptRunner::instance().pump(app);  // a Python script's requests (ScriptRunner.h)
+        ui::McpService::instance().pump(app);    // an AI client's tool calls (McpService.h)
         ui::ScriptRunner::callbacks().pump(app, !ui::ScriptRunner::instance().running());  // init.py's callbacks
         // (--callbacks-script: the script runs once the callbacks are registered and waiting)
         const bool callbacksReady = opt.callbacksScript.empty() || !ui::ScriptRunner::callbacks().running() || ui::ScriptRunner::callbacks().idle();
@@ -2044,6 +2048,7 @@ int main(int argc, char** argv) {
     startupDone();
     ui::ScriptRunner::instance().shutdown(app);  // a script still running is stopped
     ui::ScriptRunner::callbacks().shutdown(app);
+    ui::McpService::instance().shutdown();
     ml::releaseWorker();  // the last Welder to quit stops the ML worker (it holds the models' memory)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
