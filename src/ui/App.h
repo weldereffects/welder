@@ -149,6 +149,8 @@ public:
     void edit(std::function<void(Comp&)> fn);
     // Bumps each time queued edits are applied (with the comp's address, a cheap "has the script changed").
     uint64_t compRevision() const { return compRevision_; }
+    uint64_t compLoads = 0;   // bumps when a comp is opened or a new one started (Python callbacks)
+    uint64_t compSaves = 0;   // bumps on each save
     // Record the current state for undo (call at the start of a gesture).
     void checkpoint();
     // The same in two halves, for changes that come in over time (a Python script): the state

@@ -7,7 +7,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(std430, set = 0, binding = 0) readonly buffer Src { float src[]; };
 layout(std430, set = 0, binding = 1) readonly buffer Map { int chmap[]; };  // output channel -> source channel (-1: none)
-layout(std430, set = 0, binding = 2) writeonly buffer Dst { float dst[]; };
+layout(std430, set = 0, binding = 2) buffer Dst { float dst[]; };
 
 layout(push_constant) uniform P {
     double m[9];       // the matrix, row by row (positions in double, as on the CPU)
@@ -17,7 +17,9 @@ layout(push_constant) uniform P {
     float B, C;
     int lobes;
     float footX, footY; // the filter's stretch (affine); < 0: per pixel (perspective)
-    int flags;         // 1 clamp negative lobes, 2 black outside
+    int flags;         // 1 clamp negative lobes, 2 black outside, 4 add wt * the sample to dst
+                       // (motion blur: one dispatch per shutter sample), 8 the first of those
+    float wt;
 } p;
 
 const float PI = 3.14159265358979;
@@ -52,12 +54,24 @@ dvec2 apply(dvec2 q) {
     return dvec2(p.m[0] * q.x + p.m[1] * q.y + p.m[2], p.m[3] * q.x + p.m[4] * q.y + p.m[5]) / w;
 }
 
+// write output value i: as it is, or (motion blur) weighted into the sum
+void put(int i, float v) {
+    if ((p.flags & 4) == 0) {
+        dst[i] = v;
+        return;
+    }
+    precise float t = v * p.wt;
+    if ((p.flags & 8) != 0) dst[i] = 0.0 + t;
+    else dst[i] = dst[i] + t;
+}
+
 void main() {
     int ox = int(gl_GlobalInvocationID.x), oy = int(gl_GlobalInvocationID.y);
     if (ox >= p.ow || oy >= p.oh) return;
     const int n = p.on;
     int obase = (oy * p.ow + ox) * n;
-    for (int c = 0; c < n; ++c) dst[obase + c] = 0.0;
+    if ((p.flags & 4) == 0 || (p.flags & 8) != 0)
+        for (int c = 0; c < n; ++c) dst[obase + c] = 0.0;
     if (p.sw <= 0 || p.sh <= 0) return;
 
     dvec2 s = apply(dvec2(ox + 0.5, oy + 0.5));
@@ -80,7 +94,7 @@ void main() {
         int sbase = (iy * p.sw + ix) * p.sn;
         for (int c = 0; c < n; ++c) {
             int m = chmap[c];
-            dst[obase + c] = m >= 0 ? src[sbase + m] : 0.0;
+            put(obase + c, m >= 0 ? src[sbase + m] : 0.0);
         }
         return;
     }
@@ -150,6 +164,6 @@ void main() {
     for (int c = 0; c < nc; ++c) {
         float v = acc[c];
         if (doClamp && lo[c] <= hi[c]) v = clamp(v, lo[c], hi[c]);
-        dst[obase + c] = v;
+        put(obase + c, v);
     }
 }

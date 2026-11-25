@@ -65,8 +65,9 @@ public:
     static int protocolVersion() { return 1; }
     // What a command does, for hosts that run commands on more than one thread (the editor):
     // a read (no change), a render (reads, can take long), an edit of the comp, or a command
-    // that replaces the comp (comp.open, comp.new).
-    enum class Kind { Read, Render, Edit, Replace };
+    // that replaces the comp (comp.open, comp.new), or a wait for the editor's next event
+    // (events.next: Python callbacks).
+    enum class Kind { Read, Render, Edit, Replace, Wait };
     static Kind kind(const std::string& method);
 
 private:

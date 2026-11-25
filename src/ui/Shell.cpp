@@ -1223,8 +1223,10 @@ static void drawPreferences(App& app, UiState& ui) {
             app.saveSettings();
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Heavy nodes (Transform, CornerPin and others as they're added) run on the graphics card\n"
-                              "through Vulkan. Results match the CPU's. Off: everything on the CPU.");
+            ImGui::SetTooltip("Heavy nodes (Transform, CornerPin, Blur, Defocus, optical flow and others) run on the graphics\n"
+                              "card through Vulkan. Grade, Merge and the other per-pixel colour nodes go to the card when it\n"
+                              "times faster there than on the CPU (see Viewer > Performance). Results match the CPU's.\n"
+                              "Off: everything on the CPU.");
         ImGui::SameLine();
         const bool ok = gpu::available();
         ImGui::TextColored(ok ? ImVec4(0.55f, 0.85f, 0.5f, 1) : ImVec4(0.75f, 0.75f, 0.75f, 1), "%s", gpu::status().c_str());
@@ -1632,6 +1634,7 @@ static void drawPerformance(App& app, UiState& ui) {
     std::snprintf(b, sizeof b, "%.0f MB of %.0f free", platform::availableRamGB() * 1024, platform::physicalRamGB() * 1024);
     line("memory", b);
     line("GPU", gpu::status());
+    for (auto& r : gpu::routeSummary()) line("  CPU or GPU", r);  // what the router has measured (Gpu.h)
     line("disk cache", app.diskCache() ? "on" : "off");
 
     // ---- the viewer's last full render

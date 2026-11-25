@@ -533,7 +533,9 @@ private:
 //         "float"), compression (none rle zips zip piz pxr24 b44 b44a dwaa dwab),
 //         dwa_level, data_window ("format" | "bbox"), bit_depth ("default" | 8 |
 //         10 | 12 | 16 | "32 float"; DPX / TIFF / PNG), tiff_compression,
-//         raw (skip linear->sRGB for 8-bit formats), disable
+//         raw (skip linear->sRGB for 8-bit formats), disable; movies: codec, quality,
+//         and for h.264 / h.265 encoder, rate_control, bitrate, h264_profile /
+//         h265_profile, encoder_speed, keyframes
 class WriteNode : public Node {
 public:
     int identityInput(double) override { return 0; }
@@ -643,6 +645,12 @@ private:
             mo.codec = params.str("codec", "prores 422 hq");
             mo.fps = comp->fps;
             mo.quality = (int)params.num("quality", frame, 90);
+            mo.encoder = params.str("encoder", "auto");
+            mo.rate = params.str("rate_control", "quality");
+            mo.bitrate = params.num("bitrate", frame, 20);
+            mo.profile = mo.codec == "h.265" ? params.str("h265_profile", "main") : params.str("h264_profile", "high");
+            mo.speed = params.str("encoder_speed", "balanced");
+            mo.keyframes = (int)params.num("keyframes", frame, 0);
             movie_ = std::make_unique<movie::Writer>(p, fmt.width, fmt.height, alpha, mo);
         }
         try {

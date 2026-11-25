@@ -242,14 +242,33 @@ std::vector<NodeDef> build() {
                   When(Width(C("tiff_compression", "compression", "zip", {"none", "lzw", "zip", "packbits"}), 90), "@ext=tif|tiff"),
                   When(Width(C("codec", "codec", "prores 422 hq", {"prores 4444", "prores 4444 xq", "prores 422 hq", "prores 422",
                     "prores 422 lt", "prores 422 proxy", "dnxhr 444", "dnxhr hqx", "dnxhr hq", "dnxhr sq", "dnxhr lb",
-                    "mjpeg", "mpeg4", "ffv1", "png"}), 160), "@ext=mov|mxf|mkv|avi|mp4"),
-                  When(I("quality", "quality (mjpeg / mpeg4)", 90, 1, 100), "@ext=mov|mxf|mkv|avi|mp4"),
+                    "mjpeg", "mpeg4", "ffv1", "png", "h.264", "h.265"}), 160), "@ext=mov|mxf|mkv|avi|mp4"),
+                  When(Tip(Width(C("encoder", "encoder", "auto", {"auto", "nvenc", "amf", "media foundation", "vulkan"}), 140),
+                           "H.264 / H.265 use the GPU's own encoder. auto: the first that works here - NVIDIA NVENC, "
+                           "AMD AMF, then (Windows) Media Foundation, which also covers Intel, then Vulkan Video"),
+                       "@ext=mov|mkv|mp4 & codec=h.264|h.265"),
+                  When(Tip(Width(C("rate_control", "rate control", "quality", {"quality", "bitrate"}), 90),
+                           "quality: constant quality, the size follows the picture; bitrate: an average rate (for delivery specs)"),
+                       "@ext=mov|mkv|mp4 & codec=h.264|h.265"),
+                  When(Tip(I("quality", "quality", 90, 1, 100), "mjpeg / mpeg4 / h.264 / h.265: higher is better and bigger "
+                         "(h.264 / h.265: 90 is about QP 18, visually clean)"),
+                       "@ext=mov|mxf|mkv|avi|mp4 & rate_control=quality"),
+                  When(F("bitrate", "bitrate (Mbit/s)", 20, 1, 200), "@ext=mov|mkv|mp4 & codec=h.264|h.265 & rate_control=bitrate"),
+                  When(Width(C("h264_profile", "profile", "high", {"high", "main", "baseline"}), 90), "@ext=mov|mkv|mp4 & codec=h.264"),
+                  When(Tip(Width(C("h265_profile", "profile", "main", {"main", "main 10"}), 90),
+                           "main 10: 10-bit, less banding in gradients (NVENC, AMF and Vulkan; not Media Foundation)"),
+                       "@ext=mov|mkv|mp4 & codec=h.265"),
+                  When(Tip(Width(C("encoder_speed", "speed", "balanced", {"quality", "balanced", "fast"}), 90),
+                           "the encoder's preset: slower presets look better at the same size"),
+                       "@ext=mov|mkv|mp4 & codec=h.264|h.265"),
+                  When(Tip(I("keyframes", "keyframe every", 0, 0, 600), "frames from one keyframe to the next; 0: about two seconds. "
+                         "Smaller scrubs faster in editors, larger is smaller"), "@ext=mov|mkv|mp4 & codec=h.264|h.265"),
                   Div(""),
                   B("use_limit", "limit to range", false),
                   Same(EnableIf(Field(I("first", "", 1, -100000, 100000), 64), "use_limit=true"), true),
                   Same(EnableIf(Field(I("last", "", 100, -100000, 100000), 64), "use_limit=true"), true),
                   Btn("write_render", "Render", "Render this Write over the project range (or its limit)")},
-                 "Writes its input: EXR, DPX, TIFF, PNG, JPEG, TGA, BMP, HDR image sequences (#### or %04d in the name), or a movie (.mov .mp4 .mkv .avi .mxf). A new Write's file starts as the saved comp's name. Render with Render > Render All Writes."});
+                 "Writes its input: EXR, DPX, TIFF, PNG, JPEG, TGA, BMP, HDR image sequences (#### or %04d in the name), or a movie (.mov .mp4 .mkv .avi .mxf; H.264 / H.265 through the GPU's encoder). A new Write's file starts as the saved comp's name. Render with Render > Render All Writes."});
     // ---------------------------------------------------------------- Value (numbers that drive exposed knobs)
     d.push_back({"Value", "Value", {InfoRow("signal", "signal"), F("value", "value", 0.5, 0, 1, "Any number (type past the slider's range); animate it like any knob")},
                  "A number for exposed knobs (right-click a knob > Expose as input)."});

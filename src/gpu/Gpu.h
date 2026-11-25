@@ -67,4 +67,39 @@ struct Stats {
 };
 Stats stats();
 
+// CPU or GPU, for jobs that only sometimes pay for the trip to the card: cheap per-pixel maths on a
+// tile (Grade, Merge, ...), where uploading and reading back can cost more than the sums. Each kind of
+// job is timed both ways at first; after that it goes to the side that was faster per element, and
+// now and then tries the other again (tile sizes, the comp and the machine's load change).
+// STRATA_GPU_ROUTE=gpu / cpu (or setRoute) forces one side, for tests and benchmarks.
+enum class RouteMode { Auto, Gpu, Cpu };
+void setRoute(RouteMode m);
+RouteMode route();
+
+class Routed {
+public:
+    // `name`: the kind of job (a string literal: it's kept); `variant`: what makes its cost differ
+    // (a gamma or not, the merge operation, ...); `work`: the elements (pixels x channels).
+    Routed(const char* name, uint64_t variant, size_t work);
+    // Try the GPU for this one? (False when there's no GPU.)
+    bool gpu() const { return gpu_; }
+    // The job ran: on the GPU (true), or on the CPU (after gpu() said no, or the GPU call failed:
+    // then it isn't timed, the failed attempt is in the time).
+    void done(bool onGpu);
+
+private:
+    const char* name_;
+    uint64_t variant_;
+    size_t work_;
+    bool gpu_ = false;
+    double t0_ = 0;
+};
+
+// What the router has learnt: one line per kind of job, e.g. "grade/1: GPU 0.21 ms, CPU 2.3 ms
+// a tile (GPU 11x), 412 jobs on the GPU, 3 on the CPU". For the Performance panel and gpu-bench.
+std::vector<std::string> routeSummary();
+void resetRoutes();
+// Jobs of this kind that ran on the GPU so far (tests).
+uint64_t routedGpuJobs(const std::string& name);
+
 }  // namespace strata::gpu

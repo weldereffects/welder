@@ -47,10 +47,72 @@ and colours, strings for files and choices.
   subfolder, plus the folders in `WELDER_SCRIPT_PATH` (separated by `:`, or `;` on Windows).
   Files whose names start with `_` are left out, so they can be modules the others import.
 * **`init.py`** in the settings folder runs when the editor starts (Edit › Preferences › Python
-  turns that off).
+  turns that off). It is where callbacks live (below). **Scripts › Edit init.py** opens it in the
+  Script Editor (with an example when there is none yet).
 * **Which Python**: Edit › Preferences › Python (a venv's python works), else `$WELDER_PYTHON`,
   else the one that comes with Welder, else `python3` from `PATH`.
 * `welder_ui shot.weld --run-script setup.py` runs a script once the comp is open.
+
+## Callbacks
+
+`init.py` registers handlers with `welder.on()`, then calls `welder.run_callbacks()`, and stays
+connected: each handler runs when its event happens in the editor.
+
+```python
+import welder
+
+@welder.on("knob_changed", type="Grade", knob="mix")
+def mix_changed(event):
+    event.node["label"] = "mix %g" % event.value
+
+@welder.on("node_created", type="Write")
+def new_write(event):
+    event.node["file"] = "render/" + event.node.name + ".####.exr"
+
+@welder.on("comp_saved")
+def saved(event):
+    print("saved", event.path)
+
+welder.run_callbacks()
+```
+
+| Event | The event's fields |
+|---|---|
+| `comp_opened` | `path` (`None` for File › New) |
+| `comp_saved` | `path` |
+| `knob_changed` | `node`, `type`, `knob` (a Knob), `value` (as stored in the comp now) |
+| `node_created`, `node_deleted` | `node`, `type` |
+| `frame_changed` | `frame` |
+| `selection_changed` | `nodes` |
+
+* `welder.on(event, fn=None, node=None, knob=None, type=None)`: `node=` / `type=` keep one node's
+  or one node type's events, `knob=` one knob's. Works as a decorator.
+* **Each callback is one undo step**, and the changes a callback makes don't set off callbacks of
+  their own. Callbacks run between scripts, never during one: what a script changes sets them off
+  once it ends.
+* While a knob is dragged or frames play, a callback that can't keep up gets the latest change
+  only.
+* A handler that raises prints its traceback in the Script Editor's output; the others go on.
+* **Scripts › Restart Callbacks** runs `init.py` again (the Script Editor's **Save and Restart
+  Callbacks** does it after an edit); **Stop Callbacks** ends it. Only `init.py` gets events:
+  `welder.on()` in the Script Editor says so.
+
+## Python buttons on nodes
+
+A node can carry buttons that run Python, shown on its panel and saved with the comp. Add them on
+the panel's **Node** tab (**python buttons › + add**: a label and its code), or from a script:
+
+```python
+grade = welder.comp()["Grade1"]
+grade.add_button("Half", "import welder\nwelder.this_node()['mix'] = 0.5")
+grade.buttons()              # [{"label": "Half", "code": "..."}]
+grade.remove_button("Half")
+```
+
+In a button's code `welder.this_node()` is its node. A click runs like the Script Editor's Run:
+one undo step, with the output in the Script Editor.
+
+## While a script runs
 
 While a script edits the comp, the viewer waits; its renders run beside the editor without
 holding it up. A script can open another comp only when the open one has no unsaved changes.
@@ -68,6 +130,8 @@ holding it up. A script can open another comp only when the open one has no unsa
 | `welder.selected()`, `welder.select(nodes, add=False)` | The node graph's selection (editor only) |
 | `welder.frame()`, `welder.set_frame(f)` | The editor's current frame (editor only) |
 | `welder.view(node)`, `welder.viewed()`, `welder.show_panel(node)` | The active viewer, a properties panel (editor only) |
+| `welder.on(event, fn, node=, knob=, type=)`, `welder.run_callbacks()` | Callbacks (init.py; see above) |
+| `welder.this_node()` | The node whose Python button runs this code (else `None`) |
 
 **Comp**: `nodes(type=None, group=None)`, `node(name)` or `comp[name]`, `name in comp`,
 iteration, `create(type, name=None, inputs=(), position=None, group=None, **knobs)`,
@@ -77,7 +141,7 @@ iteration, `create(type, name=None, inputs=(), position=None, group=None, **knob
 
 **Node**: `name` (assign to rename), `type`, `group`, `inputs`, `input(i)`,
 `set_input(i, node_or_None)`, `connect_knob(knob, value_node)`, `outputs`, `position`,
-`disabled`, `delete()`, `knobs()`, `node[knob]` (a Knob), `node[knob] = value`, `info()`,
+`disabled`, `delete()`, `buttons()`, `add_button(label, code)`, `remove_button(label)`, `knobs()`, `node[knob]` (a Knob), `node[knob] = value`, `info()`,
 and pixels: `format(frame)`, `channels(frame)`, `sample(x, y, frame)` (a dict by channel; y
 counts up from the bottom row), `render(path, frame, box=None)` (.exr, .tif, .png, .npy...),
 `image(frame, box=None)` (a numpy array, height x width x channels, top row first, and the
@@ -131,12 +195,15 @@ commands are `app.info`, `message`, `comp.open`, `comp.new`, `comp.save`, `comp.
 `node.info`, `node.set_input`, `node.set_position`, `knob.list`, `knob.get`, `knob.set`,
 `knob.set_key`, `knob.set_expression`, `knob.keys`, `knob.clear_animation`, `tracker.fill_gaps`,
 `tracker.clear_filled`, `render.info`,
-`render.sample`, `render.image`, `render.png` (a small sRGB preview, base64), `render.write` and `batch`, and in the editor `editor.selected`,
-`editor.select`, `editor.frame`, `editor.set_frame`, `editor.view`, `editor.viewed` and
-`editor.show_panel` (and `editor.undo` / `editor.redo`, for the [MCP server](MCP.md)); `src/core/ScriptApi.cpp` and `src/ui/ScriptRunner.cpp` have their
+`render.sample`, `render.image`, `render.png` (a small sRGB preview, base64), `render.write` and
+`batch`, and in the editor `editor.selected`, `editor.select`, `editor.frame`,
+`editor.set_frame`, `editor.view`, `editor.viewed`, `editor.show_panel` (and `editor.undo` /
+`editor.redo`, for the [MCP server](MCP.md)) and `editor.watch`, `node.add_button` and
+`node.remove_button`, and `events.next` (waits up to `timeout` seconds for the next event a
+watch asked for; `null` when none came); `src/core/ScriptApi.cpp` and `src/ui/ScriptRunner.cpp` have their
 arguments. The editor passes the address in a file rather than in the environment
 (`tools/python/_welder_run.py`), so the token never shows on a command line.
 
-## Coming next
+## AI assistants
 
-Callbacks (comp opened / saved, knob changed) and Python buttons on nodes.
+The [MCP server](MCP.md) lets AI assistants drive Welder through the same commands.

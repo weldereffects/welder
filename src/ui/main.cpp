@@ -59,7 +59,7 @@ using namespace strata::ui;
 namespace {
 
 struct Options {
-    std::string file, view, select, props, screenshot, ofxPath, level, runScript;
+    std::string file, view, select, props, screenshot, ofxPath, level, runScript, callbacksScript;
     bool quitAfterScript = false;
     double frame = -1;
     int width = 1600, height = 960;
@@ -82,6 +82,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--graph-level") o.level = next();
         else if (a == "--run-script") o.runScript = next();
         else if (a == "--quit-after-script") o.quitAfterScript = true;
+        else if (a == "--callbacks-script") o.callbacksScript = next();  // (tests: in place of init.py)
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--reset-workspace" || a == "--reset-layout") o.resetWorkspace = true;
         else if (a == "--safe-mode" || a == "--safe") o.safeMode = true;
@@ -455,7 +456,8 @@ int main(int argc, char** argv) {
     app.applyEdits();
     if (opt.file.empty() && opt.screenshot.empty() && !opt.smoke) app.checkAutosave();  // an untitled comp left by a crash
     if (opt.smoke) smoke::start(opt.smokeItems);
-    if (interactive && !opt.smoke && opt.runScript.empty()) ui::ScriptRunner::instance().runStartup(app);  // <config>/init.py
+    if (!opt.callbacksScript.empty()) ui::ScriptRunner::callbacks().restart(app, opt.callbacksScript);
+    else if (interactive && !opt.smoke && opt.runScript.empty()) ui::ScriptRunner::callbacks().runStartup(app);  // <config>/init.py
     if ((opt.screenshot.empty() && !opt.smoke) || std::getenv("WELDER_MCP_PORT"))
         ui::McpService::instance().apply(app);  // (if Preferences turned it on)
     bool scriptStarted = false;  // --run-script
@@ -516,7 +518,7 @@ int main(int argc, char** argv) {
         // when something must advance every frame.
         // Keys pressed faster than frames are trickled in one per frame by ImGui; keep
         // polling while any are queued so a burst of hotkeys is never held back.
-        if (app.playing || app.editsPending() || ui::ScriptRunner::instance().running() || ui::McpService::instance().busy() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
+        if (app.playing || app.editsPending() || ui::ScriptRunner::instance().running() || ui::ScriptRunner::callbacks().needsFrames() || ui::McpService::instance().busy() || ui.graph.autoPanning || !opt.screenshot.empty() || smoke::active() || GImGui->InputEventsQueue.Size > 0)
             glfwPollEvents();
         else glfwWaitEventsTimeout(app.rendering() ? 0.05 : 0.5);
         const auto frameWorkStart = std::chrono::steady_clock::now();  // (WELDER_DEBUG_FRAMES)
@@ -1848,7 +1850,11 @@ int main(int argc, char** argv) {
         app.applyEdits();
         ui::ScriptRunner::instance().pump(app);  // a Python script's requests (ScriptRunner.h)
         ui::McpService::instance().pump(app);    // an AI client's tool calls (McpService.h)
-        if (!opt.runScript.empty() && !scriptStarted) {
+        ui::ScriptRunner::callbacks().pump(app, !ui::ScriptRunner::instance().running());  // init.py's callbacks
+        // (--callbacks-script: the script runs once the callbacks are registered and waiting)
+        const bool callbacksReady = opt.callbacksScript.empty() || !ui::ScriptRunner::callbacks().running() || ui::ScriptRunner::callbacks().idle();
+        static bool buttonPressed = false;  // WELDER_TEST_PRESS_BUTTON=<node>:<label>, once the script is done
+        if (!opt.runScript.empty() && !scriptStarted && callbacksReady) {
             scriptStarted = true;
             ui.showScriptEditor = true;
             if (!ui::ScriptRunner::instance().runFile(app, opt.runScript) && opt.quitAfterScript) {
@@ -1861,6 +1867,15 @@ int main(int argc, char** argv) {
             static const auto t0 = std::chrono::steady_clock::now();
             if (stopAfter > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() > stopAfter)
                 ui::ScriptRunner::instance().stop();
+        } else if (scriptStarted && opt.quitAfterScript && !ui::ScriptRunner::instance().running() && !ui.requestQuit &&
+                   (!ui::ScriptRunner::callbacks().idle() || (ui::ScriptRunner::callbacks().running() && app.editsPending()))) {
+            // the callbacks the script set off run first (its last edits must be in to set them off)
+        } else if (scriptStarted && opt.quitAfterScript && !ui.requestQuit && !buttonPressed && std::getenv("WELDER_TEST_PRESS_BUTTON")) {
+            buttonPressed = true;
+            const std::string b = std::getenv("WELDER_TEST_PRESS_BUTTON");
+            const size_t colon = b.find(':');
+            if (!ui::runPythonButton(app, b.substr(0, colon), colon == std::string::npos ? "" : b.substr(colon + 1)))
+                std::printf("BUTTON could not run\n");
         } else if (scriptStarted && opt.quitAfterScript && !ui::ScriptRunner::instance().running() && !ui.requestQuit) {
             const size_t before = app.comp ? app.comp->nodes.size() : 0;
             const bool couldUndo = app.canUndo();
@@ -1871,6 +1886,9 @@ int main(int argc, char** argv) {
             }
             std::printf("SCRIPT exit=%d nodes=%zu undo=%d after_undo_nodes=%zu dirty=%d\n", ui::ScriptRunner::instance().lastExitCode(),
                         before, (int)couldUndo, app.comp ? app.comp->nodes.size() : 0, (int)app.dirty);
+            if (std::getenv("WELDER_TEST_DUMP_PARAMS") && app.comp)  // (the knobs after that undo)
+                for (auto& n : app.comp->nodes)
+                    if (n->type != "Viewer") std::printf("SCRIPT params %s %s\n", n->name.c_str(), n->params.data.dump().c_str());
             std::printf("SCRIPT output:\n%s\n", ui::ScriptRunner::instance().output().c_str());
             std::fflush(stdout);
             app.dirty = false;
@@ -2029,6 +2047,7 @@ int main(int argc, char** argv) {
 
     startupDone();
     ui::ScriptRunner::instance().shutdown(app);  // a script still running is stopped
+    ui::ScriptRunner::callbacks().shutdown(app);
     ui::McpService::instance().shutdown();
     ml::releaseWorker();  // the last Welder to quit stops the ML worker (it holds the models' memory)
     ImGui_ImplOpenGL3_Shutdown();

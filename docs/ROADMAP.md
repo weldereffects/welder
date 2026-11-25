@@ -15,7 +15,8 @@
 - [x] Viewer: A/B wipe and difference, OCIO view transform, RAM playback cache with pre-rendering
 - [ ] Viewer next: ROI box, 2-up / stacked compare, flipbook to disk
 - [x] DPX and TIFF (native), 16-bit PNG, movies through FFmpeg (ProRes, DNxHR, H.264 / HEVC read, MJPEG, MPEG-4, FFV1)
-- [ ] Formats next: H.264 / HEVC writing (needs a GPL encoder build or the OS's encoders), audio, timecode, OpenImageIO plugins, Cineon .cin
+- [x] H.264 / HEVC writing through hardware encoders (NVENC, AMF, Media Foundation, Vulkan Video; no GPL x264 / x265)
+- [ ] Formats next: audio, timecode, OpenImageIO plugins, Cineon .cin
 - [x] Curve editor and dope sheet (per-key interpolation, tangents)
 - [ ] Curves next: expressions on curves, curve filters (smooth, reduce keys), multiple-curve scaling by box
 - [x] Paste nodes copied in another .nk app (its clipboard format); groups as real nodes (Ctrl+G / Ctrl+Alt+G / Ctrl+Enter, own knobs), gizmos (.gizmo files and groups saved as .sgizmo), backdrops and sticky notes
@@ -30,8 +31,8 @@
 - [x] Copy nodes from Welder in the .nk clipboard format, and export whole comps as .nk (`welder nk`)
 - [x] Python API: the `welder` module (scripts in their own process over a local socket, any Python 3.8+), `welder python` for headless scripts (docs/PYTHON.md)
 - [x] Python in the editor: Script Editor (run / stop / output, one undo step per run), Scripts menu, init.py, the interpreter in Preferences
+- [x] Python callbacks (init.py's `welder.on()`: comp opened / saved, knob changed, nodes made / deleted, frame, selection; one undo step each) and Python buttons on nodes
 - [x] MCP server for AI assistants on the same commands: build and edit comps, render, read pixels and PNG previews, one undo step per change; `welder mcp` for Claude Desktop / Claude Code (docs/MCP.md)
-- [ ] Python next: callbacks (comp opened / saved, knob changed), Python buttons on nodes, an MCP server for AI assistants on the same commands
 - [x] Autosave with crash recovery, atomic saves, ask before discarding unsaved changes; Viewer › Performance (UI frame times and their parts, per-node render times, caches); `welder_ui --smoke` startup / open / play / autosave check with a stall watchdog
 - [x] Proxy / render scale, disk cache (content-keyed viewer frames), cost-aware tile cache
 

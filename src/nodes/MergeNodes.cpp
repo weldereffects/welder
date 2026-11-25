@@ -4,10 +4,13 @@
 // Each extra A is merged on top of the previous result with the same operation.
 // All maths assumes premultiplied images.
 #include <cmath>
-#include <set>
+#include <cstring>
 #include <functional>
+#include <optional>
+#include <set>
 
 #include "NodeUtils.h"
+#include "gpu/Gpu.h"
 
 namespace strata {
 
@@ -179,6 +182,49 @@ public:
         return -1;
     }
 
+    template <class Job>
+    static bool gpuMerge(Image& out, const std::vector<Job>& jobs, int op, int outA, bool alphaMasking, bool video,
+                         const std::vector<int>& rgbOut, size_t aFloats) {
+        constexpr int kPrm = 72;  // ints per A input (merge_op.comp)
+        std::vector<float> As;
+        As.reserve(aFloats);
+        std::vector<int> prm(kPrm * jobs.size(), -1);
+        std::vector<gpu::Dispatch> ds;
+        struct Push {
+            int count, n, an, aOff, prmOff, op, npairs, Aa, outA, alphaMasking;
+            float aNone;
+            int flags, nrgb, nac;
+        };
+        const int count = (int)out.bounds.area();
+        const uint32_t groups = (uint32_t)((count + 255) / 256);
+        for (size_t k = 0; k < jobs.size(); ++k) {
+            const auto& j = jobs[k];
+            int* pr = prm.data() + kPrm * k;
+            for (size_t q = 0; q < j.pairs.size(); ++q) {
+                pr[2 * q] = j.pairs[q].first;
+                pr[2 * q + 1] = j.pairs[q].second;
+            }
+            for (size_t q = 0; q < rgbOut.size() && q < 3; ++q) pr[64 + q] = rgbOut[q];
+            for (size_t q = 0; q < j.video.size() && q < 3; ++q) pr[67 + q] = j.video[q];
+            int flags = 0;
+            if (video) flags = (k == 0 ? 1 : 0) | (k + 1 == jobs.size() ? 2 : 0) | 4;
+            Push pc{count, out.nch(), j.A->nch(), (int)As.size(), (int)(kPrm * k), op, (int)j.pairs.size(), j.Aa, outA, alphaMasking ? 1 : 0,
+                    j.aNone, flags, (int)std::min<size_t>(rgbOut.size(), 3), (int)std::min<size_t>(j.video.size(), 3)};
+            As.insert(As.end(), j.A->data.begin(), j.A->data.end());
+            gpu::Dispatch d;
+            std::memcpy(d.push, &pc, sizeof pc);
+            d.gx = std::min<uint32_t>(groups, 65535);
+            d.gy = (groups + d.gx - 1) / d.gx;
+            ds.push_back(d);
+        }
+        if (count <= 0) return true;
+        const size_t ob = out.data.size() * sizeof(float);
+        return gpu::runSequence("merge_op",
+                                {{out.data.data(), out.data.data(), ob}, {As.data(), nullptr, As.size() * sizeof(float)},
+                                 {prm.data(), nullptr, prm.size() * sizeof(int)}},
+                                ds);
+    }
+
     void render(RenderArgs& a, Image& out) override {
         const int op = mergeOpId(params.str("operation", "over"));
         ImagePtr B = a.fetch(input(0), a.region);
@@ -220,46 +266,79 @@ public:
         if (video)
             for (const char* ch : {"R", "G", "B"})
                 if (out.ch(ch) >= 0 && std::find(sel.begin(), sel.end(), std::string(ch)) != sel.end()) rgbOut.push_back(out.ch(ch));
-        if (video)
-            for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
-                for (int x = out.bounds.x1; x < out.bounds.x2; ++x)
-                    for (int i : rgbOut) out.px(x, y)[i] = toVideo(out.px(x, y)[i]);
         ChannelSet also;  // also merge: more channels, merged the same way
         if (params.has("also_merge") && params.str("also_merge", "none") != "none")
             also = parseChannels(params, "also_merge", "none", out.channels);
 
-        for (Node* an : aInputs()) {
-            ImagePtr A = a.fetch(an, a.region);
-            if (video) {  // A's colour in video space too (a copy: the fetched tile is shared)
-                auto Av = std::make_shared<Image>(*A);
-                for (const char* ch : {"R", "G", "B"}) {
-                    int i = layerCh(*Av, aLayer, ch, {});
-                    if (i < 0) continue;
-                    for (int y = Av->bounds.y1; y < Av->bounds.y2; ++y)
-                        for (int x = Av->bounds.x1; x < Av->bounds.x2; ++x) Av->px(x, y)[i] = toVideo(Av->px(x, y)[i]);
-                }
-                A = Av;
-            }
-            int Aa = layerCh(*A, aLayer, "A", aOff);
+        // each A input: its pixels and which of its channels go where
+        struct AJob {
+            ImagePtr A;
+            int Aa;
             std::vector<std::pair<int, int>> pairs;  // (out idx, A idx)
+            float aNone;
+            std::vector<int> video;  // A's colour channels (video colorspace)
+        };
+        std::vector<AJob> jobs;
+        for (Node* an : aInputs()) {
+            AJob j;
+            j.A = a.fetch(an, a.region);
+            const Image& A = *j.A;
+            if (video)
+                for (const char* ch : {"R", "G", "B"}) {
+                    int i = layerCh(A, aLayer, ch, {});
+                    if (i >= 0) j.video.push_back(i);
+                }
+            j.Aa = layerCh(A, aLayer, "A", aOff);
             for (auto& c : sel) {
                 int oi = out.ch(c);
-                if (oi >= 0) pairs.emplace_back(oi, c.find('.') == std::string::npos ? layerCh(*A, aLayer, c, aOff) : A->ch(c));
+                if (oi >= 0) j.pairs.emplace_back(oi, c.find('.') == std::string::npos ? layerCh(A, aLayer, c, aOff) : A.ch(c));
             }
             for (auto& c : also) {
                 int oi = out.ch(c);
-                if (oi >= 0 && std::find(sel.begin(), sel.end(), c) == sel.end()) pairs.emplace_back(oi, A->ch(c));
+                if (oi >= 0 && std::find(sel.begin(), sel.end(), c) == sel.end()) j.pairs.emplace_back(oi, A.ch(c));
             }
             // Alpha last, so colour channels see B's original alpha.
-            std::stable_partition(pairs.begin(), pairs.end(), [&](auto& p) { return p.first != outA; });
+            std::stable_partition(j.pairs.begin(), j.pairs.end(), [&](auto& p) { return p.first != outA; });
             // A without an alpha channel is solid (#30); one switched off in the A channels reads as 0
-            const float aNone = Aa < 0 && !aOff.count("A") ? 1.0f : 0.0f;
-            mergeDispatch(op, out, *A, pairs, Aa, outA, alphaMasking, aNone);
+            j.aNone = j.Aa < 0 && !aOff.count("A") ? 1.0f : 0.0f;
+            jobs.push_back(std::move(j));
         }
-        if (video)
-            for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
-                for (int x = out.bounds.x1; x < out.bounds.x2; ++x)
-                    for (int i : rgbOut) out.px(x, y)[i] = toLinear(out.px(x, y)[i]);
+
+        // on the GPU (gpu/shaders/merge_op.comp) when the router finds it pays there: all the A
+        // inputs in one go, or none
+        bool fits = !jobs.empty();
+        size_t work = 0, aFloats = 0;
+        for (auto& j : jobs) {
+            fits = fits && j.A->bounds == out.bounds && j.pairs.size() <= 32;
+            work += (size_t)out.bounds.area() * j.pairs.size();
+            aFloats += j.A->data.size();
+        }
+        std::optional<gpu::Routed> rt;
+        if (fits) rt.emplace("Merge", (uint64_t)op * 4 + (video ? 2 : 0) + (jobs.size() > 1 ? 1 : 0), work);
+        if (rt && rt->gpu() && gpuMerge(out, jobs, op, outA, alphaMasking, video, rgbOut, aFloats)) {
+            rt->done(true);
+        } else {
+            if (video)
+                for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+                    for (int x = out.bounds.x1; x < out.bounds.x2; ++x)
+                        for (int i : rgbOut) out.px(x, y)[i] = toVideo(out.px(x, y)[i]);
+            for (auto& j : jobs) {
+                ImagePtr A = j.A;
+                if (video) {  // A's colour in video space too (a copy: the fetched tile is shared)
+                    auto Av = std::make_shared<Image>(*A);
+                    for (int i : j.video)
+                        for (int y = Av->bounds.y1; y < Av->bounds.y2; ++y)
+                            for (int x = Av->bounds.x1; x < Av->bounds.x2; ++x) Av->px(x, y)[i] = toVideo(Av->px(x, y)[i]);
+                    A = Av;
+                }
+                mergeDispatch(op, out, *A, j.pairs, j.Aa, outA, alphaMasking, j.aNone);
+            }
+            if (video)
+                for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
+                    for (int x = out.bounds.x1; x < out.bounds.x2; ++x)
+                        for (int i : rgbOut) out.px(x, y)[i] = toLinear(out.px(x, y)[i]);
+            if (rt) rt->done(false);
+        }
 
         MaskMix mm = MaskMix::setup(a, this, 2);
         if (params.flag("inject", false) && mm.mask && out.ch("mask.a") >= 0) {  // the mask, as given, into mask.a

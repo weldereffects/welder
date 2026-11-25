@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -42,6 +43,7 @@ void usage() {
                  "  welder info   <comp.weld>\n"
                  "  welder nk     <comp.weld> [-o shot.nk]   (export to a .nk script)\n"
                  "  welder bench  <comp.weld> <Node> [EditedNode] [-f frame]\n"
+                 "  welder gpu-bench [4096x2160] [-t threads]   (everyday nodes: CPU vs GPU)\n"
                  "  welder python <script.py> [--comp shot.weld] [--python exe] [script args...]\n"
                  "  welder mcp    [--headless] [--comp shot.weld] [--http port]   (MCP server for AI clients, docs/MCP.md)\n"
                  "  welder types\n"
@@ -251,6 +253,90 @@ int cmdBench(const Args& a) {
     return 0;
 }
 
+// gpu-bench: everyday nodes on a synthetic plate, on the CPU, forced onto the GPU, and as the
+// router chooses (Gpu.h), so the GPU paths can be measured on a real card. The source is
+// rendered once and cached; each timing re-renders only the node being measured.
+int cmdGpuBench(const Args& a) {
+    int W = 4096, H = 2160;
+    if (!a.pos.empty() && std::sscanf(a.pos[0].c_str(), "%dx%d", &W, &H) != 2) { usage(); return 2; }
+    std::printf("GPU: %s\n%dx%d, RGBA float, tiles of %d, %d threads\n", gpu::status().c_str(), W, H, engineOpts(a).tileSize,
+                a.threads > 0 ? a.threads : (int)std::thread::hardware_concurrency());
+    json tx = json::object();
+    tx["keys"] = json::array({json::array({1, 0}), json::array({2, 60})});
+    json nodes = json::array({
+        {{"name", "Plate"}, {"type", "Noise"}, {"params", {{"size", 40}}}},
+        {{"name", "Src"}, {"type", "Grade"}, {"inputs", {"Plate"}}, {"params", {{"multiply", {1.4, 1.1, 0.9, 1}}, {"channels", "rgba"}}}},
+        {{"name", "Fg"}, {"type", "Transform"}, {"inputs", {"Src"}}, {"params", {{"translate", {37, -21}}, {"filter", "impulse"}}}},
+    });
+    struct Case {
+        const char* label;
+        const char* type;
+        json params;
+        bool twoInputs = false;
+    };
+    const std::vector<Case> cases = {
+        {"Grade (multiply, offset)", "Grade", {{"multiply", 1.3}, {"offset", 0.02}}},
+        {"Grade (with gamma)", "Grade", {{"gamma", {0.8, 1.2, 1.5, 1}}, {"multiply", 1.2}}},
+        {"ColorCorrect (ranges)", "ColorCorrect", {{"contrast", 1.2}, {"gamma", 0.9}, {"shadows.gain", 1.1}, {"highlights.saturation", 0.7}}},
+        {"Saturation", "Saturation", {{"saturation", 1.4}}},
+        {"Gamma", "Gamma", {{"value", 2.2}}},
+        {"Merge over", "Merge", {{"operation", "over"}}, true},
+        {"Merge screen (video colorspace)", "Merge", {{"operation", "screen"}, {"video_colorspace", true}}, true},
+        {"Transform (rotate, cubic)", "Transform", {{"rotate", 7.5}, {"scale", 1.1}}},
+        {"Transform (motion blur)", "Transform", {{"translate", json::array({tx, 0})}, {"rotate", 3}, {"motionblur", 1}}},
+        {"Blur (size 20)", "Blur", {{"size", 20}}},
+    };
+    for (size_t i = 0; i < cases.size(); ++i) {
+        json in = cases[i].twoInputs ? json::array({"Src", "Fg"}) : json::array({"Src"});
+        nodes.push_back({{"name", "N" + std::to_string(i)}, {"type", cases[i].type}, {"inputs", in}, {"params", cases[i].params}});
+    }
+    json j = {{"strata", 1}, {"format", {{"width", W}, {"height", H}}}, {"frame_range", {1, 10}}, {"nodes", nodes}};
+    auto comp = Comp::fromJson(j, std::filesystem::current_path());
+    Engine e(engineOpts(a));
+    const double f = 1.5;
+    Box box(0, 0, W, H);
+    e.renderRegion(comp->find("Src"), f, box);
+    e.renderRegion(comp->find("Fg"), f, box);
+    const bool hadGpu = gpu::available();
+    int edit = 0;
+    auto timeNode = [&](Node* n) {  // a fresh render of n alone (its inputs are cached)
+        n->params.data["__bench"] = ++edit;
+        n->paramsChanged();
+        e.clearMemo();
+        auto t0 = std::chrono::steady_clock::now();
+        e.renderRegion(n, f, box);
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    };
+    auto best = [&](Node* n, int runs) {
+        double b = 1e30;
+        for (int r = 0; r < runs; ++r) b = std::min(b, timeNode(n));
+        return b;
+    };
+    std::printf("\n%-34s %10s %10s %10s %8s\n", "node", "CPU ms", "GPU ms", "auto ms", "GPU x");
+    for (size_t i = 0; i < cases.size(); ++i) {
+        Node* n = comp->find("N" + std::to_string(i));
+        gpu::setEnabled(false);
+        const double cpu = best(n, 3);
+        gpu::setEnabled(true);
+        double g = 0, au = 0;
+        if (hadGpu) {
+            gpu::setRoute(gpu::RouteMode::Gpu);
+            timeNode(n);  // the first builds the pipeline
+            g = best(n, 3);
+            gpu::setRoute(gpu::RouteMode::Auto);
+            timeNode(n);  // the router learns on the first tiles
+            au = best(n, 3);
+        }
+        if (hadGpu) std::printf("%-34s %10.1f %10.1f %10.1f %7.1fx\n", cases[i].label, cpu, g, au, g > 0 ? cpu / g : 0.0);
+        else std::printf("%-34s %10.1f %10s %10s\n", cases[i].label, cpu, "-", "-");
+    }
+    if (hadGpu) {
+        std::printf("\nthe router (one line per kind of job):\n");
+        for (auto& l : gpu::routeSummary()) std::printf("  %s\n", l.c_str());
+    }
+    return 0;
+}
+
 int cmdNk(const Args& a) {
     if (a.pos.empty()) { usage(); return 2; }
     // from the file itself: exporting needs no plugins or media
@@ -398,6 +484,7 @@ int main(int argc, char** argv) {
         if (cmd == "info") return cmdInfo(a);
         if (cmd == "nk") return cmdNk(a);
         if (cmd == "bench") return cmdBench(a);
+        if (cmd == "gpu-bench") return cmdGpuBench(a);
         if (cmd == "types") {
             for (auto& t : NodeRegistry::instance().types()) std::printf("%s\n", t.c_str());
             return 0;

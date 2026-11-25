@@ -83,6 +83,7 @@ void ScriptHost::newComp(int width, int height) {
 ScriptApi::Kind ScriptApi::kind(const std::string& m) {
     if (m.rfind("render.", 0) == 0) return Kind::Render;
     if (m == "comp.open" || m == "comp.new") return Kind::Replace;
+    if (m.rfind("events.", 0) == 0) return Kind::Wait;
     static const std::set<std::string> reads = {"app.info", "comp.info", "comp.nodes", "comp.types", "node.info",
                                                 "knob.list", "knob.get", "knob.keys"};
     return reads.count(m) ? Kind::Read : Kind::Edit;
@@ -268,6 +269,7 @@ json ScriptApi::nodeInfo(Node* n) {
             {"outputs", outs},
             {"position", {n->ui.value("x", 0.0), n->ui.value("y", 0.0)}},
             {"disabled", n->disabled()},
+            {"buttons", n->ui.contains("python_buttons") && n->ui["python_buttons"].is_array() ? n->ui["python_buttons"] : json::array()},
             {"category", ui::categoryOf(n->type)}};
 }
 
@@ -477,6 +479,41 @@ json ScriptApi::call(const std::string& method, const json& p) {
         Node* n = node(p);
         n->ui["x"] = num(p, "x", 0);
         n->ui["y"] = num(p, "y", 0);
+        host_.changed(nullptr);
+        return nullptr;
+    }
+
+    // Python buttons: shown on the node's panel, each runs its code with welder.this_node() = it
+    if (method == "node.add_button") {
+        Node* n = node(p);
+        const std::string label = str(p, "label"), code = str(p, "code");
+        if (label.empty()) fail("ValueError", "a button needs a label");
+        json& b = n->ui["python_buttons"];
+        if (!b.is_array()) b = json::array();
+        bool replaced = false;
+        for (auto& e : b)
+            if (e.is_object() && e.value("label", "") == label) {
+                e["code"] = code;
+                replaced = true;
+            }
+        if (!replaced) b.push_back({{"label", label}, {"code", code}});
+        host_.changed(nullptr);
+        return nullptr;
+    }
+    if (method == "node.remove_button") {
+        Node* n = node(p);
+        const std::string label = str(p, "label");
+        json& b = n->ui["python_buttons"];
+        bool found = false;
+        if (b.is_array())
+            for (size_t i = 0; i < b.size(); ++i)
+                if (b[i].is_object() && b[i].value("label", "") == label) {
+                    b.erase(i);
+                    found = true;
+                    break;
+                }
+        if (b.is_array() && b.empty()) n->ui.erase("python_buttons");
+        if (!found) fail("KeyError", n->name + " has no button " + label);
         host_.changed(nullptr);
         return nullptr;
     }
@@ -742,7 +779,7 @@ json ScriptApi::call(const std::string& method, const json& p) {
         }
         return out;
     }
-    if (method.rfind("editor.", 0) == 0) return host_.editorCall(method, p);
+    if (method.rfind("editor.", 0) == 0 || method.rfind("events.", 0) == 0) return host_.editorCall(method, p);
     fail("AttributeError", "unknown command " + method);
 }
 

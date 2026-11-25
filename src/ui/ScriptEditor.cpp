@@ -2,6 +2,7 @@
 // through ScriptRunner. The editor's text is kept in <config>/script_editor.py between sessions.
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <fstream>
 
 #include "Panels.h"
@@ -31,6 +32,25 @@ EditorState& ed() {
 }
 
 fs::path scratchPath() { return fs::path(brand::configDir()) / "script_editor.py"; }
+
+const char* kInitExample =
+    "# init.py: runs when Welder starts (Preferences > Python can turn that off).\n"
+    "# Handlers registered with welder.on() run when the editor's events happen, once\n"
+    "# welder.run_callbacks() is reached. Scripts > Restart Callbacks reloads this file.\n"
+    "import welder\n"
+    "\n"
+    "\n"
+    "@welder.on(\"comp_saved\")\n"
+    "def saved(event):\n"
+    "    print(\"saved\", event.path)\n"
+    "\n"
+    "\n"
+    "@welder.on(\"node_created\", type=\"Write\")\n"
+    "def new_write(event):\n"
+    "    event.node[\"file\"] = \"render/\" + event.node.name + \".####.exr\"\n"
+    "\n"
+    "\n"
+    "welder.run_callbacks()\n";
 
 const char* kExample =
     "# Python in Welder: the welder module drives the open comp.\n"
@@ -165,6 +185,23 @@ void drawScriptEditor(App& app, UiState& ui) {
             }
         }, ScriptRunner::scriptDirs().front());
     }
+    if (!s.file.empty()) {
+        ImGui::SameLine();
+        const bool isInit = fs::path(s.file) == fs::path(ScriptRunner::initPath());
+        if (ImGui::Button(isInit ? "Save and Restart Callbacks" : "Save")) {
+            std::error_code ec;
+            fs::create_directories(fs::path(s.file).parent_path(), ec);
+            std::ofstream f(s.file, std::ios::binary);
+            f << s.code;
+            f.close();  // (written out before init.py runs again)
+            if (!f) app.message("error: cannot write " + s.file);
+            else if (isInit) ScriptRunner::callbacks().restart(app);
+            else app.message("saved " + s.file);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(isInit ? "Write init.py and run it again: its welder.on() callbacks replace the old ones" : "Write %s",
+                              s.file.c_str());
+    }
     ImGui::SameLine();
     if (ImGui::Button("Clear Output")) r.clearOutput();
     if (running) {
@@ -173,6 +210,11 @@ void drawScriptEditor(App& app, UiState& ui) {
     } else if (!s.file.empty()) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", fs::path(s.file).filename().string().c_str());
+    }
+    if (ScriptRunner& cb = ScriptRunner::callbacks(); cb.running()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled(cb.watchCount() ? "| callbacks on (%d)" : "| init.py running", cb.watchCount());
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("init.py is connected: its welder.on() handlers run as events happen (Scripts menu: stop or restart)");
     }
     // ---- the code, then the output
     const float avail = ImGui::GetContentRegionAvail().y;
@@ -218,6 +260,147 @@ void drawScriptEditor(App& app, UiState& ui) {
     if (!open) ui.showScriptEditor = false;
 }
 
+// ------------------------------------------------------------------ Python buttons on nodes
+
+namespace {
+json buttonsOf(const Node* n) {
+    auto it = n->ui.find("python_buttons");
+    return it != n->ui.end() && it->is_array() ? *it : json::array();
+}
+bool inputStr(const char* id, std::string& t, bool multi, ImVec2 size = ImVec2(0, 0), ImGuiInputTextFlags fl = 0) {
+    fl |= ImGuiInputTextFlags_CallbackResize;
+    return multi ? ImGui::InputTextMultiline(id, t.data(), t.capacity() + 1, size, fl, resizeCb, &t)
+                 : ImGui::InputText(id, t.data(), t.capacity() + 1, fl, resizeCb, &t);
+}
+void setButtons(App& app, const std::string& node, json b) {
+    app.checkpoint();
+    app.edit([node, b](Comp& c) {
+        if (Node* m = c.find(node)) {
+            if (b.empty()) m->ui.erase("python_buttons");
+            else m->ui["python_buttons"] = b;
+        }
+    });
+}
+}  // namespace
+
+bool runPythonButton(App& app, const std::string& node, const std::string& label) {
+    Node* n = app.node(node);
+    if (!n) return false;
+    for (auto& b : buttonsOf(n))
+        if (b.is_object() && b.value("label", "") == label)
+            return ScriptRunner::instance().runCode(app, b.value("code", ""), node + ": " + label, node);
+    return false;
+}
+
+void drawPythonButtons(App& app, Node* n) {
+    const json bs = buttonsOf(n);
+    if (bs.empty()) return;
+    const bool busy = ScriptRunner::instance().running();
+    ImGui::PushID("pybuttons");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("python");
+    ImGui::SameLine(kit::labelWidth());
+    float x = ImGui::GetCursorPosX();
+    const float right = ImGui::GetContentRegionMax().x;
+    int i = 0;
+    for (auto& b : bs) {
+        if (!b.is_object()) continue;
+        const std::string label = b.value("label", "?");
+        const float w = ImGui::CalcTextSize(label.c_str()).x + ImGui::GetStyle().FramePadding.x * 2;
+        if (i > 0) {
+            if (x + w > right) {  // (wraps to a new row, under the first button)
+                ImGui::NewLine();
+                ImGui::SameLine(kit::labelWidth());
+                x = ImGui::GetCursorPosX();
+            } else {
+                ImGui::SameLine();
+            }
+        }
+        ImGui::PushID(i++);
+        ImGui::BeginDisabled(busy);
+        if (ImGui::Button(label.c_str())) runPythonButton(app, n->name, label);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            std::string code = b.value("code", "");
+            if (code.size() > 600) code = code.substr(0, 600) + "\n...";
+            ImGui::SetTooltip(busy ? "A script is running: stop it or wait (Scripts > Stop Script)\n\n%s"
+                                   : "Runs this Python (welder.this_node() is %s; one undo step):\n\n%s",
+                              busy ? code.c_str() : n->name.c_str(), code.c_str());
+        }
+        x = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+}
+
+void editPythonButtons(App& app, Node* n) {
+    json bs = buttonsOf(n);
+    ImGui::PushID("pybuttons_edit");
+    ImGui::Spacing();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("python buttons");
+    ImGui::SameLine(kit::labelWidth());
+    const float labelX = ImGui::GetCursorPosX();
+    if (ImGui::SmallButton("+ add")) {
+        std::string label = "Button";
+        for (int k = 2;; ++k) {
+            bool taken = false;
+            for (auto& b : bs) taken |= b.is_object() && b.value("label", "") == label;
+            if (!taken) break;
+            label = "Button " + std::to_string(k);
+        }
+        bs.push_back({{"label", label}, {"code", "import welder\n\nnode = welder.this_node()\nprint(node.name)\n"}});
+        setButtons(app, n->name, bs);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A button on this node's panel that runs Python (saved with the comp).\n"
+                          "welder.this_node() is this node. Scripts add them with node.add_button(label, code).");
+    // (the text being typed is kept per node and button until the box is left)
+    static std::map<std::string, std::string> buf;
+    for (size_t i = 0; i < bs.size(); ++i) {
+        if (!bs[i].is_object()) continue;
+        ImGui::PushID((int)i);
+        const std::string key = n->name + "/" + std::to_string(i);
+        for (const char* field : {"label", "code"}) {
+            const bool code = field[0] == 'c';
+            const std::string cur = bs[i].value(field, "");
+            const std::string k = key + field;
+            const ImGuiID id = ImGui::GetID(code ? "##code" : "##label");
+            if (ImGui::GetActiveID() != id) buf[k] = cur;
+            std::string& t = buf[k];
+            ImGui::SetCursorPosX(labelX);
+            if (!code) {
+                ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize("remove").x - 24));
+                inputStr("##label", t, false);
+                const bool done = ImGui::IsItemDeactivatedAfterEdit();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("The button's label");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("remove")) {
+                    bs.erase(i);
+                    setButtons(app, n->name, bs);
+                    ImGui::PopID();
+                    ImGui::PopID();
+                    return;
+                }
+                if (done && !t.empty() && t != cur) {
+                    bs[i]["label"] = t;
+                    setButtons(app, n->name, bs);
+                }
+            } else {
+                if (theme().medium) ImGui::PushFont(theme().medium);
+                inputStr("##code", t, true, ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 5), ImGuiInputTextFlags_AllowTabInput);
+                if (theme().medium) ImGui::PopFont();
+                if (ImGui::IsItemDeactivatedAfterEdit() && t != cur) {
+                    bs[i]["code"] = t;
+                    setButtons(app, n->name, bs);
+                }
+            }
+        }
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+}
+
 void drawScriptsMenu(App& app, UiState& ui) {
     if (!ImGui::BeginMenu("Scripts")) return;
     ScriptRunner& r = ScriptRunner::instance();
@@ -228,6 +411,26 @@ void drawScriptsMenu(App& app, UiState& ui) {
             ScriptRunner::instance().runFile(app, p);
         }, ScriptRunner::scriptDirs().front());
     if (ImGui::MenuItem("Stop Script", nullptr, false, r.running())) r.stop();
+    ImGui::Separator();
+    ScriptRunner& cb = ScriptRunner::callbacks();
+    if (ImGui::MenuItem(cb.running() ? "Restart Callbacks (init.py)" : "Start Callbacks (init.py)")) {
+        ui.showScriptEditor = true;  // (its output)
+        cb.restart(app);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Run %s again: the handlers it registers with welder.on() run as the editor's events happen", ScriptRunner::initPath().c_str());
+    if (ImGui::MenuItem("Stop Callbacks", nullptr, false, cb.running())) cb.shutdown(app);
+    if (ImGui::MenuItem("Edit init.py")) {
+        EditorState& s = ed();
+        load();
+        saveScratch();
+        std::ifstream f(ScriptRunner::initPath(), std::ios::binary);
+        if (f) s.code.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        else s.code = kInitExample;
+        s.file = ScriptRunner::initPath();
+        s.dirty = true;
+        ui.showScriptEditor = true;
+    }
     // the .py files in the scripts folders, a submenu per subfolder
     bool any = false;
     std::function<void(const fs::path&, int)> list = [&](const fs::path& dir, int depth) {
