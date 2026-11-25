@@ -2529,6 +2529,9 @@ std::vector<NodeDef> build() {
                          Tip(C("model", "model", "large", {"large", "base_plus", "small", "tiny"}),
                              "SAM 2.1 (Apache 2.0). large: the best edges and tracking; tiny: the quickest"),
                          Tip(I("max_size", "max size", 1280, 256, 4096), "The frames are made this small (long side) for the model"),
+                         Tip(F("min_confidence", "leak cleanup", 2, 0, 10),
+                             "Parts of an object the model wasn't this sure of anywhere are dropped (SAM's faint leaks into the "
+                             "background). 0: keep everything. Changing it tracks again"),
                          Div("text"),
                          Tip(S("text_query", "find", ""), "What to look for (\"person, dog\"): Find text objects makes an object of each "
                                                            "one OWLv2 finds on this frame"),
@@ -2545,16 +2548,26 @@ std::vector<NodeDef> build() {
                          C("mask_b", "B", "Off", {"Off", "Add", "Subtract", "Intersect", "Multiply"}),
                          Div("mask output"),
                          Tip(C("mask_output", "mask output", "Guided Smooth Mask",
-                               {"RAW Mask", "Hard Mask", "Guided Smooth Mask", "ViTMatte", "MEMatte"}),
+                               {"RAW Mask", "Hard Mask", "Guided Smooth Mask", "SAM High-Res", "ViTMatte", "MEMatte"}),
                              "RAW: the model's matte as it comes. Hard: cut at a threshold. Guided Smooth: smoothed along the "
-                             "plate's edges (GPU guided filter). ViTMatte / MEMatte: the edges worked out by a matting model "
-                             "(Refine edges; Guided Smooth is shown wherever they haven't run or their weights aren't installed)"),
+                             "plate's edges (GPU guided filter). SAM High-Res: SAM segments the tracked edge again in tiles at "
+                             "the plate's own resolution (finer hair and profiles; the same weights, after Track by itself), then "
+                             "Guided Smooth. ViTMatte / MEMatte: the edges worked out by a matting model (Refine edges; Guided "
+                             "Smooth is shown wherever they haven't run or their weights aren't installed)"),
                          When(F("hard_threshold", "threshold", 0.5, 0.01, 0.99), "mask_output=Hard Mask"),
+                         When(Tip(F("edge_width", "edge width (px)", 1, 0.5, 8),
+                                  "How wide the tracked edge's antialiasing is, at the plate's size (the model's mask is cut "
+                                  "there, sharp, not scaled up soft)"),
+                              "mask_output=Hard Mask|Guided Smooth Mask|SAM High-Res|ViTMatte|MEMatte"),
                          When(Tip(I("smooth_radius", "radius (px)", 8, 1, 64), "How far the guided filter looks round each pixel"),
-                              "mask_output=Guided Smooth Mask|ViTMatte|MEMatte"),
+                              "mask_output=Guided Smooth Mask|SAM High-Res|ViTMatte|MEMatte"),
                          When(Tip(F("smooth_eps", "edge detail", 0.01, 0.0001, 0.1),
                                   "The guided filter's regulariser: smaller follows the plate's edges more closely, larger is smoother"),
-                              "mask_output=Guided Smooth Mask|ViTMatte|MEMatte"),
+                              "mask_output=Guided Smooth Mask|SAM High-Res|ViTMatte|MEMatte"),
+                         When(Tip(C("hires_tile", "tile (plate px)", "1024", {"1024", "1536", "2048"}),
+                                  "How much of the plate SAM sees at once along the edge: 1024 the finest (one mask step per 4 "
+                                  "plate px; ~18 tracking a 4.6K plate whole), 2048 quicker"),
+                              "mask_output=SAM High-Res"),
                          When(Tip(C("vitmatte_size", "ViTMatte model", "small", {"small", "base"}), "base: finer edges, slower"),
                               "mask_output=ViTMatte"),
                          When(Tip(I("trimap_erode", "trimap inside (px)", 8, 0, 100), "How far inside the edge the refiner works"),
@@ -2566,7 +2579,7 @@ std::vector<NodeDef> build() {
                               "mask_output=ViTMatte|MEMatte"),
                          When(Tip(B("direct_refiner", "Direct Refiner", false),
                                   "Refine the mask input's alpha instead of the tracked objects (a roto or key from upstream)"),
-                              "mask_output=ViTMatte|MEMatte"),
+                              "mask_output=SAM High-Res|ViTMatte|MEMatte"),
                          Div("matte"), B("binarize", "binarize", false),
                          EnableIf(F("binarize_threshold", "binarize threshold", 0.5, 0.01, 0.99), "binarize=true"),
                          F("grow", "grow / shrink (px)", 0, -50, 50),

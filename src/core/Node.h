@@ -156,6 +156,10 @@ public:
     virtual ChannelSet deepChannels(Engine& e, double frame);
     virtual void renderDeep(RenderArgs& args, DeepImage& out) { (void)args; (void)out; }
 
+    // Its RGB is data (a matte), not a picture: the viewer shows it without the display transform, as it
+    // does the alpha channel.
+    virtual bool outputIsData() const { return false; }
+
     // Output nodes (Write) render their input and write it somewhere.
     virtual bool isExecutable() const { return false; }
     // Rendered by "render all Writes" (a Precomp only renders when asked for by name).

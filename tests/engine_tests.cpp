@@ -6460,6 +6460,18 @@ Connections:  {
         const double vin = spread(p), vout = spread(q);
         std::printf("  guided filter: edge %.2f | %.2f, flat noise %.3f -> %.3f\n", q[10 * W + 30], q[10 * W + 33], vin, vout);
         CHECK(vout < vin * 0.5);
+        // logits -> a sharp matte: a low-res model's logits (a ramp of 0.7 a px, scaled up 18x) cut at 0 with a
+        // 1 px edge, solid 1 inside however unsure (logit 1.1 was a 0.75 grey as a sigmoid)
+        {
+            const int LW = 72, LH = 4;
+            std::vector<float> L(LW * LH);
+            for (int y = 0; y < LH; ++y)
+                for (int x = 0; x < LW; ++x) L[y * LW + x] = std::min(1.1f, (x - 36.0f) * 0.7f / 18.0f);
+            edgeFromLogits(L, LW, LH, 1.0f);
+            CHECK(L[2 * LW + 30] == 0.0f && L[2 * LW + 35] < 0.05f);
+            CHECK(std::fabs(L[2 * LW + 36] - 0.5f) < 1e-4f);
+            CHECK(L[2 * LW + 37] > 0.95f && L[2 * LW + 60] == 1.0f && L[2 * LW + 71] == 1.0f);
+        }
         // trimap: 1 inside the core, 0.5 within the band, 0 outside
         std::vector<float> m(W * H);
         for (int y = 0; y < H; ++y)
@@ -6597,6 +6609,95 @@ Connections:  {
         CHECK(rs.params["objects"][0]["coarse"].size() == 1 && rs.params["objects"][0]["coarse"].contains("2"));
         // the trimap settings are part of a refined frame's tag: changing them makes frame 1 stale
         n->params.data["trimap_erode"] = 12;
+        n->paramsChanged();
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::NotYet);
+        ml::setHome("");
+    });
+    test("TrackMask logits: cut sharp at the plate's size, solid however unsure; RAW keeps the soft matte; SAM High-Res refines from the tracked weights", [] {
+        auto home = std::filesystem::temp_directory_path() / "strata_mlhome_tm6";
+        std::filesystem::remove_all(home);
+        ml::setHome(home.string());
+        const int W = 128, H = 32, LW = 16, LH = 4;  // the track's logits 8x smaller than the plate
+        auto c = comp(json::array({{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}}}},
+                                   {{"name", "TM"}, {"type", "TrackMask"}, {"inputs", {"K"}}}}),
+                     W, H);
+        c->firstFrame = 1;
+        c->lastFrame = 1;
+        Node* n = c->find("TM");
+        auto* m = dynamic_cast<mlnodes::MLNode*>(n);
+        tmscene::Scene s;
+        s.add()->anchorFor(1).points.push_back({70, 16, 1});
+        tmscene::store(n->params, s);
+        Engine e;
+        auto sp = m->spec("main", e);
+        CHECK(sp.params["min_confidence"].get<double>() == 2.0);
+        auto d = home / "jobs" / "seglg";
+        std::filesystem::create_directories(d / "out");
+        std::ofstream(d / "job.json") << "{}";
+        std::ofstream(d / "status.json") << json{{"state", "done"}}.dump();
+        std::ofstream(d / "result.json") << json{{"outputs", {{"matte", {{"frames", {1}}, {"width", LW}, {"height", LH}}},
+                                                              {"logit", {{"frames", {1}}, {"width", LW}, {"height", LH}}}}},
+                                                 {"objects", {1}}, {"object_tags", sp.params["object_tags"]}}.dump();
+        // logit 0.3 a logit px from x = 64 (plate), at most 1.1 (a sigmoid: 0.75 grey); the matte is its sigmoid
+        std::vector<float> lg(LW * LH), mt(LW * LH);
+        for (int y = 0; y < LH; ++y)
+            for (int x = 0; x < LW; ++x) {
+                const float px8 = (x + 0.5f) * 8;
+                lg[y * LW + x] = std::min(1.1f, (px8 - 64) / 8 * 0.3f);
+                mt[y * LW + x] = 1 / (1 + std::exp(-lg[y * LW + x]));
+            }
+        CHECK(ml::writeNpy((d / "out" / "logit.1.npy").string(), lg.data(), LW, LH, 1, true));
+        CHECK(ml::writeNpy((d / "out" / "matte.1.npy").string(), mt.data(), LW, LH, 1, true));
+        n->params.data["ml"] = {{"main", {{"result", "seglg"}}}};
+        n->params.data["mask_output"] = "Hard Mask";
+        n->params.data["hard_threshold"] = 0.5;
+        n->paramsChanged();
+        auto im = render(*c, "TM", 1);
+        CHECK_NEAR(px(im, 100, 16, "A"), 1, 1e-6);  // solid inside (the sigmoid was 0.75)
+        CHECK_NEAR(px(im, 30, 16, "A"), 0, 1e-6);
+        CHECK_NEAR(px(im, 63, 16, "A"), 0, 1e-6);  // the edge on x = 64
+        CHECK_NEAR(px(im, 64, 16, "A"), 1, 1e-6);
+        n->params.data["mask_output"] = "RAW Mask";
+        n->paramsChanged();
+        CHECK_NEAR(px(render(*c, "TM", 1), 100, 16, "A"), 1 / (1 + std::exp(-1.1)), 2e-3);
+        // TrackMask's matte output is data to the viewer
+        CHECK(!n->outputIsData());
+        n->params.data["output"] = "matte";
+        CHECK(n->outputIsData());
+        n->params.data["output"] = "alpha";
+        // SAM High-Res: Refine edges with the weights it tracked with (no install), after Track by itself
+        std::filesystem::create_directories(home / "models" / "sam2.1-hiera-large");
+        std::ofstream(home / "models" / "sam2.1-hiera-large" / ".complete") << "";
+        n->params.data["mask_output"] = "SAM High-Res";
+        n->params.data["hires_tile"] = "1536";
+        n->paramsChanged();
+        auto rs = m->spec("refine", e);
+        CHECK(rs.error.empty() && rs.task == "matte_refine" && m->models(rs).empty());
+        CHECK(rs.params["model"] == "sam2.1-hiera-large" && rs.params["hires_tile"] == 1536);
+        CHECK(m->followUp("main") == "refine");
+        auto st = mlnodes::trackMaskRefinerStatus(n, 1);
+        CHECK(st.state == mlnodes::TrackMaskRefinerStatus::NotYet && st.text.find("SAM High-Res") != std::string::npos);
+        // its result: logits over the whole plate (half its size) with the edge moved to x = 70
+        auto rd = home / "jobs" / "hrlg";
+        std::filesystem::create_directories(rd / "out");
+        std::ofstream(rd / "job.json") << "{}";
+        std::ofstream(rd / "status.json") << json{{"state", "done"}}.dump();
+        std::ofstream(rd / "result.json") << json{{"outputs", {{"refined_1", {{"frames", {1}}, {"width", W / 2}, {"height", H / 2}}}}},
+                                                  {"crops", {{"1", {{"1", {0, 0, W, H}}}}}}, {"plate", {W, H}},
+                                                  {"object_tags", rs.params["object_tags"]}, {"kind", "logit"}}.dump();
+        std::vector<float> hr((W / 2) * (H / 2));
+        for (int y = 0; y < H / 2; ++y)
+            for (int x = 0; x < W / 2; ++x) hr[y * (W / 2) + x] = std::clamp(((x + 0.5f) * 2 - 70) * 0.5f, -16.0f, 16.0f);
+        CHECK(ml::writeNpy((rd / "out" / "refined_1.1.npy").string(), hr.data(), W / 2, H / 2, 1, true));
+        n->params.data["ml"]["refine"] = {{"result", "hrlg"}};
+        n->params.data["smooth_radius"] = 1;
+        n->paramsChanged();
+        CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::Refined);
+        auto ref = render(*c, "TM", 1);
+        std::printf("  SAM High-Res edge: %.3f %.3f %.3f\n", px(ref, 68, 16, "A"), px(ref, 70, 16, "A"), px(ref, 72, 16, "A"));
+        CHECK(px(ref, 67, 16, "A") < 0.05 && px(ref, 72, 16, "A") > 0.95 && px(ref, 0, 0, "A") < 1e-3 && px(ref, 127, 31, "A") > 0.999);
+        // the tile size is part of a refined frame's tag
+        n->params.data["hires_tile"] = "1024";
         n->paramsChanged();
         CHECK(mlnodes::trackMaskRefinerStatus(n, 1).state == mlnodes::TrackMaskRefinerStatus::NotYet);
         ml::setHome("");

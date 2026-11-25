@@ -242,6 +242,9 @@ def refine_with_fallback(fn, u8, tri, size, ctx, model, fake=False):
 
 
 def run(ctx, p, model_fn=None):
+    if str(p.get("model", "")).startswith("sam2.1-hiera-"):  # SAM High-Res: the tracked edge again, in tiles
+        from . import sam_hires
+        return sam_hires.run(ctx, p, model_fn)
     src = ctx.input("src")
     if src is None:
         raise RuntimeError("connect the src input")

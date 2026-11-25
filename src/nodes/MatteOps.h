@@ -30,6 +30,10 @@ void boxMean(const float* in, float* out, int W, int H, int n, int r);
 bool guidedFilter(const float* p, const float* guide, float* q, int W, int H, int r, float eps, bool useGpu = true);
 
 void binarize(std::vector<float>& v, float threshold);
+// A model's logits (scaled up to W x H) -> a matte with an antialiased edge `width` px wide on their 0 crossing:
+// 0.5 + the signed distance to it (logit / its gradient) over width, clamped. Sharp at any upscale, and solid
+// 0 / 1 wherever the model said one or the other, however sure it was.
+void edgeFromLogits(std::vector<float>& v, int W, int H, float width);
 // px > 0 grows, < 0 shrinks. Returns true when it ran on the GPU.
 bool growShrink(std::vector<float>& v, int W, int H, int px, bool useGpu = true);
 void edgeOffset(std::vector<float>& v, int W, int H, double px, bool useGpu = true);

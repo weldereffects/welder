@@ -18,6 +18,7 @@ struct DisplayParams {
     float gamma = 1.0f;
     int channel = 0;     // 0 RGBA, 1 R, 2 G, 3 B, 4 A, 5 luminance
     int matte = 0;       // 1: alpha drawn as a red overlay (M)
+    int raw = 0;         // 1: the RGB is data (a matte): no display transform, like the alpha channel always
     // OCIO display transform (working space -> display / view); null: plain sRGB encode
     std::shared_ptr<const color::GpuShader> ocio;
 };
