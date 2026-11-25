@@ -218,6 +218,7 @@ Mesh makeSphere(double r, int rows, int cols) {
             double u0 = (double)i / cols, u1 = (double)(i + 1) / cols, v0 = (double)j / rows, v1 = (double)(j + 1) / rows;
             b.quad(a * r, bb * r, c * r, d * r, a, bb, c, d, u0, v0, u1, v0, u1, v1, u0, v1);
         }
+    b.m.wrapU = true;
     return b.m;
 }
 
@@ -238,6 +239,7 @@ Mesh makeCylinder(double r, double h, int rows, int cols, bool top, bool bottom)
             double u0 = (double)i / cols, u1 = (double)(i + 1) / cols, v0 = (double)j / rows, v1 = (double)(j + 1) / rows;
             b.quad(P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1), N(i), N(i + 1), N(i + 1), N(i), u0, v0, u1, v0, u1, v1, u0, v1);
         }
+    b.m.wrapU = true;  // (the caps' uvs are inside, nowhere near the seam)
     for (int cap = 0; cap < 2; ++cap) {
         if ((cap == 0 && !bottom) || (cap == 1 && !top)) continue;
         double y = cap ? h / 2 : -h / 2;

@@ -35,6 +35,8 @@ struct Layer {
     std::vector<int> id, cov;  // channel indices, one per rank
 };
 Layer findLayer(const ChannelSet& cs, const std::string& layer);
+// The cryptomatte layers in `cs`, by the names `layer` takes (cryptoobject, Redshift's cryptoMesh...).
+std::vector<std::string> layerNames(const ChannelSet& cs);
 // The id covering pixel `px` most (0 coverage: none).
 bool topId(const float* px, const Layer& L, float& id);
 

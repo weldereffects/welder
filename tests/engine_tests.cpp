@@ -5690,6 +5690,21 @@ Connections:  {
         CHECK_NEAR(px(tri, 32, 24, "A"), 1.0, 1e-3);  // solid (not half see-through)
         CHECK_NEAR(px(tri, 32, 24, "B"), 0.6, 1e-3);
     });
+    test("ScanlineRender: no seam where a sphere's texture wraps around (#125)", [] {
+        // a flat grey texture on a sphere whose u = 0 / 1 seam faces the camera: every pixel on the
+        // sphere is that grey (the seam blended with transparent texels outside the texture before)
+        auto c = comp(json::array({{{"name", "T"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.5, 0.5, 1}}, {"format", {64, 32}}}}},
+                                   {{"name", "Ball"}, {"type", "Sphere"}, {"inputs", {"T"}}},
+                                   {{"name", "Cam"}, {"type", "Camera"}, {"params", {{"translate", {0, 0, 4}}}}},
+                                   {{"name", "S"}, {"type", "ScanlineRender"}, {"inputs", {nullptr, "Ball", "Cam"}}}}),
+                       200, 150);
+        auto im = render(*c, "S");
+        double lo = 1;
+        for (int y = 60; y < 90; ++y)
+            for (int x = 94; x < 106; ++x) lo = std::min(lo, (double)px(im, x, y, "R"));
+        std::printf("    darkest pixel across the seam: %.3f (texture 0.5)\n", lo);
+        CHECK(lo > 0.49);
+    });
     test("ScanlineRender: a card that fills the default camera reproduces its texture; depth; projection", [] {
         const double d = 1.0 / (24.576 / 50);  // card width 1 fills the frame at this distance
         auto c = comp(json::array({{{"name", "T"}, {"type", "TestPattern"}},
@@ -7629,6 +7644,14 @@ Connections:  {
                 CHECK(crypto::findLayer(cs, "cryptomaterial").id.empty());
             }
             CHECK(crypto::findLayer({"crypto_material00.R", "crypto_material00.G"}, "cryptomaterial").id.size() == 1);
+        }
+        {  // a renderer's own layer name (Redshift's cryptoMesh, #120): listed for the layer menu, and found by it
+            ChannelSet cs = {"R", "G", "B", "A", "cryptoMesh00.R", "cryptoMesh00.G", "cryptoMesh00.B", "cryptoMesh00.A",
+                             "crypto_object00.R", "crypto_object00.G", "Plain00.R", "Plain00.G"};
+            auto names = crypto::layerNames(cs);
+            CHECK(names.size() == 2 && names[0] == "cryptoMesh" && names[1] == "crypto_object");
+            CHECK(crypto::findLayer(cs, "cryptoMesh").id.size() == 2);
+            CHECK(crypto::findLayer(cs, "cryptomesh").id.size() == 2);
         }
         // Defocus keeps the light: the mean over the middle of a checkerboard stays 0.5, small and large radii
         for (double r : {6.0, 60.0}) {

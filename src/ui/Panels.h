@@ -64,6 +64,8 @@ struct ViewerState {
     std::string layer = "rgba";
     std::vector<std::string> layers = {"rgba"};
     bool fullRes = false;
+    bool roiOn = false;   // render only inside `roi` (#126)
+    Box roi;              // full-res pixels
     Box reqRegion;        // last region requested from the renderer (full-res pixels)
     double reqScale = 0;
     float zoom = 1.0f;

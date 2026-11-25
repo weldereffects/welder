@@ -401,6 +401,7 @@ void App::loadSettings() {
             rightAnglePipes = j.value("graph_right_angle_pipes", rightAnglePipes);
             altDragCuts = j.value("graph_alt_drag_cuts", altDragCuts);
             middleDragZooms = j.value("middle_drag_zooms", middleDragZooms);
+            autoProxy = j.value("viewer_auto_proxy", autoProxy);
             uncPaths = j.value("unc_paths", uncPaths);
             autosaveSecs = j.value("autosave_seconds", autosaveSecs);
             rotoShowPoints = j.value("roto_show_points", rotoShowPoints);
@@ -464,6 +465,7 @@ void App::saveSettings() {
     j["graph_right_angle_pipes"] = rightAnglePipes;
     j["graph_alt_drag_cuts"] = altDragCuts;
     j["middle_drag_zooms"] = middleDragZooms;
+    j["viewer_auto_proxy"] = autoProxy;
     j["unc_paths"] = uncPaths;
     j["autosave_seconds"] = autosaveSecs;
     j["roto_show_points"] = rotoShowPoints;
@@ -644,27 +646,50 @@ uint64_t App::viewStamp(Engine& eng, Node* n, Node* b, double f, double sc) {
 
 void App::revalidateFrames() {
     // Called with the comp locked for writing: no render is using engine_ now.
-    const uint64_t before = editGen_.load();
     ++editGen_;
+    {
+        std::lock_guard<std::mutex> l(resM_);
+        if (frameCache_.empty()) return;
+    }
+    revalPending_ = true;
+    // A short pass here (the frames on screen next, mostly); the read-ahead threads check the rest
+    // before they render anything (#137: a long cache used to lose every frame past 15 ms).
+    static const double firstMs = std::getenv("STRATA_TEST_REVAL_MS") ? std::atof(std::getenv("STRATA_TEST_REVAL_MS")) : 15.0;  // (tests: 0)
+    revalStep(*engine_, firstMs);
+}
+
+// Cached frames an edit may have left as they were: a frame whose content stamp is still what the
+// comp would render now is kept (any generation: an undo gets the older frames back too). With the
+// comp locked (shared or exclusive). Returns true when every frame has been checked.
+bool App::revalStep(Engine& eng, double budgetMs) {
+    const uint64_t eg = editGen_.load();
+    const auto until = std::chrono::steady_clock::now() + std::chrono::microseconds((int64_t)(budgetMs * 1000));
+    int kept = 0, checked = 0;
+    bool all = true;
     std::lock_guard<std::mutex> l(resM_);
-    if (frameCache_.empty()) return;
-    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(15);  // (a long cache: the rest re-render)
-    int kept = 0;
     for (auto& [key, cf] : frameCache_) {
-        if (cf.gen != before || !cf.content) continue;
-        if (std::chrono::steady_clock::now() > until) break;
-        Node* n = comp->find(key.first);
-        Node* b = cf.compare.empty() ? nullptr : comp->find(cf.compare);
+        if (cf.gen == eg || !cf.content || cf.checked == eg) continue;
+        if (std::chrono::steady_clock::now() > until) {
+            all = false;
+            break;
+        }
+        cf.checked = eg;
+        ++checked;
+        Node* n = comp ? comp->find(key.first) : nullptr;
+        Node* b = cf.compare.empty() || !comp ? nullptr : comp->find(cf.compare);
         if (!n || (!cf.compare.empty() && !b)) continue;
         try {
-            if (viewStamp(*engine_, n, b, key.second, cf.scale) == cf.content) {
-                cf.gen = editGen_;
+            if (viewStamp(eng, n, b, key.second, cf.scale) == cf.content) {
+                cf.gen = eg;
                 ++kept;
             }
         } catch (...) {
         }
     }
-    if (std::getenv("STRATA_DEBUG_AHEAD")) std::fprintf(stderr, "edit: kept %d of %zu cached frames\n", kept, frameCache_.size());
+    if (all && editGen_.load() == eg) revalPending_ = false;
+    if (std::getenv("STRATA_DEBUG_AHEAD") && checked)
+        std::fprintf(stderr, "edit: kept %d of %d checked (%zu cached frames)%s\n", kept, checked, frameCache_.size(), all ? "" : ", more to check");
+    return all;
 }
 
 static const bool kDebugEdits = std::getenv("WELDER_DEBUG_EDITS") != nullptr;
@@ -1062,6 +1087,7 @@ ViewResult App::renderView(Engine& eng, const std::string& nodeName, const std::
         Format fmt = n->format(eng, f);
         Box d = eng.dod(n, f);
         Box show = viewBox(fmt, d, sc, region);
+        r.whole = !show.empty() && show == viewBox(fmt, d, sc, Box());
         if (!show.empty()) r.image = renderCached(eng, n, f, show, &r.fromDisk);
         // A/B: the other node over the same pixels
         if (Node* b = !compare.empty() && compare != nodeName && comp ? comp->find(compare) : nullptr) {
@@ -1101,7 +1127,23 @@ void App::workerLoop() {
             target = viewScale_;
             region = viewRegion_;
             compare = compareNode_;
-            coarseAllowed = !playing;  // playback wants finished frames, not previews
+            coarseAllowed = !playing && autoProxy;  // playback wants finished frames, not previews
+        }
+        if (revalPending_) {
+            // an edit left cached frames to check: this one may well still be good (#137)
+            bool expected = false;
+            if (revalBusy_.compare_exchange_strong(expected, true)) {
+                try {
+                    auto cl = readComp("revalidate cached frames");
+                    revalStep(*engine_, 30.0);
+                } catch (...) {
+                }
+                revalBusy_ = false;
+            }
+            if (!precacheJob && takeCached(nodeName, f, gen)) {
+                if (onResult) onResult();
+                continue;
+            }
         }
         if (precacheJob) {
             // the next frame of the play range that isn't cached yet
@@ -1111,8 +1153,7 @@ void App::workerLoop() {
                 std::lock_guard<std::mutex> l(resM_);
                 for (int fr = (int)std::lround(a); fr <= (int)std::lround(b); ++fr) {
                     auto it = frameCache_.find({nodeName, fr});
-                    if (it == frameCache_.end() || it->second.gen != editGen_ || it->second.scale != target ||
-                        it->second.region != region || it->second.compare != compare) {
+                    if (!aheadFresh(nodeName, fr, target, region, compare)) {
                         next = fr;
                         break;
                     }
@@ -1339,7 +1380,8 @@ bool App::takeCached(const std::string& node, double f, uint64_t forGen) {
     result_ = c.r;
     result_.half = c.image;
     if (c.image) result_.image = unpackFrame(*c.image);
-    if (c.imageB) result_.imageB = unpackFrame(*c.imageB);
+    if (compare.empty() && !c.compare.empty()) result_.nodeB.clear();  // (A of an A/B frame: the plain view)
+    else if (c.imageB) result_.imageB = unpackFrame(*c.imageB);
     result_.serial = ++resultSerial_;
     shownScale_ = c.scale;  // (finer than asked, when servesView took a full-res frame)
     {
@@ -1477,16 +1519,27 @@ void App::setPrecache(bool on) {
 // same pixels (Full res just turned off: the frames rendered at full size still play, rather than
 // the first loop waiting on renders; the viewer draws any scale). The read-ahead (aheadFresh) still
 // wants the exact scale, so it replaces those frames with smaller ones as it goes.
+// The cached pixels cover what `region` would show: the same request, a larger one, or the whole
+// image (then any region; #137: zooming out in Full res, past the region it was rendered for,
+// re-rendered every frame).
+static bool regionServes(bool whole, const Box& have, const Box& want) {
+    if (have == want || whole) return true;
+    return !want.empty() && !have.empty() && have.intersect(want) == want;
+}
+
 bool App::servesView(const CachedFrame& c, double scale, const Box& region, const std::string& compare) const {
-    if (c.gen != editGen_ || c.compare != compare) return false;
-    if (c.scale == scale && c.region == region) return true;
-    return c.scale > scale && !region.empty() && c.region.intersect(region) == region;
+    // (a frame rendered with an A/B compare still holds A: it serves the plain view as well)
+    if (c.gen != editGen_ || (c.compare != compare && !compare.empty())) return false;
+    if (c.scale == scale) return regionServes(c.r.whole, c.region, region);
+    return c.scale > scale && regionServes(c.r.whole, c.region, region);
 }
 
 bool App::aheadFresh(const std::string& node, int f, double scale, const Box& region, const std::string& compare) {
     auto it = frameCache_.find({node, f});
-    return it != frameCache_.end() && it->second.gen == editGen_ && it->second.scale == scale &&
-           it->second.region == region && it->second.compare == compare;
+    if (it == frameCache_.end()) return false;
+    const CachedFrame& c = it->second;
+    return c.gen == editGen_ && c.scale == scale && (c.compare == compare || compare.empty()) &&
+           regionServes(c.r.whole, c.region, region);
 }
 
 void App::aheadLoop(int idx) {
@@ -1510,6 +1563,23 @@ void App::aheadLoop(int idx) {
             compare = compareNode_;
             dir = playDirSnap_ < 0 ? -1 : 1;
             play = playing;
+        }
+        if (revalPending_) {
+            // an edit left cached frames to check: keep the ones it didn't change before rendering any
+            // (one thread checks, the others wait for it rather than re-render frames that are fine)
+            bool expected = false;
+            if (revalBusy_.compare_exchange_strong(expected, true)) {
+                try {
+                    auto cl = readComp("revalidate cached frames");
+                    revalStep(E, 50.0);
+                } catch (...) {
+                }
+                revalBusy_ = false;
+                if (onResult) onResult();  // the timeline's cache line
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            continue;
         }
         auto [ra, rb] = playRange();
         const int A = (int)std::lround(ra), B = (int)std::lround(rb), len = B - A + 1;

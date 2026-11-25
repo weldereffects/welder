@@ -1633,7 +1633,20 @@ void knobBody(Ctx& c, const KnobDef& k) {
             size_t idx = (size_t)std::atof(cur.c_str());
             if (idx < k.options.size()) cur = k.options[idx];
         }
-        const std::vector<std::string> opts = k.options.empty() ? c.node->knobChoices(k.name) : k.options;
+        std::vector<std::string> opts = k.options.empty() ? c.node->knobChoices(k.name) : k.options;
+        if (c.node->type == "Cryptomatte" && k.name == "layer") {
+            // the layers the input has, under whatever name its renderer gave them (Redshift: cryptoMesh, #120)
+            if (Node* in = c.node->input(0))
+                for (auto& l : crypto::layerNames(c.app.channelsOf(in->name))) {
+                    auto norm = [](std::string x) {  // crypto_object reads as cryptoobject
+                        for (auto& ch : x) ch = (char)std::tolower((unsigned char)ch);
+                        x.erase(std::remove(x.begin(), x.end(), '_'), x.end());
+                        return x;
+                    };
+                    if (std::none_of(opts.begin(), opts.end(), [&](const std::string& o) { return norm(o) == norm(l); })) opts.push_back(l);
+                }
+            if (!cur.empty() && std::find(opts.begin(), opts.end(), cur) == opts.end()) opts.push_back(cur);
+        }
         if (kit::beginCombo("##c", cur.c_str(), k.width > 0 ? k.width : std::min(avail, 220.0f))) {
             for (auto& o : opts)
                 if (ImGui::Selectable(o.c_str(), o == cur)) {

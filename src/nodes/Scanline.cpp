@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cmath>
 #include <map>
+#include <tuple>
 
 #include "../core/Comp.h"
 #include "../core/Deep.h"
@@ -42,8 +43,12 @@ struct Tex {
     int W = 0, H = 0;  // texel space size (the image format at render scale)
     int ox = 0, oy = 0;  // level-0 origin in image pixels (the dod corner)
 
-    void fetch(int L, int x, int y, float* o) const {
+    void fetch(int L, int x, int y, float* o, bool wrap = false) const {
         const Level& lv = levels[L];
+        // around a closed surface (a sphere's u = 1 meets u = 0): the texels past the right edge are
+        // the left edge's, not transparent (which drew a thin dark seam, #125). Only a texture as
+        // wide as the format: one with a bbox of its own stops at its edges.
+        if (wrap && ox == 0 && levels[0].w == W && lv.w > 0) x = ((x % lv.w) + lv.w) % lv.w;
         if (x < 0 || y < 0 || x >= lv.w || y >= lv.h) {
             o[0] = o[1] = o[2] = o[3] = 0;
             return;
@@ -55,16 +60,16 @@ struct Tex {
         o[3] = p[3];
     }
     // bilinear at image pixel position (x, y) on level L (positions in level-0 pixels)
-    void bilinear(int L, double x, double y, float* o) const {
+    void bilinear(int L, double x, double y, float* o, bool wrap = false) const {
         const double s = 1.0 / (1 << L);
         double lx = (x - ox) * s - 0.5, ly = (y - oy) * s - 0.5;
         int x0 = (int)std::floor(lx), y0 = (int)std::floor(ly);
         float fx = (float)(lx - x0), fy = (float)(ly - y0);
         float a[4], b[4], c[4], d[4];
-        fetch(L, x0, y0, a);
-        fetch(L, x0 + 1, y0, b);
-        fetch(L, x0, y0 + 1, c);
-        fetch(L, x0 + 1, y0 + 1, d);
+        fetch(L, x0, y0, a, wrap);
+        fetch(L, x0 + 1, y0, b, wrap);
+        fetch(L, x0, y0 + 1, c, wrap);
+        fetch(L, x0 + 1, y0 + 1, d, wrap);
         for (int k = 0; k < 4; ++k) {
             float t = a[k] + (b[k] - a[k]) * fx, u = c[k] + (d[k] - c[k]) * fx;
             o[k] = t + (u - t) * fy;
@@ -73,50 +78,50 @@ struct Tex {
     // Over a footprint given by how the lookup moves for a pixel step in x (ax, ay) and in y (bx, by),
     // in level-0 pixels: up to 8 lookups spread along the long axis, at the mip level of the short one
     // (anisotropic; one lookup when the footprint is round).
-    void sampleFootprint(double x, double y, double ax, double ay, double bx, double by, int mode, float* o) const {
+    void sampleFootprint(double x, double y, double ax, double ay, double bx, double by, int mode, float* o, bool wrap = false) const {
         const double la = std::hypot(ax, ay), lb = std::hypot(bx, by);
         const double major = std::max(la, lb), minor = std::max(1e-9, std::min(la, lb));
         if (mode != 2 || major <= 1.0) {
-            sample(x, y, 0, mode, o);
+            sample(x, y, 0, mode, o, wrap);
             return;
         }
         const int N = std::clamp((int)std::ceil(major / minor), 1, 8);
         const double lod = std::max(0.0, std::log2(std::max(1.0, major / N)) - 0.5);  // a touch sharper than the box mips
         const double dx = la >= lb ? ax : bx, dy = la >= lb ? ay : by;
         if (N == 1) {
-            sample(x, y, lod, mode, o);
+            sample(x, y, lod, mode, o, wrap);
             return;
         }
         o[0] = o[1] = o[2] = o[3] = 0;
         float p[4];
         for (int i = 0; i < N; ++i) {
             const double f = (i + 0.5) / N - 0.5;
-            sample(x + dx * f, y + dy * f, lod, mode, p);
+            sample(x + dx * f, y + dy * f, lod, mode, p, wrap);
             for (int k = 0; k < 4; ++k) o[k] += p[k];
         }
         for (int k = 0; k < 4; ++k) o[k] /= N;
     }
-    void sample(double x, double y, double lod, int mode, float* o) const {
+    void sample(double x, double y, double lod, int mode, float* o, bool wrap = false) const {
         if (levels.empty()) {
             o[0] = o[1] = o[2] = o[3] = 0;
             return;
         }
         if (mode == 0) {  // impulse
-            fetch(0, (int)std::floor(x - ox), (int)std::floor(y - oy), o);
+            fetch(0, (int)std::floor(x - ox), (int)std::floor(y - oy), o, wrap);
             return;
         }
         if (mode == 1 || lod <= 0) {
-            bilinear(0, x, y, o);
+            bilinear(0, x, y, o, wrap);
             return;
         }
         int maxL = (int)levels.size() - 1;
         lod = std::min(lod, (double)maxL);
         int L0 = (int)std::floor(lod);
         float t = (float)(lod - L0);
-        bilinear(L0, x, y, o);
+        bilinear(L0, x, y, o, wrap);
         if (t > 1e-3 && L0 < maxL) {
             float p[4];
-            bilinear(L0 + 1, x, y, p);
+            bilinear(L0 + 1, x, y, p, wrap);
             for (int k = 0; k < 4; ++k) o[k] += (p[k] - o[k]) * t;
         }
     }
@@ -185,6 +190,7 @@ struct MatR {
     cam3d::Camera cam;   // projection
     double pw = 0, ph = 0;  // projector image size (render scale)
     bool crop = true;
+    bool wrapU = false;  // the mesh closes around u (Mesh::wrapU)
 };
 
 struct Prepared {
@@ -481,7 +487,7 @@ private:
             // exact derivatives of u = U / Z (and v) in screen space, in texels
             double dudx = (t.u[0] - u * t.z[0]) * iz * m.tex->W, dudy = (t.u[1] - u * t.z[1]) * iz * m.tex->W;
             double dvdx = (t.v[0] - v * t.z[0]) * iz * m.tex->H, dvdy = (t.v[1] - v * t.z[1]) * iz * m.tex->H;
-            m.tex->sampleFootprint(u * m.tex->W, v * m.tex->H, dudx, dvdx, dudy, dvdy, fmode, c);
+            m.tex->sampleFootprint(u * m.tex->W, v * m.tex->H, dudx, dvdx, dudy, dvdy, fmode, c, m.wrapU);
             return;
         }
         // projection: world position -> projector image (and a pixel over, for the mip level)
@@ -531,7 +537,7 @@ private:
             sx = P->W * 0.5 + fp * q.x / -q.z;
             sy = P->H * 0.5 + fp * q.y / -q.z;
         };
-        std::map<std::pair<Node*, Node*>, int> matIndex;
+        std::map<std::tuple<Node*, Node*, bool>, int> matIndex;
         // Textures: one per image, shared between frames while the image doesn't change (a held
         // frame, a still), rendered on all threads. (Kept per frame they took ~180 MB each at 4K,
         // for every cached frame.)
@@ -554,7 +560,8 @@ private:
             if (e.cancelled()) throw RenderCancelled();
             const geo::Object* oN = withVectors && oi < objN.size() && objN[oi].node == o.node ? &objN[oi] : nullptr;
             const geo::Object* oP = withVectors && oi < objP.size() && objP[oi].node == o.node ? &objP[oi] : nullptr;
-            auto key = std::make_pair(o.mat.owner, o.mat.image);
+            const bool wrapU = o.mat.kind == geo::Material::Texture && o.mesh && o.mesh->wrapU;
+            auto key = std::make_tuple(o.mat.owner, o.mat.image, wrapU);
             int mi;
             auto it = matIndex.find(key);
             if (it != matIndex.end()) {
@@ -562,6 +569,7 @@ private:
             } else {
                 MatR m;
                 m.kind = o.mat.kind;
+                m.wrapU = wrapU;
                 if (o.mat.image) m.tex = texOf(o.mat.image);
                 if (m.kind == geo::Material::Projection) {
                     m.cam = o.mat.camera;
