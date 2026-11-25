@@ -97,7 +97,7 @@ public:
     // Deep samples covering exactly `box` (none outside the node's dod). A flat node's pixels
     // come back as one sample each (deepFromFlat). Deep tiles have their own cache.
     DeepPtr requestDeep(Node* n, double frame, const Box& box);
-    // The same, with the tiles rendered on all worker threads (DeepWrite).
+    // The same, with the tiles rendered on all worker threads (a Write with deep on).
     DeepPtr renderDeepRegion(Node* n, double frame, const Box& box);
     // What requestDeep's images hold, following bypasses, groups and pass-throughs.
     ChannelSet deepChannels(Node* n, double frame);

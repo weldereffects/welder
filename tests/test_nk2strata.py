@@ -1583,3 +1583,18 @@ class ColorImport(unittest.TestCase):
         comp, report, n = convert("Root {\n inputs 0\n}\nRead {\n inputs 0\n file a.png\n colorspace linear\n name R\n}\n")
         self.assertEqual(comp["project"]["color"]["working"], "Linear Rec.709 (sRGB)")
         self.assertEqual(n["R"]["params"]["colorspace"], "working")
+
+
+class DeepWriteImport(unittest.TestCase):
+    def test_deepwrite_becomes_write_with_deep(self):
+        _, _, n = convert("""
+DeepRead { inputs 0 file /tmp/a.exr name DR }
+DeepWrite { file /tmp/out.####.exr datatype "32 bit float" compression "RLE" name DW }
+""")
+        w = n["DW"]
+        self.assertEqual(w["type"], "Write")
+        self.assertTrue(w["params"]["deep"])
+        self.assertEqual(w["params"]["file_type"], "exr")
+        self.assertEqual(w["params"]["datatype"], "float")
+        self.assertEqual(w["params"]["compression"], "rle")
+        self.assertEqual(w["inputs"], ["DR"])

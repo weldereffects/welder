@@ -60,7 +60,7 @@
 - [x] BlenderRender: Cycles / EEVEE renders through the Welder camera with Welder geometry (visible, shadow catcher, holdout; textures and Project3D projections), cached frames, passes as channels
 - [ ] Blender next: lights and cameras from Welder 3D lights, Alembic / USD exchange, render on another machine
 - [ ] AI next: LTX text / image to video, splats in ScanlineRender (with geometry), splat editing (crop boxes), remote workers
-- [x] Deep compositing, part 1: deep samples through the graph (any flat node sees them flattened), DeepRead (deep scanline / tiled EXR), DeepToImage, DeepWrite
+- [x] Deep compositing, part 1: deep samples through the graph (any flat node sees them flattened), DeepRead (deep scanline / tiled EXR), DeepToImage, deep EXR writing (Write with deep on; DeepWrite in 0.2.6)
 - [x] Deep compositing, part 2: DeepMerge (combine / plus / holdout; volumes split where they overlap), DeepHoldout, DeepFromImage, DeepRecolor, DeepGrade, DeepColorCorrect, DeepTransform, DeepCrop, DeepReformat
 - [x] Deep compositing, part 3: ScanlineRender as a deep source (every surface per pixel), DeepSample, DeepToPoints in the 3D viewer, deep samples from Python (`deep_samples`) and MCP (`sample_deep`)
 - [x] Deep compositing, part 4: flatten and DeepMerge on the GPU (CPU fallback), deep-aware ZDefocus, deep samples under the viewer cursor

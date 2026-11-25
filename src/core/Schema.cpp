@@ -231,13 +231,17 @@ std::vector<NodeDef> build() {
                   Width(CS("colorspace", "Output Transform", "default", {"default", "working"}), 200),
                   Same(B("raw", "raw data", false)),
                   Div("@ext Options"),
+                  When(B("deep", "deep", false,
+                         "Writes the input's deep samples (DeepRead, DeepMerge, ScanlineRender ...) as a deep scanline EXR: "
+                         "the data window is the input's bbox, depths are always float, compression none, rle or zips "
+                         "(the others write zips). A flat input goes as one sample a pixel at its depth.Z."), "@ext=exr"),
                   When(Width(C("datatype", "datatype", "half", {"half", "float"}), 90), "@ext=exr"),
                   When(Width(C("compression", "compression", "zip", {"none", "rle", "zips", "zip", "piz", "pxr24", "b44", "b44a", "dwaa", "dwab"}), 90), "@ext=exr"),
-                  When(F("dwa_level", "dw compression level", 45, 0, 200), "@ext=exr"),
-                  When(Width(C("data_window", "data window", "format", {"format", "bbox"}), 90), "@ext=exr"),
+                  When(F("dwa_level", "dw compression level", 45, 0, 200), "@ext=exr & deep=false"),
+                  When(Width(C("data_window", "data window", "format", {"format", "bbox"}), 90), "@ext=exr & deep=false"),
                   When(Tip(Width(C("metadata", "metadata", "all", {"all", "timecode only"}), 110),
                            "all: the input's metadata goes into the EXR header (exr/<name> as <name>; not the input/... "
-                           "facts about the file read). timecode only: just the timecode and frame rate"), "@ext=exr"),
+                           "facts about the file read). timecode only: just the timecode and frame rate"), "@ext=exr & deep=false"),
                   When(Width(C("bit_depth", "datatype", "default", {"default", "8", "10", "12", "16", "32 float"}), 90), "@ext=dpx|tif|tiff|png"),
                   When(Width(C("tiff_compression", "compression", "zip", {"none", "lzw", "zip", "packbits"}), 90), "@ext=tif|tiff"),
                   When(Width(C("codec", "codec", "prores 422 hq", {"prores 4444", "prores 4444 xq", "prores 422 hq", "prores 422",
@@ -2048,14 +2052,6 @@ std::vector<NodeDef> build() {
                   F("alpha_threshold", "alpha threshold", 0.01, 0, 1), I("max_points", "max points", 500000, 1000, 5000000),
                   InfoRow("status", "")},
                  "Shows deep samples as a point cloud in the 3D viewer, placed through the camera input."});
-    d.push_back({"DeepWrite", "Deep",
-                 {Width(C("channels", "channels", "all", {"all", "rgba"}), 90), File("file", "file"),
-                  Width(CS("colorspace", "Output Transform", "default", {"default", "working"}), 200),
-                  Tip(Width(C("datatype", "datatype", "half", {"half", "float"}), 90), "colour and alpha; depths are always float"),
-                  Width(C("compression", "compression", "zips", {"none", "rle", "zips"}), 90),
-                  B("use_limit", "limit to range", false), Same(EnableIf(Field(I("first", "", 1, -100000, 100000), 64), "use_limit=true"), true),
-                  Same(EnableIf(Field(I("last", "", 100, -100000, 100000), 64), "use_limit=true"), true)},
-                 "Writes deep samples as a deep scanline EXR (the data window is the input's bbox)."});
     d.push_back({"Camera", "3D",
                  {XYZ("translate", "translate", json::array({0, 0, 0}), -100, 100), XYZ("rotate", "rotate", json::array({0, 0, 0}), -180, 180),
                   C("rot_order", "rotation order", "ZXY", rotOrders), Div("Projection"),

@@ -121,6 +121,9 @@ std::unique_ptr<Comp> Comp::fromJson(const json& j, const std::filesystem::path&
         if (name.empty()) throw RenderError("node without a name (type " + type + ")");
         if (byName.count(name)) throw RenderError("duplicate node name: " + name);
 
+        // DeepWrite (0.2.6) is now Write with deep on
+        const bool wasDeepWrite = type == "DeepWrite";
+        if (wasDeepWrite) type = "Write";
         bool unknown = false;
         std::unique_ptr<Node> n = createNode(type, &unknown);
         if (unknown)
@@ -128,6 +131,12 @@ std::unique_ptr<Comp> Comp::fromJson(const json& j, const std::filesystem::path&
         n->name = name;
         n->comp = c.get();
         if (jn.contains("params")) n->params.data = jn["params"];
+        if (wasDeepWrite) {
+            if (!n->params.data.is_object()) n->params.data = json::object();
+            n->params.data["deep"] = true;
+            n->params.data["file_type"] = "exr";
+            if (!n->params.data.contains("compression")) n->params.data["compression"] = "zips";
+        }
         if (jn.contains("ui") && jn["ui"].is_object()) {
             n->ui = jn["ui"];
             if (cleanUi(n->ui)) c->warnings.push_back(name + " had no valid position in the node graph: placed it again");
@@ -247,12 +256,19 @@ std::string Comp::uniqueName(const std::string& base) const {
     }
 }
 
-Node* Comp::addNode(const std::string& type, const std::string& baseName, const json& params, const json& ui) {
+Node* Comp::addNode(const std::string& type0, const std::string& baseName, const json& params, const json& ui) {
+    const bool wasDeepWrite = type0 == "DeepWrite";  // (0.2.6) now Write with deep on
+    const std::string type = wasDeepWrite ? "Write" : type0;
     bool unknown = false;
     std::unique_ptr<Node> n = createNode(type, &unknown);
     n->name = uniqueName(baseName.empty() ? type + "1" : baseName);
     n->comp = this;
     n->params.data = params.is_object() ? params : json::object();
+    if (wasDeepWrite) {
+        n->params.data["deep"] = true;
+        n->params.data["file_type"] = "exr";
+        if (!n->params.data.contains("compression")) n->params.data["compression"] = "zips";
+    }
     n->ui = ui.is_object() ? ui : json::object();
     cleanUi(n->ui);
     n->init();  // may throw; nothing has been added yet

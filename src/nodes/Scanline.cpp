@@ -4,7 +4,7 @@
 // "medium", "high": 1, 2, 3, 4 samples per pixel per axis), filter (texture
 // filtering: "impulse", "bilinear", "trilinear"), z_channel (true: depth.Z = 1/z).
 //
-// It is also a deep node: deep nodes downstream (DeepMerge, DeepHoldout, DeepWrite...) get every
+// It is also a deep node: deep nodes downstream (DeepMerge, DeepHoldout, a deep Write...) get every
 // surface in each pixel as a sample, hidden ones too (see renderDeep), while flat nodes get the
 // ordinary render.
 //

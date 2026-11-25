@@ -10093,7 +10093,7 @@ Connections:  {
         CHECK(px(b, 10, 10, "id") == px(a, 10, 10, "id"));
     });
 
-    test("deep: DeepRead -> DeepWrite keeps every sample (tiles assembled)", [&] {
+    test("deep: DeepRead -> Write (deep) keeps every sample (tiles assembled)", [&] {
         DeepImage d = makeDeep();
         Format f;
         f.width = 48;
@@ -10102,9 +10102,16 @@ Connections:  {
         DeepExrWriteOptions o;
         o.type = ExrPixelType::Float;
         writeDeepExr(p, d, f, o);
+        // (a 0.2.6 DeepWrite loads as a Write with deep on)
+        const std::string q2 = (deepDir / "rgba.exr").string(), q3 = (deepDir / "flat.exr").string();
         auto c = comp(json::array({json{{"name", "D"}, {"type", "DeepRead"}, {"params", {{"file", p}}}},
-                                   json{{"name", "W"}, {"type", "DeepWrite"}, {"inputs", {"D"}}, {"params", {{"file", q}, {"datatype", "float"}}}}}),
+                                   json{{"name", "W"}, {"type", "DeepWrite"}, {"inputs", {"D"}}, {"params", {{"file", q}, {"datatype", "float"}}}},
+                                   json{{"name", "W2"}, {"type", "Write"}, {"inputs", {"D"}},
+                                        {"params", {{"file", q2}, {"deep", true}, {"channels", "rgb"}, {"compression", "piz"}}}},
+                                   json{{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.5, 0.25, 0, 1}}}}},
+                                   json{{"name", "W3"}, {"type", "Write"}, {"inputs", {"K"}}, {"params", {{"file", q3}, {"deep", true}}}}}),
                       48, 36);
+        CHECK(c->find("W")->type == "Write" && c->find("W")->params.flag("deep", false));
         EngineOptions eo;
         eo.tileSize = 16;  // many tiles: the write assembles them
         Engine e(eo);
@@ -10112,10 +10119,25 @@ Connections:  {
         DeepExrFile r = readDeepExr((deepDir / "out.0007.exr").string());
         CHECK(sameDeep(d, *r.image, 0));
         CHECK(r.header.compression == "zips");
+        // rgb asked for: A, Z and ZBack still go; piz (flat only) writes zips; colour as half
+        c->find("W2")->execute(e, 1);
+        DeepExrFile r2 = readDeepExr(q2);
+        CHECK(r2.header.compression == "zips");
+        CHECK(r2.image->channels.size() == 6 && r2.image->ch("ZBack") >= 0 && r2.image->ch("A") >= 0);
+        CHECK(r2.image->total() == d.total());
+        // a flat input: one sample a pixel, infinitely far (no depth.Z)
+        c->find("W3")->execute(e, 1);
+        DeepExrFile r3 = readDeepExr(q3);
+        CHECK(r3.image->count(3, 3) == 1 && std::fabs(r3.image->sample(3, 3)[r3.image->ch("G")] - 0.25f) < 1e-3);
+        CHECK(std::isinf(r3.image->sample(3, 3)[r3.image->zi]));
+        // to .nk: a deep Write is a DeepWrite there
+        const std::string nkText = nk::exportNodes(json::parse(R"([{"name": "W", "type": "Write", "params": {"file": "d.####.exr", "deep": true}},
+            {"name": "F", "type": "Write", "params": {"file": "f.####.exr"}}])")).text;
+        CHECK(nkText.find("DeepWrite {") != std::string::npos && nkText.find("\nWrite {") != std::string::npos);
         // a request across tile edges is the same as the file
         DeepPtr part = e.requestDeep(c->find("D"), 1, Box(5, 4, 37, 29));
         CHECK(sameDeep(*DeepImage::crop(d, Box(5, 4, 37, 29), d.channels), *part, 0));
-        // a disabled DeepRead gives nothing; DeepWrite passes its input through to the viewer
+        // Write passes its input through (deep samples too)
         CHECK(e.deepChannels(c->find("W"), 1) == d.channels);
     });
 

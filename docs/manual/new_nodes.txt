@@ -144,7 +144,6 @@ PrismLens
 PixelMosh
 DeepRead
 DeepToImage
-DeepWrite
 DeepMerge
 DeepHoldout
 DeepFromImage

@@ -16,6 +16,7 @@
 #include "../io/MovieIO.h"
 #include "../io/RasterIO.h"
 #include "Cryptomatte.h"
+#include "DeepNodes.h"
 #include "DeepUtil.h"
 #include "NodeUtils.h"
 
@@ -713,7 +714,8 @@ private:
 //         10 | 12 | 16 | "32 float"; DPX / TIFF / PNG), tiff_compression,
 //         raw (skip linear->sRGB for 8-bit formats), disable; movies: codec, quality,
 //         and for h.264 / h.265 encoder, rate_control, bitrate, h264_profile /
-//         h265_profile, encoder_speed, keyframes
+//         h265_profile, encoder_speed, keyframes; deep (EXR: the input's deep samples as a
+//         deep scanline EXR, see writeDeepFrame)
 class WriteNode : public Node {
 public:
     int identityInput(double) override { return 0; }
@@ -763,6 +765,10 @@ public:
         std::string pattern = params.str("file");
         if (pattern.empty()) throw RenderError(name + ": no output file set");
         std::string p = comp->resolvePath(expandFramePattern(pattern, (int)std::floor(frame + 0.5)));
+        if (params.flag("deep", false) && writesDeep(p)) {
+            writeDeepFrame(this, e, in, frame, p);
+            return;
+        }
 
         Format fmt = in->format(e, frame);
         ChannelSet avail = e.channels(in, frame);
@@ -811,6 +817,14 @@ public:
 private:
     std::unique_ptr<movie::Writer> movie_;
     bool session_ = false;
+
+    // deep samples only go to EXR
+    static bool writesDeep(const std::string& p) {
+        auto dot = p.rfind('.');
+        std::string ext = dot == std::string::npos ? "" : p.substr(dot + 1);
+        for (auto& ch : ext) ch = (char)std::tolower((unsigned char)ch);
+        return ext == "exr";
+    }
     std::string lastType_, lastFile_;
 
     void writeMovie(const std::string& p, const Image& sel, const Format& fmt, const WriteOptions& o, double frame) {

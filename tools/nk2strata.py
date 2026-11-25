@@ -2142,7 +2142,7 @@ class Translator:
             self.translated += 1
             return self.emit(nk_name, klass, "DeepToImage", main[:1], params, k)
 
-        if klass == "DeepWrite":
+        if klass == "DeepWrite":  # Write with deep on
             params["file"] = str(k.get("file", ""))
             if "channels" in k and channel_set(k["channels"]) == "rgba":
                 params["channels"] = "rgba"
@@ -2158,8 +2158,10 @@ class Translator:
                 num("last", dest="last")
             if flag("disable"):
                 params["disable"] = True
+            params["deep"] = True
+            params["file_type"] = "exr"
             self.translated += 1
-            return self.emit(nk_name, klass, "DeepWrite", main[:1], params, k)
+            return self.emit(nk_name, klass, "Write", main[:1], params, k)
 
         if klass == "Write":
             params["file"] = str(k.get("file", ""))

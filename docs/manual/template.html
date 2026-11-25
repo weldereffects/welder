@@ -539,7 +539,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
     <!-- ============================================================ -->
     <section id="deep">
       <div class="sec-head"><span class="eyebrow">Samples, not pixels</span><h2>Deep compositing</h2></div>
-      <p>A deep image keeps every sample a renderer made for a pixel (colour, alpha and the depth where it starts and ends) instead of one composited value, so elements rendered apart can still be put together by depth. The <strong>Deep</strong> toolbar group holds the deep nodes. A deep node plugged into any other node is flattened on the way (samples composited front to back, depth.Z as 1/z), so the viewer, Grade or Write work on it directly.</p>
+      <p>A deep image keeps every sample a renderer made for a pixel (colour, alpha and the depth where it starts and ends) instead of one composited value, so elements rendered apart can still be put together by depth. The <strong>Deep</strong> toolbar group holds the deep nodes. A deep node plugged into any other node is flattened on the way (samples composited front to back, depth.Z as 1/z), so the viewer, Grade or Write work on it directly (a Write with <strong>deep</strong> on keeps the samples).</p>
       <div class="grid">
         <div class="card"><h4>DeepRead</h4><p>Reads deep EXR files, scanline or tiled, with Read's frame range and missing-frame knobs. Part picks a deep part in a multi-part file. The Metadata tab shows the sample count, the most samples in a pixel and the depth range.</p></div>
         <div class="card"><h4>DeepToImage</h4><p>Flattens deep samples into an ordinary image. Depth: 1/z (what ScanlineRender and ZDefocus read), z (the distance) or none.</p></div>
@@ -552,7 +552,7 @@ Welder.app/Contents/MacOS/welder nk     comp.weld -o shot.nk</pre><!--/os-->
         <div class="card"><h4>Deep depth of field</h4><p>ZDefocus fed a deep node (DeepRead, DeepMerge, ScanlineRender) blurs every sample at its own depth, so the background hidden behind an out-of-focus edge shows through its blur instead of a dark or smeared halo. <strong>use deep samples</strong> turns it off to use the flattened image and its depth.Z.</p></div>
         <div class="card"><h4>Samples under the cursor</h4><p>Viewing a deep node, rest the cursor on a pixel: the info bar counts its samples and a list shows each one's depth, colour, alpha and how much of it shows. Switch it off in the viewer settings (S).</p></div>
         <div class="card"><h4>GPU</h4><p>Flattening and DeepMerge's sample combining run on the GPU when that's faster than the CPU (each job is timed both ways), with the same results, and on the CPU when there's no GPU.</p></div>
-        <div class="card"><h4>DeepWrite</h4><p>Writes deep samples as a deep scanline EXR (none, RLE or ZIPS compression; colour as half or float, depths always float). The data window is the input's bbox.</p></div>
+        <div class="card"><h4>Writing deep EXRs</h4><p>Turn on <strong>deep</strong> in a Write's EXR options to write its input's samples as a deep scanline EXR instead of a flattened image (none, RLE or ZIPS compression; colour as half or float, depths always float). The data window is the input's bbox. Comps with a DeepWrite node from 0.2.6 open with it as a Write with deep on.</p></div>
       </div>
     </section>
 

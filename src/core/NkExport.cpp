@@ -397,6 +397,15 @@ struct Writer {
             if (p.value("premultiplied", false)) raw("premultiplied", "true");
             if (p.value("raw", false)) raw("raw", "true");
             if (p.value("auto_alpha", false)) raw("auto_alpha", "true");
+        } else if (type == "Write" && p.value("deep", false)) {  // a deep EXR: its own node class there
+            b.cls = "DeepWrite";
+            mainMask(1, -1);
+            copy("file");
+            if (p.value("use_limit", false)) {
+                raw("use_limit", "true");
+                copy("first");
+                copy("last");
+            }
         } else if (type == "Write") {
             b.cls = "Write";
             mainMask(1, -1);
@@ -449,15 +458,6 @@ struct Writer {
         } else if (type == "DeepToImage") {
             b.cls = "DeepToImage";
             mainMask(1, -1);
-        } else if (type == "DeepWrite") {
-            b.cls = "DeepWrite";
-            mainMask(1, -1);
-            copy("file");
-            if (p.value("use_limit", false)) {
-                raw("use_limit", "true");
-                copy("first");
-                copy("last");
-            }
         } else if (type == "DeepMerge") {
             b.cls = "DeepMerge";
             const int ni = (int)n.value("inputs", json::array()).size();

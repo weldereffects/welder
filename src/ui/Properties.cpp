@@ -1892,7 +1892,7 @@ static bool whenOne(const Node* n, const NodeDef& def, const std::string& when) 
     std::string key = when.substr(0, eq), vals = when.substr(eq + 1);
     std::string defv;
     for (auto& o : def.knobs)
-        if (o.name == key && o.def.is_string()) defv = o.def.get<std::string>();
+        if (o.name == key) defv = o.def.is_string() ? o.def.get<std::string>() : o.def.is_boolean() ? (o.def.get<bool>() ? "true" : "false") : "";
     std::string cur = getString(n, key, defv);
     size_t p = 0;
     while (p <= vals.size()) {

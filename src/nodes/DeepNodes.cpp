@@ -41,56 +41,6 @@ public:
     }
 };
 
-// ------------------------------------------------------------------ DeepWrite
-// Writes its input's samples as a deep scanline EXR (the data window is the input's bbox).
-// params: file (#### for sequences), channels ("all" | "rgba"; A, Z and ZBack are always
-// written), datatype ("half" | "float" for colour and alpha; depths are always float),
-// compression ("none" | "rle" | "zips": what deep files allow), colorspace (Output Transform; "default" = the
-// working space), use_limit / first / last.
-class DeepWriteNode : public Node {
-public:
-    int identityInput(double) override { return 0; }
-    void render(RenderArgs&, Image&) override {}
-    bool isExecutable() const override { return !params.flag("disable", false); }
-
-    void execute(Engine& e, double frame) override {
-        if (params.flag("use_limit", false) &&
-            (frame < params.num("first", frame, -1e30) - 1e-9 || frame > params.num("last", frame, 1e30) + 1e-9))
-            return;
-        Node* in = input(0);
-        if (!in) throw RenderError(name + ": no input connected");
-        const std::string pattern = params.str("file");
-        if (pattern.empty()) throw RenderError(name + ": no output file set");
-        const std::string p = comp->resolvePath(expandFramePattern(pattern, (int)std::floor(frame + 0.5)));
-
-        const Format fmt = in->format(e, frame);
-        const Box box = e.dod(in, frame);
-        DeepPtr d = e.renderDeepRegion(in, frame, box);
-        if (params.str("channels", "all") == "rgba") d = DeepImage::crop(*d, d->bounds, {"R", "G", "B", "A", "Z", "ZBack"});
-
-        std::string cs = params.str("colorspace", "default");
-        const std::string working = color::workingOf(comp);
-        if (cs == "default") cs = working;
-        if (cs != working) {
-            std::string err;
-            auto t = color::convert(color::configOf(comp), working, cs, &err);
-            if (!t) throw RenderError(name + ": " + err);
-            auto c = std::make_shared<DeepImage>(*d);
-            convertDeepColour(*c, *t);
-            d = c;
-        }
-        DeepExrWriteOptions o;
-        o.type = params.str("datatype", "half") == "float" ? ExrPixelType::Float : ExrPixelType::Half;
-        o.compression = params.str("compression", "zips");
-        {
-            std::filesystem::path fp(p);
-            std::error_code ec;
-            if (fp.has_parent_path()) std::filesystem::create_directories(fp.parent_path(), ec);
-        }
-        writeDeepExr(p, *d, fmt, o);
-    }
-};
-
 // ------------------------------------------------------------------ deep node base
 // A deep node: its flat answer is its samples flattened; its sample channels are its main
 // input's unless it says otherwise.
@@ -721,6 +671,43 @@ private:
 
 }  // namespace
 
+// ------------------------------------------------------------------ deep Write
+void writeDeepFrame(Node* self, Engine& e, Node* in, double frame, const std::string& path) {
+    const Params& params = self->params;
+    const Format fmt = in->format(e, frame);
+    const Box box = e.dod(in, frame);
+    DeepPtr d = e.renderDeepRegion(in, frame, box);
+    // the channels asked for, and always A, Z and ZBack
+    ChannelSet want = parseChannels(params, "channels", "all", d->channels);
+    for (const char* need : {"A", "Z", "ZBack"})
+        if (channelIndex(want, need) < 0) want.push_back(need);
+    if (want != d->channels) d = DeepImage::crop(*d, d->bounds, want);
+
+    std::string cs = params.str("colorspace", "default");
+    const std::string working = color::workingOf(self->comp);
+    if (cs == "default") cs = working;
+    if (cs != working && !params.flag("raw", false)) {
+        std::string err;
+        auto t = color::convert(color::configOf(self->comp), working, cs, &err);
+        if (!t) throw RenderError(self->name + ": " + err);
+        auto c = std::make_shared<DeepImage>(*d);
+        convertDeepColour(*c, *t);
+        d = c;
+    }
+    DeepExrWriteOptions o;
+    o.type = params.str("datatype", "half") == "float" ? ExrPixelType::Float : ExrPixelType::Half;
+    // deep EXR takes only these; the others (zip, piz, dwa ...) are for flat images
+    const std::string comp = params.str("compression", "zips");
+    o.compression = comp == "none" || comp == "rle" || comp == "zips" ? comp : "zips";
+    {
+        std::filesystem::path fp(path);
+        std::error_code ec;
+        if (fp.has_parent_path()) std::filesystem::create_directories(fp.parent_path(), ec);
+    }
+    writeDeepExr(path, *d, fmt, o);
+}
+
+
 std::shared_ptr<const geo::PointsItem> deepPointsOf(Node* n, double frame, Engine* e) {
     auto* d = dynamic_cast<DeepToPointsNode*>(n);
     if (!d || d->disabled()) return nullptr;
@@ -734,7 +721,6 @@ std::shared_ptr<const geo::PointsItem> deepPointsOf(Node* n, double frame, Engin
 void registerDeepNodes() {
     auto& r = NodeRegistry::instance();
     r.add("DeepToImage", [] { return std::make_unique<DeepToImageNode>(); });
-    r.add("DeepWrite", [] { return std::make_unique<DeepWriteNode>(); });
     r.add("DeepMerge", [] { return std::make_unique<DeepMergeNode>(); });
     r.add("DeepHoldout", [] { return std::make_unique<DeepHoldoutNode>(); });
     r.add("DeepFromImage", [] { return std::make_unique<DeepFromImageNode>(); });
