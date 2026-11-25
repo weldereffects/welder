@@ -169,6 +169,44 @@ class AsyncVideoFrameLoader:
         return len(self.images)
 
 
+class LazyVideoFrameLoader:
+    """Welder: frames read from their JPEGs when asked for, keeping only the last few (a long shot held as 1024 x
+    1024 float32 tensors is 12.6 MB a frame: 20 GB for 1600 frames). Frames stay on the CPU; the predictor moves
+    each one to its device when it computes the frame's features."""
+
+    def __init__(self, img_paths, image_size, img_mean, img_std, keep=16):
+        from collections import OrderedDict
+
+        self.img_paths = img_paths
+        self.image_size = image_size
+        self.img_mean = img_mean
+        self.img_std = img_std
+        self.keep = keep
+        self.cache = OrderedDict()
+        self.video_height = None
+        self.video_width = None
+        self.__getitem__(0)
+
+    def __getitem__(self, index):
+        img = self.cache.get(index)
+        if img is not None:
+            self.cache.move_to_end(index)
+            return img
+        img, self.video_height, self.video_width = _load_img_as_tensor(
+            self.img_paths[index], self.image_size
+        )
+        img = img.float()
+        img -= self.img_mean
+        img /= self.img_std
+        self.cache[index] = img
+        while len(self.cache) > self.keep:
+            self.cache.popitem(last=False)
+        return img
+
+    def __len__(self):
+        return len(self.img_paths)
+
+
 def load_video_frames(
     video_path,
     image_size,
@@ -252,6 +290,10 @@ def load_video_frames_from_jpg_images(
     img_paths = [os.path.join(jpg_folder, frame_name) for frame_name in frame_names]
     img_mean = torch.tensor(img_mean, dtype=torch.float32)[:, None, None]
     img_std = torch.tensor(img_std, dtype=torch.float32)[:, None, None]
+
+    if async_loading_frames == "lazy":  # Welder: read on demand, nothing held (long shots)
+        lazy_images = LazyVideoFrameLoader(img_paths, image_size, img_mean, img_std)
+        return lazy_images, lazy_images.video_height, lazy_images.video_width
 
     if async_loading_frames:
         lazy_images = AsyncVideoFrameLoader(

@@ -366,6 +366,51 @@ class Refind(unittest.TestCase):
         self.assertLess(float(mattes[1][6].max()), 0.01)  # before it: still lost
 
 
+@unittest.skipUnless(HAVE, "needs numpy and Pillow")
+class LongShots(unittest.TestCase):
+    """A long shot mustn't be held in memory whole: frames are read and written one at a time."""
+
+    def test_jpegs_from_a_generator(self):
+        from strata_ml.tasks.segment import write_jpegs
+        d = tempfile.mkdtemp(prefix="strata_jpg_")
+        read = []
+
+        def frames():
+            for i in range(5):
+                read.append(i)
+                yield np.full((300, 400, 3), 0.1 * i, np.float32)
+        try:
+            w, h, sc = write_jpegs(frames(), d, 200)
+            self.assertEqual((w, h), (200, 150))
+            self.assertEqual(sorted(os.listdir(d)), [f"{i:05d}.jpg" for i in range(5)])
+            self.assertEqual(read, list(range(5)))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_lazy_frames_match_and_stay_few(self):
+        try:
+            import torch
+            sys.path.insert(0, os.path.join(ML, "strata_ml", "vendor", "sam2pkg"))
+            from sam2.utils.misc import load_video_frames
+        except Exception:  # noqa: BLE001
+            self.skipTest("needs PyTorch and Hydra")
+        from strata_ml.tasks.segment import write_jpegs
+        d = tempfile.mkdtemp(prefix="strata_lazy_")
+        try:
+            rng = np.random.default_rng(1)
+            write_jpegs((rng.random((48, 64, 3)).astype(np.float32) for _ in range(40)), d, 0)
+            dense, h0, w0 = load_video_frames(d, 64, True, compute_device=torch.device("cpu"))
+            lazy, h1, w1 = load_video_frames(d, 64, True, async_loading_frames="lazy", compute_device=torch.device("cpu"))
+            self.assertEqual((len(lazy), h1, w1), (40, h0, w0))
+            for i in (0, 7, 39, 7):
+                self.assertTrue(torch.allclose(lazy[i], dense[i]))
+            for i in range(40):
+                lazy[i]
+            self.assertLessEqual(len(lazy.cache), lazy.keep)  # only the last few kept
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class Bundled(unittest.TestCase):
     ROOT = os.path.join(ML, "strata_ml", "vendor", "sam2pkg")
 
