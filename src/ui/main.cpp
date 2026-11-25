@@ -29,6 +29,7 @@
 #include "McpService.h"
 #include "ScriptRunner.h"
 #include "nodes/Scene3D.h"
+#include "nodes/VanishCam.h"
 #include "Tablet.h"
 #include "core/Crash.h"
 #include "SmokeTest.h"
@@ -1584,6 +1585,88 @@ int main(int argc, char** argv) {
                                     n->params.has("strokes") ? n->params.data["strokes"].size() : (size_t)0,
                                     n->params.has("strokes") && !n->params.data["strokes"].empty() ? n->params.data["strokes"][0]["pts"].size() : (size_t)0);
         }
+        // STRATA_TEST_VANISH="x:x1,y1,x2,y2;z:...;o:x,y": with a VanishingCamera's panel open, for each item
+        // press 1 / 2 / 3 (x / y / z) over the viewer and drag a line between the two image positions,
+        // or ("o") drag the origin cross to x, y; then print the lines and the solved camera
+        // (tools/vanish_camera_test.sh)
+        bool vanishTest = false;
+        if (const char* tv = std::getenv("STRATA_TEST_VANISH"); tv && *tv && !opt.screenshot.empty()) {
+            ImGuiIO& tio = ImGui::GetIO();
+            struct Item {
+                char kind;
+                double a[4];
+            };
+            static std::vector<Item> items;
+            static bool parsed = false;
+            if (!parsed) {
+                parsed = true;
+                std::stringstream ss(tv);
+                std::string it;
+                while (std::getline(ss, it, ';')) {
+                    Item x{it.empty() ? '?' : it[0], {0, 0, 0, 0}};
+                    if (it.size() > 2) std::sscanf(it.c_str() + 2, "%lf,%lf,%lf,%lf", &x.a[0], &x.a[1], &x.a[2], &x.a[3]);
+                    items.push_back(x);
+                }
+            }
+            const int start = 20, per = 16;
+            vanishTest = frameCount < start + per * (int)items.size() + 30;
+            const int k = (frameCount - start) / per, step = (frameCount - start) % per;
+            Node* vn = activeVanishCam(app);
+            if (frameCount >= start && k < (int)items.size() && vn) {
+                if (items[k].kind == 'o' && step == 0) {  // from where the origin is now to the given position
+                    const Format f = nodeFormatUI(app, vn, app.frame);
+                    auto o = vn->params.vec<2>("origin", app.frame, {f.width / 2.0, f.height / 2.0});
+                    Item& m = items[k];
+                    m.a[2] = m.a[0], m.a[3] = m.a[1], m.a[0] = o[0], m.a[1] = o[1];
+                }
+                const Item it = items[k];
+                auto at = [&](double x, double y) {
+                    ImVec2 p = vanishTestScreen(x, y);
+                    tio.AddMousePosEvent(p.x, p.y);
+                };
+                const ImGuiKey key = it.kind == 'y' ? ImGuiKey_2 : it.kind == 'z' ? ImGuiKey_3 : ImGuiKey_1;
+                if (step == 1) at(it.a[0], it.a[1]);
+                else if (step == 2 && it.kind != 'o') tio.AddKeyEvent(key, true);
+                else if (step == 3 && it.kind != 'o') tio.AddKeyEvent(key, false);
+                else if (step == 5) tio.AddMouseButtonEvent(0, true);
+                else if (step > 5 && step <= 12) {
+                    const double t = (step - 5) / 7.0;
+                    at(it.a[0] + (it.a[2] - it.a[0]) * t, it.a[1] + (it.a[3] - it.a[1]) * t);
+                } else if (step == 14) tio.AddMouseButtonEvent(0, false);
+            }
+            if (frameCount == start + per * (int)items.size() + 10 && vn) {
+                std::printf("VANISH lines %s origin %s\n", vn->params.data.value("lines", json()).dump().c_str(),
+                            vn->params.data.value("origin", json()).dump().c_str());
+                const Format f = nodeFormatUI(app, vn, app.frame);
+                vanish::Setup st = vanish::setupFromParams(vn->params, app.frame, f.width, f.height);
+                vanish::Result r = vanish::solve(st);
+                if (r.ok) {
+                    const cam3d::V3 e = cam3d::matrixToEuler(r.cam.R, "ZXY");
+                    std::printf("VANISH solved focal %.3f translate %.4f %.4f %.4f rotate %.3f %.3f %.3f\n", r.cam.focal, r.cam.C.x, r.cam.C.y,
+                                r.cam.C.z, e.x, e.y, e.z);
+                } else {
+                    std::printf("VANISH not solved: %s\n", r.error.c_str());
+                }
+                std::fflush(stdout);
+                if (std::getenv("STRATA_TEST_VANISH_EXPORT")) {  // the panel's export buttons
+                    vanishCamButton(app, vn, "vcam_camera");
+                    vanishCamButton(app, vn, "vcam_scene3d");
+                }
+            }
+            if (frameCount == start + per * (int)items.size() + 20 && std::getenv("STRATA_TEST_VANISH_EXPORT"))
+                for (auto& n : app.comp->nodes) {
+                    if (n->type == "Camera") std::printf("VANISH export %s %s\n", n->name.c_str(), n->params.data.dump().c_str());
+                    if (n->type == "Scene3D") {
+                        auto* src = dynamic_cast<scene3d::SceneSource*>(n.get());
+                        auto sn = src->scene(app.frame);
+                        std::printf("VANISH export %s inputs %s %s, camera %s, cards %zu", n->name.c_str(), n->input(0) ? n->input(0)->name.c_str() : "-",
+                                    n->input(1) ? n->input(1)->name.c_str() : "-", sn.camera ? "yes" : "no", sn.cards.size());
+                        if (!sn.cards.empty())
+                            std::printf(" normal %.3f %.3f %.3f size %.2f", sn.cards[0].normal().x, sn.cards[0].normal().y, sn.cards[0].normal().z, sn.cards[0].w);
+                        std::printf("\n");
+                    }
+                }
+        }
         // STRATA_TEST_MARKUP=<file>: with a Markup's panel open, paint a stroke, drag a box, move it
         // with Select, place and type a text, drag a circle and delete it with the Delete key, then
         // Save image at half resolution to <file> and print the items (tools/markup_test.sh)
@@ -1973,7 +2056,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !vanishTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);

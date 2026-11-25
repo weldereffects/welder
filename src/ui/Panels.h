@@ -615,6 +615,14 @@ void rotoExportPoints(App& app, UiState& ui, Node* n);
 bool rotoSetToolByName(App& app, UiState& ui, Node* n, const std::string& name);
 void addReferenceLink(App& app, Node* link, bool stabilize);
 void drawFlowPaintViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+// VanishingCamera (VanishTool.cpp): lines, origin and the solved camera in the viewer; its keys;
+// its panel rows (info "vanishcam" / "vanishlines") and buttons ("vcam_..."): true when handled.
+Node* activeVanishCam(App& app);
+void drawVanishCamViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const ViewXf& xf, bool hovered);
+bool vanishCamHotkeys(App& app, UiState& ui);
+bool vanishCamInfo(App& app, Node* n, const std::string& info);
+bool vanishCamButton(App& app, Node* n, const std::string& action);
+ImVec2 vanishTestScreen(double x, double y);  // (UI tests) an image position on screen in the viewer
 // Markup (MarkupTool.cpp): its tool row over the viewer, drawing / editing in the viewer, its panel,
 // and Save image (the node at the current frame, at scale 1 / 0.5 / 0.25, written to `path`).
 Node* activeMarkup(App& app);

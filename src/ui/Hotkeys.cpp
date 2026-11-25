@@ -143,6 +143,9 @@ const std::vector<Shortcut>& shortcuts() {
         {"Tracker", "Shift+C / Shift+V", "key track between the keyframes around this frame / all keyframes", true},
         {"Tracker", "Ctrl+A / Delete", "select all tracks / delete the selected tracks", true},
         {"Tracker", "Esc", "stop tracking", true},
+        {"VanishingCamera", "drag on the image", "draw a line along the current axis; drag its ends or middle to adjust", true},
+        {"VanishingCamera", "1 / 2 / 3", "new lines along X / Y (up) / Z", true},
+        {"VanishingCamera", "Delete / Backspace", "remove the line under the mouse", true},
         {"PlanarTracker", "Ctrl+Alt+click, then clicks", "draw the region (first point or Enter closes, Esc cancels)", true},
         {"PlanarTracker", "drag a region point / surface corner", "adjust it (any frame)", true},
         {"PlanarTracker", "Z / X / C / V", "track backward to the start / one frame / forward one frame / to the end", true},
@@ -389,6 +392,7 @@ void handleHotkeys(App& app, UiState& ui) {
         }
         if (trackerHotkeys(app, ui)) return;
         if (planarHotkeys(app, ui)) return;
+        if (vanishCamHotkeys(app, ui)) return;  // 1 2 3 pick the axis, Delete removes the line under the mouse
         if (camTrackerHotkeys(app, ui)) return;  // same keys for the PlanarTracker  // Z X C V track, Esc stops, while a Tracker is open
         if (rotoHotkeys(app, ui)) return;
         if (markupHotkeys(app, ui)) return;  // Delete / Backspace remove the selected item, Esc drops it  // roto tools take V, Z, Delete, Enter... while a Roto is open (never Q: overlays)

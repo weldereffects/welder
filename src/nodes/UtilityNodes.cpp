@@ -314,6 +314,9 @@ void register3DNodes();
 namespace scene3d {
 void registerScene3DNode();
 }
+namespace vanish {
+void registerNode();
+}
 
 void registerBuiltinNodes() {
     static bool done = false;
@@ -342,6 +345,7 @@ void registerBuiltinNodes() {
     registerRetimeNodes();
     geo::register3DNodes();
     scene3d::registerScene3DNode();
+    vanish::registerNode();
     registerScanlineRender();
     registerCameraTrackerNodes();
     registerSplatNodes();

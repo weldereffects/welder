@@ -908,6 +908,10 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ViewXf xf{center, v.pan, v.zoom};
         drawViewer3DIn2D(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
     }
+    if (v.overlays && activeVanishCam(app)) {
+        ViewXf xf{center, v.pan, v.zoom};
+        drawVanishCamViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+    }
     if (v.overlays && activeFlowField(app)) {
         ViewXf xf{center, v.pan, v.zoom};
         drawFlowPaintViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);

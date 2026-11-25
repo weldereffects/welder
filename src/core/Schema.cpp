@@ -1987,6 +1987,37 @@ std::vector<NodeDef> build() {
                  "A tracked camera, its point cloud and named cards on the shot's surfaces. Connect a solved CameraTracker or a "
                  "Camera to 'cam', or import an FBX / Alembic camera. In the 3D viewer (Tab) select points (P), drag a card on "
                  "their plane (C), and move it with W / E / R (L toggles world / local). Feed it to CardTransform's 'scene' input."});
+    d.push_back({"VanishingCamera", "3D",
+                 {InfoRow("vanishcam", "camera"),
+                  Div("Lines"),
+                  Tip(C("draw_axis", "new lines along", "X", {"X", "Y", "Z"}),
+                      "The axis a line dragged in the viewer goes on (keys 1 / 2 / 3). X and Z lie on the ground, Y is up"),
+                  Btn("vcam_starter", "starter lines", "Two lines along X and two along Z to drag onto the edges of the shot"),
+                  Same(Btn("vcam_clear", "clear lines")), InfoRow("vanishlines", ""),
+                  Div("Lens"),
+                  Tip(C("focal_mode", "focal length", "solve", {"solve", "known"}),
+                      "solve: from two axes with two or more lines each. known: type it (then one axis with two lines and a single "
+                      "line along a second axis are enough)"),
+                  EnableIf(F("focal", "known focal length", 35, 5, 300, "mm"), "focal_mode=known"),
+                  F("haperture", "film back width", 36, 1, 70, "mm (the solved focal length is in these millimetres)"),
+                  Div("Placement"),
+                  Tip(XY("origin", "origin", "$center", 0, 4096), "The world origin: a point on the ground (drag the cross in the viewer)"),
+                  C("scale_by", "scale by", "distance", {"distance", "camera height", "reference length"}),
+                  When(F("distance", "distance to origin", 10, 0.01, 1000, "scene units"), "scale_by=distance"),
+                  When(F("camera_height", "camera height", 1.7, -100, 100, "above the ground at the origin, scene units"), "scale_by=camera height"),
+                  When(C("ref_axis", "along", "X", {"X", "Y", "Z"}), "scale_by=reference length"),
+                  When(Tip(XY("ref_point", "reference point", "$midright", 0, 4096), "The far end of the known length, along that axis from the origin"),
+                       "scale_by=reference length"),
+                  When(F("ref_length", "length", 1, 0.001, 1000, "scene units"), "scale_by=reference length"),
+                  Tip(F("spin", "spin around up", 0, -180, 180, "degrees"), "Turns the world about +Y (which way X and Z point)"),
+                  Tip(B("flip_up", "flip up", false), "The world upside down (the solve keeps +Y up the frame)"),
+                  Div("Overlay"), B("show_grid", "ground grid", true), F("grid_size", "grid cell", 1, 0.01, 100, "scene units"),
+                  Div("Export"),
+                  Btn("vcam_camera", "Camera node", "A Camera node with this camera baked in (for export, or to animate from)"),
+                  Same(Btn("vcam_scene3d", "Scene3D with a floor card", "A Scene3D on this camera with a card lying on the ground at the origin"))},
+                 "A camera solved from lines drawn on a still along the scene's axes - floor edges, a building's corners. Drag lines in "
+                 "the viewer (red X, green Y up, blue Z), drag the origin cross onto the ground, set the scale. Feed it to Scene3D's cam input, "
+                 "Card3D or ScanlineRender like a Camera."});
     auto xform = [&](std::vector<KnobDef> extra) {
         std::vector<KnobDef> k = {XYZ("translate", "translate", json::array({0, 0, 0}), -100, 100),
                                   XYZ("rotate", "rotate", json::array({0, 0, 0}), -180, 180),
