@@ -46,6 +46,7 @@
 #include "nodes/CamExport.h"
 #include "nodes/Geo.h"
 #include "nodes/Scene3D.h"
+#include "nodes/VanishCam.h"
 #include "nodes/SceneImport.h"
 #include "nodes/PointMesh.h"
 #include "nodes/MeshEdit.h"
@@ -4249,6 +4250,155 @@ int main(int argc, char** argv) {
         CHECK(std::fabs(cam3d::dot(cd.normal(), pl.n)) > 0.9999 && cam3d::dot(cd.normal(), eye - cd.O) > 0);
         CHECK(cd.w < 4 * 1.3 && cd.h < 4 * 1.3);  // snug: the patch with a margin, not the whole plane
         CHECK(!scene3d::cardOnPoints(line, eye, V3(1, 0, 0), cd));
+    });
+
+    test("VanishingCamera: focal, orientation and position from drawn axis lines", [] {
+        using cam3d::V3;
+        const double W = 1920, H = 1080;
+        // a camera looking at `target` from `eye`, +Y up (no roll unless asked)
+        auto lookAt = [&](V3 eye, V3 target, double focal, double rollDeg = 0) {
+            cam3d::Camera c;
+            const V3 f = cam3d::normalize(target - eye), rt = cam3d::normalize(cam3d::cross(f, V3(0, 1, 0))), up = cam3d::cross(rt, f);
+            cam3d::M3 R;
+            for (int i = 0; i < 3; ++i) R.m[i][0] = rt[i], R.m[i][1] = up[i], R.m[i][2] = -f[i];
+            c.R = R * cam3d::M3::rotZ(rollDeg);
+            c.C = eye;
+            c.focal = focal;
+            c.haperture = 36;
+            c.vaperture = 36 * H / W;
+            return c;
+        };
+        // segments along world axis a through a few points round the origin, as the user would draw them
+        auto linesOf = [&](const cam3d::Camera& c, int a, int count, double jitter = 0) {
+            std::vector<vanish::Line> out;
+            std::mt19937 rng(11 + a);
+            std::normal_distribution<double> N(0, 1);
+            const V3 starts[4] = {V3(-1, 0, -1), V3(1, 0.5, 1), V3(-0.5, 1.2, 0.8), V3(0.7, 0.2, -0.9)};
+            for (int i = 0; i < count; ++i) {
+                V3 e;
+                e[a] = 1;
+                V3 p = starts[i], q = starts[i] + e * 1.5;
+                double x1, y1, x2, y2;
+                CHECK(c.project(p, W, H, x1, y1) && c.project(q, W, H, x2, y2));
+                out.push_back({x1 + jitter * N(rng), y1 + jitter * N(rng), x2 + jitter * N(rng), y2 + jitter * N(rng)});
+            }
+            return out;
+        };
+        auto origin = [&](const cam3d::Camera& c, vanish::Setup& st) {
+            CHECK(c.project(V3(0, 0, 0), W, H, st.ox, st.oy));
+        };
+        auto same = [](const cam3d::Camera& a, const cam3d::Camera& b, double tolPos, double tolDeg, double tolMm) {
+            double rot = 0;
+            for (int i = 0; i < 3; ++i) rot = std::max(rot, std::acos(std::clamp(cam3d::dot(a.R.col(i), b.R.col(i)), -1.0, 1.0)) * 180 / M_PI);
+            const bool ok = cam3d::norm(a.C - b.C) < tolPos && rot < tolDeg && std::fabs(a.focal - b.focal) < tolMm;
+            if (!ok) std::printf("    C %.4f %.4f %.4f vs %.4f %.4f %.4f, rot %.7f deg, focal %.6f vs %.6f\n", a.C.x, a.C.y, a.C.z, b.C.x, b.C.y,
+                                 b.C.z, rot, a.focal, b.focal);
+            return ok;
+        };
+
+        // three-point perspective, focal solved, scale from a known length along X
+        {
+            const cam3d::Camera truth = lookAt(V3(4, 3, 6), V3(0, 0.3, 0), 28, 4);
+            vanish::Setup st;
+            st.W = W, st.H = H;
+            for (int a = 0; a < 3; ++a) st.lines[a] = linesOf(truth, a, 3);
+            origin(truth, st);
+            st.scale = vanish::Scale::Reference;
+            st.refAxis = 0;
+            st.refLength = 2;
+            CHECK(truth.project(V3(2, 0, 0), W, H, st.rx, st.ry));
+            vanish::Result r = vanish::solve(st);
+            CHECK(r.ok && r.focalSolved);
+            CHECK(same(r.cam, truth, 1e-5, 1e-4, 1e-4));
+            CHECK(r.spreadDeg[0] < 1e-4 && r.hasVP[1]);
+        }
+        // two-point (floor edges along X and Z), focal solved, scale from the camera height
+        {
+            const cam3d::Camera truth = lookAt(V3(-3, 1.6, 5), V3(0.5, 0, 0), 35);
+            vanish::Setup st;
+            st.W = W, st.H = H;
+            st.lines[0] = linesOf(truth, 0, 2);
+            st.lines[2] = linesOf(truth, 2, 2);
+            origin(truth, st);
+            st.scale = vanish::Scale::Height;
+            st.height = 1.6;
+            vanish::Result r = vanish::solve(st);
+            CHECK(r.ok);
+            CHECK(same(r.cam, truth, 1e-5, 1e-4, 1e-4));
+            CHECK(std::fabs(r.fovH - 2 * std::atan(18.0 / 35) * 180 / M_PI) < 1e-6);
+            // a little hand-drawn wobble: still close
+            st.lines[0] = linesOf(truth, 0, 3, 0.7);
+            st.lines[2] = linesOf(truth, 2, 3, 0.7);
+            r = vanish::solve(st);
+            CHECK(r.ok && same(r.cam, truth, 0.1, 0.5, 1.0) && r.spreadDeg[0] > 0);
+            // spin / flip turn the world (the camera keeps seeing the origin where it was)
+            st.spinDeg = 90;
+            st.flipUp = true;
+            st.scale = vanish::Scale::Distance;
+            st.distance = cam3d::norm(truth.C);
+            r = vanish::solve(st);
+            double u, v;
+            CHECK(r.ok && r.cam.project(V3(0, 0, 0), W, H, u, v) && std::fabs(u - st.ox) < 1e-3 && std::fabs(v - st.oy) < 1e-3);
+            CHECK(r.cam.R.col(1).y < 0);  // upside down: the world's +Y points down the frame
+            // the camera height needs the origin below the horizon
+            st.spinDeg = 0, st.flipUp = false;
+            st.scale = vanish::Scale::Height;
+            st.oy = H - 1;
+            CHECK(truth.project(V3(0, 3, 0), W, H, st.ox, st.oy));
+            r = vanish::solve(st);
+            CHECK(!r.ok && r.error.find("horizon") != std::string::npos);
+        }
+        // known focal: one vanishing point plus a single line along a second axis
+        {
+            const cam3d::Camera truth = lookAt(V3(2.5, 1.2, 7), V3(0, 0.4, 0), 50, -3);
+            vanish::Setup st;
+            st.W = W, st.H = H;
+            st.solveFocal = false;
+            st.focalMm = 50;
+            st.lines[0] = linesOf(truth, 0, 2);
+            st.lines[1] = linesOf(truth, 1, 1);
+            origin(truth, st);
+            st.distance = cam3d::norm(truth.C);
+            vanish::Result r = vanish::solve(st);
+            CHECK(r.ok && !r.focalSolved);
+            CHECK(same(r.cam, truth, 1e-5, 1e-4, 1e-4));
+            // solving the focal length needs a second vanishing point
+            st.solveFocal = true;
+            r = vanish::solve(st);
+            CHECK(!r.ok && r.error.find("focal") != std::string::npos);
+            // the wrong known focal length: still a camera, with a note on the axes
+            st.solveFocal = false;
+            st.focalMm = 20;
+            st.lines[1] = linesOf(truth, 1, 2);
+            r = vanish::solve(st);
+            CHECK(r.ok && r.note.find("perpendicular") != std::string::npos);
+        }
+        // not enough lines
+        {
+            vanish::Setup st;
+            CHECK(!vanish::solve(st).ok);
+            st.lines[0] = {{0, 0, 100, 10}};
+            CHECK(!vanish::solve(st).ok);
+        }
+        // the node: starter lines solve, and feed a Scene3D's camera input
+        {
+            json p = vanish::starterLines(64, 48);
+            p["image_size"] = {64, 48};
+            auto c = comp(json::array({{{"name", "V"}, {"type", "VanishingCamera"}, {"params", p}},
+                                       {{"name", "S"}, {"type", "Scene3D"}, {"inputs", {nullptr, "V"}}}}));
+            auto cam = cam3d::cameraAt(c->find("V"), 1);
+            CHECK(cam && cam->focal > 10 && cam->focal < 60);
+            auto* src = dynamic_cast<scene3d::SceneSource*>(c->find("S"));
+            auto sn = src ? src->scene(1) : scene3d::Snapshot();
+            CHECK(sn.camera && cam3d::norm(sn.camera->C - cam->C) < 1e-9);
+            // baked to Camera knobs, the same camera
+            json cp = vanish::cameraParams(*cam);
+            auto c2 = comp(json::array({{{"name", "K"}, {"type", "Camera"}, {"params", cp}}}));
+            auto kc = cam3d::cameraAt(c2->find("K"), 1);
+            double u1, v1, u2, v2;
+            CHECK(kc && cam->project(V3(0.3, 0.2, -0.4), 64, 48, u1, v1) && kc->project(V3(0.3, 0.2, -0.4), 64, 48, u2, v2));
+            CHECK(std::fabs(u1 - u2) < 1e-3 && std::fabs(v1 - v2) < 1e-3);
+        }
     });
 
     test("Scene3D: Insert / Match Move / Stabilize homographies round-trip on an animated camera", [] {

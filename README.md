@@ -34,14 +34,14 @@ updates per second.
 
 ## Download (public beta)
 
-**Welder 0.2.5** is the current public test build. Get it from the
+**Welder 0.2.6** is the current public test build. Get it from the
 [Releases page](https://github.com/weldereffects/welder/releases).
 
 | Platform | Download | Needs |
 |---|---|---|
-| Windows 10 / 11, x64 | `welder-0.2.5-win64.zip` (includes .nk import and the RIFE node) | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
-| Linux x86_64 | `welder-0.2.5-linux-x86_64.tar.gz` (includes the RIFE node) | glibc 2.28 or newer (Rocky / Alma / RHEL 8 and 9, Ubuntu 20.04, Debian 11 or later), X11 or XWayland |
-| macOS 11 or later | `welder-0.2.5-macos-arm64.zip` (Apple silicon) or `welder-0.2.5-macos-x86_64.zip` (Intel) | not signed yet: right-click Welder.app, **Open**, the first time |
+| Windows 10 / 11, x64 | `welder-0.2.6-win64.zip` (includes .nk import and the RIFE node) | an OpenGL 3.3 GPU; Vulkan for GPU nodes and RIFE |
+| Linux x86_64 | `welder-0.2.6-linux-x86_64.tar.gz` (includes the RIFE node) | glibc 2.28 or newer (Rocky / Alma / RHEL 8 and 9, Ubuntu 20.04, Debian 11 or later), X11 or XWayland |
+| macOS 11 or later | `welder-0.2.6-macos-arm64.zip` (Apple silicon) or `welder-0.2.6-macos-x86_64.zip` (Intel) | not signed yet: right-click Welder.app, **Open**, the first time |
 
 **Windows:** before unzipping, right-click the zip, Properties, tick **Unblock**, OK. The build
 isn't code-signed yet, so Windows may still say "Windows protected your PC": click **More info**,

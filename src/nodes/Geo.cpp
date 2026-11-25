@@ -699,7 +699,7 @@ SceneData viewerScene(Comp& comp, Node* n, double f, Engine* e) {
         for (Node* in : x->inputs) stack.push_back(in);
     }
     bool any = false;
-    for (Node* x : reach) any = any || is3D(x) || x->type == "CameraTracker" || x->type == "Card3D" || x->type == "Scene3D";
+    for (Node* x : reach) any = any || is3D(x) || x->type == "CameraTracker" || x->type == "VanishingCamera" || x->type == "Card3D" || x->type == "Scene3D";
     if (!any) {
         reach.clear();
         for (auto& x : comp.nodes) reach.push_back(x.get());
@@ -727,7 +727,7 @@ SceneData viewerScene(Comp& comp, Node* n, double f, Engine* e) {
             auto g = geometryOf(x, f, e);
             s.objects.insert(s.objects.end(), g.begin(), g.end());
         }
-        if (x->type == "Camera" && !x->disabled()) {
+        if ((x->type == "Camera" || x->type == "VanishingCamera") && !x->disabled()) {
             if (auto c = cam3d::cameraAt(x, f)) s.cameras.push_back({x, *c});
         }
         if (x->type == "Axis" && !x->disabled()) s.axes.push_back({x, worldMatrix(x, f)});

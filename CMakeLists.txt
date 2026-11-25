@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(welder VERSION 0.2.5 LANGUAGES C CXX)
+project(welder VERSION 0.2.6 LANGUAGES C CXX)
 if(WIN32)  # the program icon and version details for both programs
   enable_language(RC)
   configure_file(src/ui/welder.rc.in ${CMAKE_BINARY_DIR}/welder.rc @ONLY)
@@ -141,6 +141,7 @@ add_library(strata_core STATIC
   src/nodes/Geo.cpp
   src/nodes/Scene3D.cpp
   src/nodes/SceneImport.cpp
+  src/nodes/VanishCam.cpp
   third_party/ufbx/ufbx.c
   src/nodes/Scanline.cpp
   src/nodes/CamTrack.cpp
@@ -463,6 +464,7 @@ if(STRATA_BUILD_UI)
     src/ui/RotoTool.cpp
     src/ui/TrackerTool.cpp
     src/ui/PlanarTool.cpp
+    src/ui/VanishTool.cpp
   src/ui/CamTrackerTool.cpp
   src/ui/Viewer3D.cpp
   src/ui/TransformTool.cpp

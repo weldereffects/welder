@@ -2852,6 +2852,7 @@ void infoKnob(Ctx& c, const KnobDef& k) {
         else if (!st.empty()) ImGui::TextColored(ImVec4(0.55f, 0.85f, 0.5f, 1), "%s", st.c_str());
         return;
     }
+    if (vanishCamInfo(c.app, c.node, k.info)) return;  // VanishingCamera: the solve and the lines
     if (k.info == "flowpaint") {  // FlowField: the painted strokes and how to paint
         const json* st = findParam(c.node, "strokes");
         const int ns = st && st->is_array() ? (int)st->size() : 0;
@@ -3223,6 +3224,7 @@ void buttonAction(Ctx& c, const std::string& action) {
         });
         return;
     }
+    if (vanishCamButton(c.app, c.node, action)) return;  // VanishingCamera: starter lines, clear, export
     if (action == "flow_paint_clear") {  // FlowField: remove every painted stroke
         std::string name = c.node->name;
         c.app.checkpoint();
@@ -3475,6 +3477,7 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
     if (n->type == "Read") shown.insert({"format", "frame_offset"});                           // shown as Format / Frame
     if (n->type == "WarpStabilize") shown.insert({"motion", "motion_id"});    // the analysis (data, not knobs)
     if (n->type == "FlowField") shown.insert("strokes");
+    if (n->type == "VanishingCamera") shown.insert({"lines", "image_size"});  // drawn in the viewer
     if (n->type == "EditMesh") shown.insert({"mesh", "mesh_id"});  // the mesh itself (data, edited with the buttons / viewer)
     if (n->type == "TrackMask") shown.insert({"prompts", "scene", "tracks", "preview_frame", "retrack_all", "refines"});  // the objects and clicks (viewer and panel)
     if (n->type == "Precomp") shown.insert({"use_cache", "version"});  // set by Precomp / Clear

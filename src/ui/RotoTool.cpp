@@ -1314,7 +1314,7 @@ static bool hasViewerTools(const Node* n) {
     const std::string& t = n->type;
     return t == "Roto" || t == "RotoPaint" || t == "PowerRoto" || t == "SplineWarp" || t == "SplineFlow" || t == "Tracker" || t == "PlanarTracker" ||
            t == "CameraTracker" || t == "FlowField" || t == "TrackMask" || t == "Transform" || t == "Position" || t == "CornerPin2D" ||
-           t == "TransformMasked" || t == "GridWarp" || t == "Markup" || hasKnobHandles(t);
+           t == "TransformMasked" || t == "GridWarp" || t == "Markup" || t == "VanishingCamera" || hasKnobHandles(t);
 }
 
 Node* activeToolNode(App& app) {

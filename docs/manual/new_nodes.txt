@@ -156,3 +156,4 @@ DeepCrop
 DeepReformat
 DeepSample
 DeepToPoints
+VanishingCamera
