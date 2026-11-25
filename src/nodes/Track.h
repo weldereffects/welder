@@ -13,7 +13,8 @@
 // pattern onto something else (when the feature is hidden) while the track point
 // carries on. An offset holds from its frame on (before the first, the first).
 // score is the match quality (1 - error; 1 = perfect); user is 1 for keyframes
-// (positions placed by hand: keyframe tracking tracks between them). a b c d is the
+// (positions placed by hand: keyframe tracking tracks between them) and 2 for filled
+// keys (estimated by Fill gaps where the feature was lost; see fillGaps). a b c d is the
 // pattern's shape on that frame (rotation / scale / affine warps), identity when absent.
 #pragma once
 
@@ -30,6 +31,7 @@ namespace strata::track {
 struct Key {
     double frame = 0, x = 0, y = 0, score = 1;
     bool user = false;
+    bool filled = false;                // estimated by fillGaps, not tracked
     double a = 1, b = 0, c = 0, d = 1;  // pattern warp (linear part)
 };
 
@@ -48,6 +50,9 @@ inline double errorOf(const Key& k) { return k.score >= 1 ? 0.0 : k.score <= 0 ?
 // Track position at `frame`: exact, or interpolated between the surrounding
 // keys. Nothing outside the tracked range.
 std::optional<std::pair<double, double>> positionAt(const json& track, double frame);
+// As positionAt, but nothing inside a gap (keys more than a frame apart, unless both are
+// keyframes): where the track had lost its feature.
+std::optional<std::pair<double, double>> trackedAt(const json& track, double frame);
 // The key (or interpolated key) at `frame`, with its warp.
 std::optional<Key> sampleAt(const json& track, double frame);
 // Frames that have data in any of the tracks.
@@ -173,5 +178,76 @@ double referenceFrame(const json& params, double frame);
 // Homography mapping 4 source points to 4 destination points (x1 y1 ... x4 y4).
 // Row-major 3x3. False when the points are degenerate.
 bool homography(const double src[8], const double dst[8], double H[9]);
+
+// ------------------------------------------------------------------ corner pin from tracks
+// A row-major 3x3 (p' = H p, homogeneous); identity by default.
+struct H9 {
+    double m[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    void apply(double x, double y, double& ox, double& oy) const;
+    H9 operator*(const H9& o) const;  // this after o
+    H9 inverse() const;
+    static H9 of(const Affine& A);
+};
+
+// Point correspondences (rx, ry) -> (cx, cy) fitted by least squares with the richest model
+// the points allow: perspective (4 or more), affine (3), similarity (2), translation (1),
+// never more than `maxModel` (4 perspective, 3 affine, 2 similarity, 1 translation). With
+// more points than the model needs, points far off the fit (over 3x the median residual and
+// over 1 px) are dropped and the rest refitted, so one bad track doesn't bend the pin.
+struct PointPair {
+    double rx, ry, cx, cy;
+};
+struct Fit {
+    bool ok = false;
+    H9 H;
+    int model = 0;        // 4 perspective, 3 affine, 2 similarity, 1 translation
+    int used = 0;         // points kept
+    double rms = 0;       // residual of the kept points (px)
+};
+Fit fitPoints(const std::vector<PointPair>& pts, int maxModel = 4);
+const char* modelName(int model);
+
+// The corner pin tracks: the enabled tracks with T on, in order.
+std::vector<int> pinTracks(const json& tracks);
+inline bool isPinMode(const std::string& mode) { return mode.rfind("corner pin", 0) == 0; }
+
+// The corner pin from `ref` to `frame` from the given tracks (pinTracks when null): every
+// track with a position on both frames is a point (smooth > 1: each position averaged over
+// that many frames). Four or more tracks give the full perspective; when some are lost on
+// `frame` it carries on with what's left (affine from 3, similarity from 2, then translation).
+Fit pinSolve(const json& tracks, double ref, double frame, const std::vector<int>* which = nullptr, int smooth = 0);
+
+// The Tracker node's whole transform on `frame` (reference -> frame pixels, full resolution):
+// trackerTransform for the 2D modes; for "corner pin match-move" / "corner pin stabilize"
+// the corner pin (or its inverse). Identity for "none" or when nothing solves.
+H9 trackerMatrix(const json& params, double frame);
+
+// ------------------------------------------------------------------ gap filling
+// Fill frames where a track lost its feature: gaps between tracked frames, and (optionally)
+// before its first / after its last tracked frame. "from other tracks" carries the track
+// along with the tracks that were still tracking (the same fit as the corner pin, from the
+// track's last good frame either side of the gap, blended across it so both ends meet);
+// "smooth" (cubic, matching the motion either side) and "linear" interpolate the track's
+// own keys. "auto" uses the other tracks where they have data and smooth where not.
+// Filled keys are marked (user = 2), are replaced when filled again, and clearFilled
+// removes them. Keys whose error is above `redoAbove` (0: off) count as lost too.
+struct FillOptions {
+    std::string method = "auto";  // auto | from other tracks | smooth | linear
+    bool inside = true;           // gaps between tracked frames
+    bool before = false;          // from `first` up to the first tracked frame
+    bool after = false;           // from the last tracked frame to `last`
+    double first = 1, last = 1;   // the frame range to extend to
+    double redoAbove = 0;         // also refill keys with an error above this
+    int maxGap = 0;               // gaps longer than this stay (0: any length)
+};
+struct FillReport {
+    int frames = 0;         // keys written
+    int fromTracks = 0;     // of them, carried by other tracks
+    int interpolated = 0;   // of them, interpolated / extrapolated
+    int skipped = 0;        // frames that couldn't be filled
+};
+FillReport fillGaps(json& tracks, const std::vector<int>& which, const FillOptions& o);
+// Remove the filled keys from the given tracks; the number removed.
+int clearFilled(json& tracks, const std::vector<int>& which);
 
 }  // namespace strata::track

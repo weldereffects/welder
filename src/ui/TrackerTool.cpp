@@ -15,6 +15,7 @@
 //   Shift+C / Shift+V              key track between the keyframes around this frame / all
 //   Delete / Backspace             delete the selected tracks;  Esc: stop tracking
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -111,7 +112,7 @@ struct Here {
     double tx = 0, ty = 0, fx = 0, fy = 0;
     track::Warp w;
     double error = 0;
-    bool key = false, user = false;
+    bool key = false, user = false, filled = false;
 };
 std::optional<Here> hereOf(const json& t, double frame) {
     auto k = track::sampleAt(t, frame);
@@ -127,6 +128,7 @@ std::optional<Here> hereOf(const json& t, double frame) {
     if (auto e = track::keyAt(t, frame)) {
         h.key = true;
         h.user = e->user;
+        h.filled = e->filled;
     }
     return h;
 }
@@ -526,15 +528,62 @@ void drawTrackerViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 
         auto keys = track::keysOf(t);
         if (keys.size() < 2 && keys.empty()) continue;
         const ImU32 base = sel ? IM_COL32(255, 196, 70, 150) : IM_COL32(200, 200, 200, 70);
+        const ImU32 filledCol = sel ? IM_COL32(90, 210, 255, 220) : IM_COL32(90, 200, 255, 120);  // estimated by Fill gaps
         for (size_t k = 0; k + 1 < keys.size(); ++k) {
             if (keys[k + 1].frame - keys[k].frame > 1.5 && !(keys[k].user && keys[k + 1].user)) continue;  // a gap: not a path
-            const ImU32 c = showErr ? errorColor(track::errorOf(keys[k + 1]), settings.maxError) : base;
+            const bool est = keys[k].filled || keys[k + 1].filled;
+            const ImU32 c = est ? filledCol : showErr ? errorColor(track::errorOf(keys[k + 1]), settings.maxError) : base;
             dl->AddLine(S(keys[k].x, keys[k].y), S(keys[k + 1].x, keys[k + 1].y), c, sel ? 1.4f : 1.0f);
         }
         for (auto& k : keys) {
             const ImVec2 q = S(k.x, k.y);
             if (k.user) dl->AddRect(ImVec2(q.x - 3, q.y - 3), ImVec2(q.x + 3, q.y + 3), sel ? IM_COL32(255, 255, 255, 230) : IM_COL32(220, 220, 220, 140));
+            else if (k.filled) dl->AddCircle(q, 2.0f, filledCol);
             else if (sel || showErr) dl->AddCircleFilled(q, 1.6f, showErr ? errorColor(track::errorOf(k), settings.maxError) : base);
+        }
+    }
+
+    // ---- the corner pin (Transform tab set to a corner pin): its quad, and where lost corners are solved to be
+    if (track::isPinMode(n->params.str("transform", "none"))) {
+        const auto pins = track::pinTracks(tracks);
+        const double ref = track::referenceFrame(n->params.data, frame);
+        track::Fit fit = track::pinSolve(tracks, ref, frame);
+        std::vector<ImVec2> quad;
+        for (int i : pins) {
+            if (auto p = track::trackedAt(tracks[i], frame)) {
+                quad.push_back(S(p->first, p->second));
+                continue;
+            }
+            // lost here: carried by the pin from the reference frame, or (lost there too) from its nearest tracked frame
+            std::optional<std::pair<double, double>> r = track::trackedAt(tracks[i], ref);
+            track::Fit use = fit;
+            if (!r) {
+                double best = 1e30;
+                for (auto& k : track::keysOf(tracks[i]))
+                    if (std::fabs(k.frame - frame) < std::fabs(best - frame)) best = k.frame;
+                if (best < 1e29) {
+                    r = track::trackedAt(tracks[i], best);
+                    use = track::pinSolve(tracks, best, frame);
+                }
+            }
+            if (!use.ok || !r) {
+                quad.clear();
+                break;
+            }
+            double gx, gy;
+            use.H.apply(r->first, r->second, gx, gy);
+            const ImVec2 g = S(gx, gy);
+            quad.push_back(g);
+            const ImU32 lost = IM_COL32(255, 150, 60, 230);
+            dl->AddCircle(g, 7, lost, 0, 1.5f);
+            dl->AddLine(ImVec2(g.x - 4, g.y - 4), ImVec2(g.x + 4, g.y + 4), lost);
+            dl->AddLine(ImVec2(g.x - 4, g.y + 4), ImVec2(g.x + 4, g.y - 4), lost);
+            dl->AddText(ImVec2(g.x + 9, g.y - 7), lost, (tracks[i].value("name", "track") + " (lost: solved)").c_str());
+        }
+        if (quad.size() >= 4) {  // the first four pin tracks: the corners an export pins
+            dl->AddPolyline(quad.data(), 4, IM_COL32(90, 200, 255, 200), ImDrawFlags_Closed, 1.5f);
+            dl->AddLine(quad[0], quad[2], IM_COL32(90, 200, 255, 70));
+            dl->AddLine(quad[1], quad[3], IM_COL32(90, 200, 255, 70));
         }
     }
 
@@ -605,6 +654,7 @@ void drawTrackerViewer(App& app, UiState& ui, ImDrawList* dl, ImVec2 p0, ImVec2 
         }
         dl->AddText(ImVec2(ht.pq[1].x + 4, ht.pq[1].y - 2), col, t.value("name", "track").c_str());
         if (h->key && h->user) dl->AddText(ImVec2(ht.pq[1].x + 4, ht.pq[1].y + 12), IM_COL32(255, 255, 255, 200), "key");
+        else if (h->key && h->filled) dl->AddText(ImVec2(ht.pq[1].x + 4, ht.pq[1].y + 12), IM_COL32(90, 200, 255, 230), "filled");
         // the error under the search box (while tracking, or of the key here)
         if (lv || (h->key && !h->user)) {
             char e[32];
@@ -1203,6 +1253,93 @@ void drawTrackerPanel(App& app, UiState& ui, Node* n) {
     ImGui::EndDisabled();
     ImGui::EndDisabled();
 
+    // ---- fill gaps: frames where a track lost its feature
+    ImGui::Spacing();
+    ImGui::SeparatorText("Fill gaps");
+    {
+        static const char* kMethods[] = {"auto", "from other tracks", "smooth", "linear"};
+        st.fillMethod = std::clamp(st.fillMethod, 0, 3);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("from");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(150);
+        if (kit::beginComboFlat("##fillmethod", kMethods[st.fillMethod])) {
+            for (int k = 0; k < 4; ++k)
+                if (ImGui::Selectable(kMethods[k], st.fillMethod == k)) st.fillMethod = k;
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("from other tracks: the lost track is carried along by the tracks still tracking on those frames\n"
+                              "(perspective from 4 or more, affine from 3, scale and rotation from 2, position from 1),\n"
+                              "solved from its good frames either side of the gap and blended so both ends meet.\n"
+                              "smooth / linear: interpolated from the track's own keys (extended at its last speed past an end).\n"
+                              "auto: other tracks where they have data, smooth where they don't.");
+        ImGui::SameLine();
+        kit::checkbox("inside", &st.fillInside);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gaps between tracked frames");
+        ImGui::SameLine();
+        kit::checkbox("before start", &st.fillBefore);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("From the comp's first frame up to the track's first tracked frame");
+        ImGui::SameLine();
+        kit::checkbox("after end", &st.fillAfter);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("From the track's last tracked frame (where it stopped) to the comp's last frame");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("refill error >");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(60);
+        ImGui::InputFloat("##fillredo", &st.fillRedo, 0, 0, "%.3f");
+        st.fillRedo = std::max(0.0f, st.fillRedo);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Also replace tracked frames whose error is above this (0: off): a stretch where the track slipped");
+        ImGui::SameLine();
+        ImGui::TextDisabled("longest gap");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(50);
+        ImGui::InputInt("##fillmax", &st.fillMaxGap, 0, 0);
+        st.fillMaxGap = std::max(0, st.fillMaxGap);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gaps longer than this many frames are left alone (0: any length)");
+        ImGui::BeginDisabled(running || tracks.empty());
+        ImGui::SameLine();
+        if (ImGui::Button("fill gaps")) {
+            std::vector<int> which(st.sel.begin(), st.sel.end());
+            if (which.empty())
+                for (int i = 0; i < (int)tracks.size(); ++i) which.push_back(i);
+            track::FillOptions o;
+            o.method = kMethods[st.fillMethod];
+            o.inside = st.fillInside;
+            o.before = st.fillBefore;
+            o.after = st.fillAfter;
+            o.first = app.comp->firstFrame;
+            o.last = app.comp->lastFrame;
+            o.redoAbove = st.fillRedo;
+            o.maxGap = st.fillMaxGap;
+            app.checkpoint();
+            App* ap = &app;
+            editTracks(app, name, [which, o, ap](json& t) {
+                const track::FillReport rep = track::fillGaps(t, which, o);
+                std::string msg = "fill gaps: no gaps to fill";
+                if (rep.frames || rep.skipped)
+                    msg = "fill gaps: " + std::to_string(rep.frames) + " frames filled (" + std::to_string(rep.fromTracks) + " from other tracks, " +
+                          std::to_string(rep.interpolated) + " interpolated)" +
+                          (rep.skipped ? ", " + std::to_string(rep.skipped) + " left: no other tracks there" : "");
+                ap->message(msg);
+            });
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Fill the selected tracks' gaps (all tracks when none are selected). Filled frames show blue in the viewer;\n"
+                              "tracking over them replaces them, and filling again redoes them.");
+        ImGui::SameLine();
+        if (ImGui::Button("clear filled")) {
+            std::vector<int> which(st.sel.begin(), st.sel.end());
+            if (which.empty())
+                for (int i = 0; i < (int)tracks.size(); ++i) which.push_back(i);
+            app.checkpoint();
+            App* ap = &app;
+            editTracks(app, name, [which, ap](json& t) { ap->message("clear filled: " + std::to_string(track::clearFilled(t, which)) + " filled frames removed"); });
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Remove the filled frames from the selected tracks (all when none are selected)");
+        ImGui::EndDisabled();
+    }
+
     // ---- export
     ImGui::Spacing();
     ImGui::SeparatorText("Export");
@@ -1290,6 +1427,13 @@ void drawTrackerPanel(App& app, UiState& ui, Node* n) {
     const bool stabilize = choice.find("stabilize") != std::string::npos;
     const double fromFrame = choice.find("current frame") != std::string::npos ? frame : ref;
     json params = {{"invert", stabilize}};
+    // The corners follow the corner pin solved from all the pin tracks (the four chosen ones, plus
+    // any other enabled T tracks): frames where a corner was lost still get a corner, and extra
+    // tracks on the surface steady it. Not on the surface? Turn their T off.
+    std::vector<int> pins = track::pinTracks(tracks);
+    for (int i : use)
+        if (std::find(pins.begin(), pins.end(), i) == pins.end()) pins.push_back(i);
+    std::array<std::pair<double, double>, 4> from;
     for (int k = 0; k < 4; ++k) {
         const json& t = tracks[use[k]];
         auto p = track::positionAt(t, fromFrame);
@@ -1297,20 +1441,36 @@ void drawTrackerPanel(App& app, UiState& ui, Node* n) {
             app.message("CornerPin2D export: " + t.value("name", "track") + " has no position on frame " + std::to_string((int)fromFrame));
             return;
         }
-        json kx = {{"keys", json::array()}, {"interp", "linear"}}, ky = kx;
-        for (auto& key : track::keysOf(t)) {
-            kx["keys"].push_back({key.frame, key.x});
-            ky["keys"].push_back({key.frame, key.y});
-        }
+        from[k] = *p;
         params["from" + std::to_string(k + 1)] = {p->first, p->second};
-        params["to" + std::to_string(k + 1)] = {kx, ky};
     }
+    std::array<json, 8> curves;
+    for (auto& cv : curves) cv = {{"keys", json::array()}, {"interp", "linear"}};
+    int lost = 0;
+    for (double f : track::trackedFrames(tracks)) {
+        track::Fit fit = track::pinSolve(tracks, fromFrame, f, &pins);
+        if (!fit.ok) continue;
+        if (fit.model < 4) ++lost;
+        for (int k = 0; k < 4; ++k) {
+            double x, y;
+            if (auto own = track::trackedAt(tracks[use[k]], f); own && pins.size() == 4) {  // exactly four: their own positions
+                x = own->first;
+                y = own->second;
+            } else {
+                fit.H.apply(from[k].first, from[k].second, x, y);
+            }
+            curves[2 * k]["keys"].push_back({f, std::round(x * 1000) / 1000});
+            curves[2 * k + 1]["keys"].push_back({f, std::round(y * 1000) / 1000});
+        }
+    }
+    for (int k = 0; k < 4; ++k) params["to" + std::to_string(k + 1)] = {curves[2 * k], curves[2 * k + 1]};
     json uij = {{"x", n->ui.value("x", 0.0) + 140}, {"y", n->ui.value("y", 0.0) + 40}};
     app.checkpoint();
-    app.edit([&app, params, uij](Comp& c) {
+    app.edit([&app, params, uij, lost](Comp& c) {
         Node* t = c.addNode("CornerPin2D", "CornerPin2D", params, uij);
         app.selection = {t->name};
-        app.message("exported " + t->name);
+        app.message("exported " + t->name +
+                    (lost ? " (" + std::to_string(lost) + " frames had fewer than four tracks: solved from the rest; Fill gaps first for better)" : ""));
     });
 }
 

@@ -3626,6 +3626,209 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(cp, 30, 10, "G"), 8, 1e-3);   // and 2 px up
     });
 
+    test("tracking: corner pin from tracks (least squares, lost corners) and gap filling", [] {
+        // A flat surface moving in perspective: frame f maps the reference (frame 1) by H(f).
+        const double ref[8] = {10, 10, 54, 10, 54, 40, 10, 40};
+        auto Hof = [&](double f, double H[9]) {
+            const double t = f - 1;
+            double dst[8] = {10 + 0.8 * t, 10 + 0.3 * t, 54 + 0.5 * t, 10 - 0.2 * t, 54 + 0.9 * t, 40 + 0.6 * t, 10 + 0.2 * t, 40 + 0.1 * t};
+            CHECK(track::homography(ref, dst, H));
+        };
+        auto mapH = [](const double H[9], double x, double y, double& u, double& v) {
+            const double w = H[6] * x + H[7] * y + H[8];
+            u = (H[0] * x + H[1] * y + H[2]) / w;
+            v = (H[3] * x + H[4] * y + H[5]) / w;
+        };
+        const std::vector<std::pair<double, double>> pts = {{10, 10}, {54, 10}, {54, 40}, {10, 40}, {30, 20}, {20, 32}};
+        auto truth = [&](int i, double f, double& u, double& v) {
+            double H[9];
+            Hof(f, H);
+            mapH(H, pts[i].first, pts[i].second, u, v);
+        };
+        auto makeTracks = [&](int n, int last) {
+            json tracks = json::array();
+            for (int i = 0; i < n; ++i) {
+                json t = {{"name", "p" + std::to_string(i + 1)}, {"enabled", true}, {"T", true}};
+                for (int f = 1; f <= last; ++f) {
+                    double u, v;
+                    truth(i, f, u, v);
+                    track::setKey(t, {(double)f, u, v, 0.99, f == 1});
+                }
+                tracks.push_back(t);
+            }
+            return tracks;
+        };
+
+        // fitPoints: exact from 4, robust to a bad 6th point, lower models from fewer / collinear points
+        {
+            double H[9];
+            Hof(9, H);
+            std::vector<track::PointPair> pp;
+            for (auto [x, y] : pts) {
+                double u, v;
+                mapH(H, x, y, u, v);
+                pp.push_back({x, y, u, v});
+            }
+            std::vector<track::PointPair> four(pp.begin(), pp.begin() + 4);
+            track::Fit f4 = track::fitPoints(four);
+            CHECK(f4.ok && f4.model == 4 && f4.rms < 1e-6);
+            double u, v, eu, ev;
+            f4.H.apply(30, 20, u, v);
+            mapH(H, 30, 20, eu, ev);
+            CHECK_NEAR(u, eu, 1e-6);
+            CHECK_NEAR(v, ev, 1e-6);
+            std::vector<track::PointPair> bad = pp;
+            bad.push_back({40, 25, 0, 0});
+            mapH(H, 40, 25, bad.back().cx, bad.back().cy);
+            bad.back().cx += 15;  // a slipped track
+            track::Fit fr = track::fitPoints(bad);
+            CHECK(fr.ok && fr.model == 4 && fr.used == 6);
+            fr.H.apply(20, 32, u, v);
+            mapH(H, 20, 32, eu, ev);
+            CHECK_NEAR(u, eu, 1e-4);
+            CHECK_NEAR(v, ev, 1e-4);
+            track::Fit f3 = track::fitPoints({pp[0], pp[1], pp[2]});
+            CHECK(f3.ok && f3.model == 3);
+            CHECK(f3.H.m[6] == 0 && f3.H.m[7] == 0);
+            f3.H.apply(pp[1].rx, pp[1].ry, u, v);
+            CHECK_NEAR(u, pp[1].cx, 1e-6);  // three points: an exact affine
+            track::Fit fl = track::fitPoints({{0, 0, 1, 1}, {10, 0, 11, 1}, {20, 0, 21, 1}, {30, 0, 31, 1}});
+            CHECK(fl.ok && fl.model == 2);  // on a line: no perspective / affine
+            track::H9 hi = f4.H * f4.H.inverse();  // the identity, up to scale
+            CHECK_NEAR(hi.m[0] / hi.m[8], 1, 1e-9);
+            CHECK_NEAR(hi.m[4] / hi.m[8], 1, 1e-9);
+            CHECK_NEAR(hi.m[1] / hi.m[8], 0, 1e-9);
+            CHECK_NEAR(hi.m[5] / hi.m[8], 0, 1e-9);
+        }
+
+        // the Tracker's corner pin = a CornerPin2D from the reference corners to the frame's
+        json tracks = makeTracks(4, 20);
+        double c5[8];
+        for (int i = 0; i < 4; ++i) truth(i, 5, c5[2 * i], c5[2 * i + 1]);
+        auto c = comp(json::array({
+            {{"name", "P"}, {"type", "TestPattern"}},
+            {{"name", "Trk"}, {"type", "Tracker"}, {"inputs", {"P"}},
+             {"params", {{"tracks", tracks}, {"transform", "corner pin match-move"}, {"reference_frame", 1}}}},
+            {{"name", "Stab"}, {"type", "Tracker"}, {"inputs", {"Trk"}},
+             {"params", {{"tracks", tracks}, {"transform", "corner pin stabilize"}, {"reference_frame", 1}}}},
+            {{"name", "CP"}, {"type", "CornerPin2D"}, {"inputs", {"P"}},
+             {"params", {{"from1", {10, 10}}, {"from2", {54, 10}}, {"from3", {54, 40}}, {"from4", {10, 40}},
+                         {"to1", {c5[0], c5[1]}}, {"to2", {c5[2], c5[3]}}, {"to3", {c5[4], c5[5]}}, {"to4", {c5[6], c5[7]}}}}},
+            {{"name", "RL"}, {"type", "ReferenceLink"}, {"inputs", {"P", "Trk"}}, {"params", {{"reference_frame", 1}}}},
+        }));
+        auto a = render(*c, "Trk", 5), b = render(*c, "CP", 5), rl = render(*c, "RL", 5), back = render(*c, "Stab", 5);
+        for (auto [x, y] : std::vector<std::pair<int, int>>{{30, 20}, {15, 12}, {50, 38}, {25, 30}}) {
+            CHECK_NEAR(px(a, x, y, "R"), px(b, x, y, "R"), 0.02);
+            CHECK_NEAR(px(a, x, y, "G"), px(b, x, y, "G"), 0.02);
+            CHECK_NEAR(px(rl, x, y, "R"), px(b, x, y, "R"), 0.02);
+            CHECK_NEAR(px(back, x, y, "R"), x, 0.1);  // pin then un-pin: back where it was (one resample: concatenated)
+        }
+        // a lost corner: the pin carries on from the other three (affine)
+        {
+            json lost = tracks;
+            track::clearKeys(lost[3], 4, 1);
+            track::Fit f = track::pinSolve(lost, 1, 5);
+            CHECK(f.ok && f.model == 3 && f.used == 3);
+            CHECK(!track::trackedAt(lost[3], 5));
+            json p = {{"tracks", lost}, {"transform", "corner pin match-move"}, {"reference_frame", 1}};
+            track::H9 M = track::trackerMatrix(p, 5);
+            CHECK(M.m[6] == 0 && M.m[7] == 0);
+            double u, v;
+            M.apply(10, 10, u, v);
+            CHECK_NEAR(u, c5[0], 1e-2);  // the three it has still land on their tracks
+            CHECK_NEAR(v, c5[1], 1e-2);
+            // a gap inside a track isn't a position (interpolating across it is a guess)
+            json gap = tracks;
+            for (int f = 6; f <= 12; ++f) track::deleteKey(gap[0], f);
+            CHECK(!track::trackedAt(gap[0], 9));
+            CHECK(track::positionAt(gap[0], 9).has_value());
+        }
+
+        // gap filling from the other tracks: a gap inside and a lost end, back on the surface
+        {
+            json t6 = makeTracks(6, 20);
+            for (int f = 6; f <= 12; ++f) track::deleteKey(t6[0], f);
+            track::clearKeys(t6[0], 15, 1);  // stopped at 15
+            track::FillOptions o;
+            o.after = true;
+            o.first = 1;
+            o.last = 20;
+            track::FillReport r = track::fillGaps(t6, {0}, o);
+            CHECK(r.frames == 7 + 5 && r.fromTracks == 12 && r.interpolated == 0 && r.skipped == 0);
+            for (int f : {6, 9, 12, 16, 20}) {
+                auto k = track::keyAt(t6[0], f);
+                CHECK(k && k->filled && !k->user);
+                double u, v;
+                truth(0, f, u, v);
+                CHECK_NEAR(k->x, u, 0.01);
+                CHECK_NEAR(k->y, v, 0.01);
+            }
+            CHECK(t6[0]["keys"][6][4] == 2);  // stored as 2: filled
+            CHECK(!track::keyAt(t6[0], 3)->filled);
+            // filling again redoes the filled frames (no doubles); clear removes them
+            track::FillReport r2 = track::fillGaps(t6, {0}, o);
+            CHECK(r2.frames == 12);
+            CHECK(track::keysOf(t6[0]).size() == 20);
+            CHECK(track::clearFilled(t6, {0}) == 12);
+            CHECK(track::keysOf(t6[0]).size() == 8);
+            // a slipped stretch: keys with a high error count as lost with redo_above
+            json t7 = makeTracks(6, 20);
+            for (int f = 8; f <= 9; ++f) {
+                auto k = *track::keyAt(t7[1], f);
+                k.x += 4;
+                k.score = 0.6;
+                track::setKey(t7[1], k);
+            }
+            o.redoAbove = 0.2;
+            o.after = false;
+            track::FillReport r3 = track::fillGaps(t7, {1}, o);
+            CHECK(r3.frames == 2);
+            double u, v;
+            truth(1, 8, u, v);
+            CHECK_NEAR(track::keyAt(t7[1], 8)->x, u, 0.01);
+            // the corner pin uses filled corners like tracked ones
+            json t4 = makeTracks(4, 20);
+            track::clearKeys(t4[2], 10, 1);
+            track::FillOptions oa;
+            oa.after = true;
+            oa.last = 20;
+            CHECK(track::fillGaps(t4, {2}, oa).fromTracks == 10);  // from the other three: affine
+            CHECK(track::pinSolve(t4, 1, 15).model == 4);
+        }
+        // nothing else tracking: smooth / linear interpolation of the track's own keys
+        {
+            json t = {{"name", "solo"}, {"T", true}};
+            for (int f = 1; f <= 30; ++f) {
+                if (f > 10 && f < 20) continue;
+                track::setKey(t, {(double)f, 5.0 + 2 * f, 0.05 * f * f, 1, false});
+            }
+            json ts = json::array({t});
+            track::FillOptions o;
+            o.method = "auto";
+            track::FillReport r = track::fillGaps(ts, {0}, o);
+            CHECK(r.frames == 9 && r.interpolated == 9);
+            auto k = track::keyAt(ts[0], 15);
+            CHECK_NEAR(k->x, 35, 0.01);              // a straight line stays straight
+            CHECK_NEAR(k->y, 0.05 * 225, 0.3);       // and the curve keeps curving (linear is 1.25 px off here)
+            json tl = json::array({t});
+            o.method = "linear";
+            track::fillGaps(tl, {0}, o);
+            CHECK_NEAR(track::keyAt(tl[0], 15)->y, (0.05 * 100 + 0.05 * 400) / 2, 1e-3);
+            o.method = "from other tracks";  // nothing to carry it: left alone
+            json tn = json::array({t});
+            track::FillReport rn = track::fillGaps(tn, {0}, o);
+            CHECK(rn.frames == 0 && rn.skipped == 9);
+            // past the end: on at its last speed
+            o.method = "smooth";
+            o.inside = false;
+            o.after = true;
+            o.last = 32;
+            json te = json::array({t});
+            track::fillGaps(te, {0}, o);
+            CHECK_NEAR(track::keyAt(te[0], 32)->x, 5 + 2 * 32, 1e-3);
+        }
+    });
+
     test("Precomp: renders once, copies, reads local in the editor and network in renders, Clear goes live", [] {
         namespace fs = std::filesystem;
         const fs::path root = fs::temp_directory_path() / ("strata_precomp_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
