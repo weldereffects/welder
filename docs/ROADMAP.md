@@ -15,7 +15,8 @@
 - [x] Viewer: A/B wipe and difference, OCIO view transform, RAM playback cache with pre-rendering
 - [ ] Viewer next: ROI box, 2-up / stacked compare, flipbook to disk
 - [x] DPX and TIFF (native), 16-bit PNG, movies through FFmpeg (ProRes, DNxHR, H.264 / HEVC read, MJPEG, MPEG-4, FFV1)
-- [ ] Formats next: H.264 / HEVC writing (needs a GPL encoder build or the OS's encoders), audio, timecode, OpenImageIO plugins, Cineon .cin
+- [x] H.264 / HEVC writing through hardware encoders (NVENC, AMF, Media Foundation, Vulkan Video; no GPL x264 / x265)
+- [ ] Formats next: audio, timecode, OpenImageIO plugins, Cineon .cin
 - [x] Curve editor and dope sheet (per-key interpolation, tangents)
 - [ ] Curves next: expressions on curves, curve filters (smooth, reduce keys), multiple-curve scaling by box
 - [x] Paste nodes copied in another .nk app (its clipboard format); groups as real nodes (Ctrl+G / Ctrl+Alt+G / Ctrl+Enter, own knobs), gizmos (.gizmo files and groups saved as .sgizmo), backdrops and sticky notes

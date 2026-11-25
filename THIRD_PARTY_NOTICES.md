@@ -27,9 +27,14 @@ licence texts are in the `licenses/` folder next to this file.
 | ufbx (FBX import) | 0.21.3 | MIT or public domain (either) | `licenses/ufbx.txt` |
 | stb_image, stb_image_write | 2.30 | Public domain or MIT (either) | in the headers, `third_party/stb` |
 | Vulkan headers | 1.3.275 | Apache-2.0 or MIT | headers only; Vulkan is loaded at run time |
+| NVIDIA nv-codec-headers (FFmpeg's NVENC loader) | 12.1.14.0 | MIT | `licenses/nv-codec-headers.txt` |
+| AMD AMF headers (FFmpeg's AMF encoder) | 1.4.36 | MIT | `licenses/AMF.txt` |
+| Vulkan headers (FFmpeg's Vulkan Video encoder) | 1.3.296 | Apache-2.0 or MIT | headers only |
 
 FFmpeg is built without its GPL or non-free parts (`tools/build_ffmpeg.sh` lists exactly what
-is enabled) and linked statically. Its source is at https://ffmpeg.org/ (release 7.1.1). Welder's
+is enabled) and linked statically. H.264 / H.265 are written only through the machine's own
+hardware encoders (NVIDIA NVENC, AMD AMF, Windows Media Foundation, Vulkan Video), whose drivers
+are loaded at run time; no x264 / x265. Its source is at https://ffmpeg.org/ (release 7.1.1). Welder's
 own source and build scripts are public, so you can rebuild Welder against a modified FFmpeg.
 
 ## Shipped alongside

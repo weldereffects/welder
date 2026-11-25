@@ -308,9 +308,11 @@ if(STRATA_FFMPEG_DIR)
   endif()
   list(APPEND _ff_libs ${_ff_z})
   if(WIN32)
-    list(APPEND _ff_libs bcrypt)
+    # bcrypt: avutil's random numbers; mfuuid ole32 strmiids user32: the Media Foundation H.264 / H.265
+    # encoders (mfplat itself, NVENC, AMF and Vulkan are loaded at run time)
+    list(APPEND _ff_libs bcrypt mfuuid ole32 strmiids user32)
   else()
-    list(APPEND _ff_libs pthread m)
+    list(APPEND _ff_libs pthread m ${CMAKE_DL_LIBS})  # dl: NVENC / AMF / Vulkan drivers are loaded at run time
   endif()
   target_include_directories(strata_core SYSTEM PRIVATE ${STRATA_FFMPEG_DIR}/include)
   target_link_libraries(strata_core PUBLIC ${_ff_libs})

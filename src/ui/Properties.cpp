@@ -1884,13 +1884,12 @@ bool condOk(const Node* n, const std::string& cond) {
     return false;
 }
 
-// A knob's "when" condition: shown only while another knob has one of the listed values.
-bool whenOk(const Node* n, const NodeDef& def, const KnobDef& k) {
-    if (k.when.empty()) return true;
-    if (k.when.rfind("@", 0) == 0) return condOk(n, k.when);
-    size_t eq = k.when.find('=');
+// One "key=v1|v2" of a knob's "when": does the knob `key` hold one of the values?
+static bool whenOne(const Node* n, const NodeDef& def, const std::string& when) {
+    if (when.rfind("@", 0) == 0) return condOk(n, when);
+    size_t eq = when.find('=');
     if (eq == std::string::npos) return true;
-    std::string key = k.when.substr(0, eq), vals = k.when.substr(eq + 1);
+    std::string key = when.substr(0, eq), vals = when.substr(eq + 1);
     std::string defv;
     for (auto& o : def.knobs)
         if (o.name == key && o.def.is_string()) defv = o.def.get<std::string>();
@@ -1903,6 +1902,23 @@ bool whenOk(const Node* n, const NodeDef& def, const KnobDef& k) {
         p = q + 1;
     }
     return false;
+}
+
+// A knob's "when" condition: shown only while another knob has one of the listed values
+// ("a=x|y & b=z": all of them).
+bool whenOk(const Node* n, const NodeDef& def, const KnobDef& k) {
+    if (k.when.empty()) return true;
+    size_t p = 0;
+    while (p <= k.when.size()) {
+        size_t q = k.when.find('&', p);
+        if (q == std::string::npos) q = k.when.size();
+        std::string part = k.when.substr(p, q - p);
+        while (!part.empty() && part.front() == ' ') part.erase(0, 1);
+        while (!part.empty() && part.back() == ' ') part.pop_back();
+        if (!part.empty() && !whenOne(n, def, part)) return false;
+        p = q + 1;
+    }
+    return true;
 }
 
 // OFlow / RIFE: the input range (automatic unless set), the resulting output

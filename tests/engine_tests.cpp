@@ -6899,6 +6899,87 @@ Connections:  {
             CHECK(movie::probe(p).profile == want);
             if (movie::probe(p).profile != want) std::printf("    %s: profile %s\n", pr.c_str(), movie::probe(p).profile.c_str());
         }
+        // H.264 / H.265: only the machine's hardware encoders are built in, so with no GPU encoder here
+        // the Writer must fail with each encoder's reason. STRATA_TEST_VIDEO_ENCODER=<FFmpeg encoder>
+        // (e.g. libopenh264 in a test FFmpeg) checks the rest of the path without one.
+        {
+            auto enc = movie::videoEncoders();
+            std::string names;
+            for (auto& n : enc) names += " " + n;
+            std::printf("    video encoders in this build:%s\n", names.empty() ? " none" : names.c_str());
+            struct HCase { const char* codec; const char* ext; const char* profile; const char* rate; const char* want; };
+            for (auto hc : std::vector<HCase>{{"h.264", ".mp4", "high", "quality", "h264"}, {"h.264", ".mov", "main", "bitrate", "h264"},
+                                              {"h.265", ".mov", "main", "quality", "hevc"}, {"h.265", ".mkv", "main 10", "quality", "hevc"}}) {
+                const int W = 256, H = 128, N = 12;
+                std::string p = (dir / (std::string("h_") + hc.codec + "_" + hc.profile + hc.ext)).string();
+                for (auto& ch : p) if (ch == ' ') ch = '_';
+                movie::WriterOptions o;
+                o.codec = hc.codec;
+                o.fps = 25;
+                o.profile = hc.profile;
+                o.rate = hc.rate;
+                o.bitrate = 8;
+                o.keyframes = 5;
+                std::string used;
+                try {
+                    movie::Writer w(p, W, H, false, o);
+                    used = w.encoderUsed();
+                    for (int k = 0; k < N; ++k) {
+                        raster::Raster r;
+                        r.w = W; r.h = H; r.n = 3;
+                        r.px.resize((size_t)W * H * 3);
+                        for (int y = 0; y < H; ++y)
+                            for (int x = 0; x < W; ++x) {
+                                float* q = r.at(x, y);
+                                q[0] = (k + 0.5f) / N;
+                                q[1] = 0.2f + 0.6f * x / (W - 1);
+                                q[2] = 0.5f;
+                            }
+                        w.write(r);
+                    }
+                    w.close();
+                } catch (const RenderError& e) {
+                    std::string m = e.what();
+                    bool none = m.find("encoder would start") != std::string::npos;
+                    CHECK(none);
+                    std::printf("    %s %s %s: no encoder here (%s)\n", hc.codec, hc.profile, hc.ext,
+                                m.substr(0, m.find("\nH.264")).c_str());
+                    if (!none) std::printf("    unexpected: %s\n", m.c_str());
+                    continue;
+                }
+                auto info = movie::probe(p);
+                CHECK(info.width == W && info.height == H);
+                CHECK(info.frames == N);
+                CHECK(info.codec == hc.want);
+                CHECK(std::fabs(info.fps - 25) < 1e-3);
+                double worst = 0;
+                for (int k : {0, 6, 3, 11, 1}) {
+                    auto rp = movie::readFrame(p, k);
+                    const float* q = rp->at(W / 2, H / 2);
+                    worst = std::max({worst, (double)std::fabs(q[0] - (k + 0.5f) / N), (double)std::fabs(q[2] - 0.5f)});
+                }
+                CHECK(worst < 0.04);
+                std::printf("    %s %s %s via %s: %d frames, codec %s, max error %.4f\n", hc.codec, hc.profile, hc.ext, used.c_str(),
+                            info.frames, info.codec.c_str(), worst);
+            }
+            movie::WriterOptions o;
+            o.codec = "h.264";
+            bool threw = false;
+            try {
+                movie::Writer w((dir / "odd.mp4").string(), 255, 128, false, o);
+            } catch (const RenderError& e) {
+                threw = std::string(e.what()).find("even width") != std::string::npos;
+            }
+            CHECK(threw);
+            o.encoder = "bogus";
+            threw = false;
+            try {
+                movie::Writer w((dir / "bogus.mp4").string(), 64, 64, false, o);
+            } catch (const RenderError& e) {
+                threw = std::string(e.what()).find("unknown video encoder") != std::string::npos;
+            }
+            CHECK(threw);
+        }
         // Write / Read nodes: a ProRes movie rendered over a frame range, read back by frame number
         auto c = comp(json::array({
             {{"name", "C"}, {"type", "Constant"}, {"params", {{"color", {0.18, 0.5, 0.05, 1}}, {"format", {96, 54}}}}},
