@@ -63,10 +63,10 @@ class RuntimePaths:
 
 def load_model(paths, device="cuda"):
     assert (paths.package_root / "weights" / "corridorkey_v2.safetensors").exists()
-    return "model"
+    return {"device": str(device)}
 
 def run_inference(model, input_path, output_dir, cfg, writer_cfg, *, initial_hint_path, hint_video_path):
-    CALLS.append(dict(input=input_path, cfg=cfg, first=initial_hint_path, video=hint_video_path))
+    CALLS.append(dict(input=input_path, cfg=cfg, first=initial_hint_path, video=hint_video_path, device=model["device"]))
     plates = sorted(glob.glob(os.path.join(input_path, "*.exr")))
     hints = sorted(glob.glob(os.path.join(hint_video_path, "*.png"))) if hint_video_path else []
     out = os.path.join(output_dir, "plate_cutout_exr")
@@ -138,10 +138,14 @@ class CorridorKeyTask(unittest.TestCase):
         torch = types.ModuleType("torch")
         torch.cuda = types.SimpleNamespace(is_available=lambda: True)
         sys.modules["torch"] = torch
+        from strata_ml import device
+        self.device = device
+        device._CURRENT[:] = [device.Device("cuda", "cuda", "Test GPU", 24 << 30)]
         from strata_ml.tasks import corridorkey
         self.ck = corridorkey
 
     def tearDown(self):
+        self.device.reset()
         if self.old_torch is None:
             sys.modules.pop("torch", None)
         else:
@@ -228,9 +232,32 @@ class CorridorKeyTask(unittest.TestCase):
         self.assertIn("at 100x50", r["message"])
 
     def test_no_gpu(self):
-        sys.modules["torch"].cuda = types.SimpleNamespace(is_available=lambda: False)
-        with self.assertRaisesRegex(RuntimeError, "NVIDIA GPU"):
+        self.device._CURRENT[:] = [self.device.Device("cpu")]
+        with self.assertRaisesRegex(RuntimeError, "needs a GPU"):
             self.run_core("f", [1], [green_plate()])
+
+    def test_cpu_when_asked(self):
+        self.device._CURRENT[:] = [self.device.Device("cpu")]
+        os.environ["STRATA_ML_DEVICE"] = "cpu"
+        try:
+            jd, r = self.run_core("f2", [1], [green_plate()])
+        finally:
+            os.environ.pop("STRATA_ML_DEVICE", None)
+        self.assertEqual(self.calls()[-1]["device"], "cpu")
+        self.assertFalse(self.calls()[-1]["cfg"].auto_vram)  # auto sizing asks CUDA: a fixed window instead
+        self.assertEqual(r["window"], [4, 2])
+
+    def test_directml_sizes_the_window_from_the_card(self):
+        self.device._CURRENT[:] = [self.device.Device("directml", "privateuseone:0", "AMD Radeon RX 7900 XTX", None)]
+        jd, r = self.run_core("f3", [1], [green_plate()])
+        c = self.calls()[-1]
+        self.assertEqual(c["device"], "privateuseone:0")
+        self.assertFalse(c["cfg"].auto_vram)
+        self.assertTrue(c["cfg"].low_vram)            # its memory is unknown: play safe
+        self.device._CURRENT[:] = [self.device.Device("xpu", "xpu", "Intel Arc B580", 12 << 30)]
+        jd, r = self.run_core("f4", [1], [green_plate()])
+        c = self.calls()[-1]
+        self.assertEqual((c["device"], c["cfg"].hann_chunk, c["cfg"].low_vram), ("xpu", 8, False))
 
     def test_main_worker_needs_the_environment(self):
         from strata_ml.util import JobContext

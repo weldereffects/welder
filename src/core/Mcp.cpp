@@ -301,6 +301,27 @@ const std::vector<Tool>& tools() {
          R"J({"type":"object","properties":{"node":{"type":"string"},"name":{"type":"string"}},"required":["node","name"]})J",
          Kind::Edit, false,
          [](ScriptApi& api, const json& a, bool) { return json{{"name", api.call("node.rename", {{"node", sarg(a, "node")}, {"name", sarg(a, "name")}})}}; }},
+        {"fill_track_gaps", "Fill lost track frames",
+         "Tracker: fill the frames where its tracks lost their feature (occluded, left frame, stopped on error). "
+         "'from other tracks' carries each lost track along with the tracks still tracking there (perspective from 4+, "
+         "affine 3, similarity 2, position 1); 'smooth' / 'linear' interpolate the track's own keys; 'auto' (default) "
+         "does the first where it can, else smooth. Filled frames are marked and can be cleared with clear=true.",
+         R"J({"type":"object","properties":{"node":{"type":"string","description":"a Tracker"},
+              "tracks":{"type":"array","items":{"type":["string","integer"]},"description":"track names or 0-based indices (default: all)"},
+              "method":{"type":"string","enum":["auto","from other tracks","smooth","linear"]},
+              "inside":{"type":"boolean","description":"gaps between tracked frames (default true)"},
+              "before":{"type":"boolean","description":"from the comp's first frame to the track's first (default false)"},
+              "after":{"type":"boolean","description":"from the track's last frame to the comp's last (default true)"},
+              "redo_above":{"type":"number","description":"also refill keys whose error is above this (default 0: off)"},
+              "max_gap":{"type":"integer","description":"leave gaps longer than this (default 0: any)"},
+              "clear":{"type":"boolean","description":"remove the filled frames instead"}},"required":["node"]})J",
+         Kind::Edit, false,
+         [](ScriptApi& api, const json& a, bool) {
+             json p = a.is_object() ? a : json::object();
+             const bool clear = p.value("clear", false);
+             p.erase("clear");
+             return api.call(clear ? "tracker.clear_filled" : "tracker.fill_gaps", p);
+         }},
         {"set_comp", "Change comp settings", "Change the comp's frame range, fps, size or name.",
          R"J({"type":"object","properties":{"first_frame":{"type":"number"},"last_frame":{"type":"number"},"fps":{"type":"number"},
               "width":{"type":"integer"},"height":{"type":"integer"},"pixel_aspect":{"type":"number"},"name":{"type":"string"}}})J",

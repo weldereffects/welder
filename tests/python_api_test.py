@@ -93,6 +93,27 @@ comp = welder.open(path)
 check(comp.path == path and names(comp) == ["Flat", "Grade1", "Soft", "Write1"], "save and reopen")
 check(close(comp["Grade1"]["gain"].get(3)[0], 2.0), "keys survive a save")
 
+# Tracker gap filling: a track lost for frames 4-6 is carried back by the two still tracking
+moving = [[f, 10.0 + 3 * f, 20.0 + f, 0.99, 1 if f == 1 else 0] for f in range(1, 11)]
+lost = [k for k in moving if k[0] not in (4, 5, 6)]
+trk = comp.create("Tracker", tracks=[
+    {"name": "a", "enabled": True, "T": True, "keys": moving},
+    {"name": "b", "enabled": True, "T": True, "keys": [[k[0], k[1] + 40, k[2], 0.99, k[4]] for k in moving]},
+    {"name": "lost", "enabled": True, "T": True, "keys": [[k[0], k[1] + 20, k[2] + 30, 0.99, k[4]] for k in lost]},
+])
+rep = trk.fill_gaps(tracks=["lost"], after=False)
+check(rep["filled"] == 3 and rep["from_tracks"] == 3, "fill_gaps from other tracks")
+k5 = [k for k in trk["tracks"].info()["raw"][2]["keys"] if k[0] == 5][0]
+check(close(k5[1], 45.0) and close(k5[2], 55.0) and k5[4] == 2, "filled key on the path, marked filled")
+check(trk.clear_filled()["removed"] == 3, "clear_filled")
+raises_type = False
+try:
+    comp["Flat"].fill_gaps()
+except TypeError:
+    raises_type = True
+check(raises_type, "fill_gaps on a non-Tracker is a TypeError")
+comp.delete(trk)
+
 
 def raises(exc, fn, what):
     try:

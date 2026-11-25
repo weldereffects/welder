@@ -2180,7 +2180,11 @@ std::vector<NodeDef> build() {
                       S_(Tip(Field(I("max_number_of_keyframe_tracks_to_display", "on_screen key-track limit", 3, 0, 20), 70),
                              "Most tracks whose keyframe snapshots show in the viewer (0: the selected ones)")),
                       // ---- Transform
-                      X_(Width(C("transform", "transform", "none", {"none", "stabilize", "stabilize 1pt", "match-move", "match-move 1pt", "remove jitter", "add jitter"}), 140)),
+                      X_(Tip(Width(C("transform", "transform", "none", {"none", "stabilize", "stabilize 1pt", "match-move", "match-move 1pt", "remove jitter", "add jitter",
+                                                                     "corner pin match-move", "corner pin stabilize"}), 170),
+                             "corner pin: the perspective of a flat surface from its tracks (the enabled tracks with T on: 4 for a "
+                             "corner pin, more to average out noise). Where some are lost it carries on with the rest (3: affine, "
+                             "2: scale and rotation, 1: position). Smooth t averages the track positions")),
                       X_(ref), X_(Same(Btn("tracker_ref_here", "set to current frame", "Make the frame you're on the reference frame"), true)),
                       X_(Tip(F("jitter_period", "jitter period", 10, 1, 100), "Frames averaged to find the steady motion (remove / add jitter)")),
                       X_(Tip(smooth, "Frames averaged to smooth the translation, rotation and scale")),
@@ -2192,7 +2196,8 @@ std::vector<NodeDef> build() {
                       X_(Log(F("motionblur", "motionblur", 0, 0, 4))), X_(F("shutter", "Shutter Length", 0.5, 0, 2)),
                       X_(Width(C("shutteroffset", "Shutter Offset", "start", {"centred", "start", "end", "custom"}), 100)),
                       X_(Same(EnableIf(F("shuttercustomoffset", "", 0, -1, 1), "shutteroffset=custom"), true))},
-                     "2D point tracks: tracking, keyframe tracking and offsets in the viewer; stabilize, match-move and jitter on the Transform tab."});
+                     "2D point tracks: tracking, keyframe tracking and offsets in the viewer; Fill gaps for frames where a track lost its "
+                     "feature; stabilize, match-move, jitter and a live corner pin on the Transform tab."});
     }
     d.push_back({"PlanarTracker", "Transform", {}, "Tracks a flat surface (perspective, rotation, scale) from a region drawn in the viewer."});
     {
@@ -2423,8 +2428,8 @@ std::vector<NodeDef> build() {
                              "Copy the current key into the key folder now (frames already there are skipped)")}),
                  "CorridorKey 2.0 by Corridor Digital: AI green / blue screen keying that looks at the whole clip, for a steady matte "
                  "and real colour in hair, motion blur and glass. Optional hint input: a rough matte. Downloaded from Corridor Digital "
-                 "under its own licence (CorridorKey is free to use on commercial work; not for resale). Needs an NVIDIA RTX 30-series "
-                 "or newer. Runs on the ML worker."});
+                 "under its own licence (CorridorKey is free to use on commercial work; not for resale). Needs a GPU: an NVIDIA RTX 30-series "
+                 "or newer works best; AMD Radeon (DirectML on Windows, ROCm on Linux) and Intel Arc run it too. Runs on the ML worker."});
     d.push_back({"TrackMask", "AI",
                  frames({InfoRow("trackmask", ""),
                          Btn("trackmask_clear_frame", "Clear this frame", "Remove the active object's clicks and box on this frame"),

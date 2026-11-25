@@ -19,6 +19,7 @@
 #include "Process.h"
 #include "Schema.h"
 #include "../io/ImageIO.h"
+#include "../nodes/Track.h"
 #include "stb_image_write.h"
 
 #ifdef _WIN32
@@ -415,6 +416,47 @@ json ScriptApi::call(const std::string& method, const json& p) {
         return to;
     }
     if (method == "node.info") return nodeInfo(node(p));
+    if (method == "tracker.fill_gaps" || method == "tracker.clear_filled") {  // a Tracker's lost frames (track::fillGaps)
+        Node* n = node(p);
+        if (n->type != "Tracker") fail("TypeError", n->name + " is a " + n->type + ", not a Tracker");
+        json& tracks = n->params.data["tracks"];
+        if (!tracks.is_array()) tracks = json::array();
+        std::vector<int> which;
+        if (p.contains("tracks") && p["tracks"].is_array()) {  // names or 0-based indices
+            for (auto& w : p["tracks"]) {
+                int found = -1;
+                if (w.is_number_integer()) found = w.get<int>();
+                else if (w.is_string())
+                    for (int i = 0; i < (int)tracks.size(); ++i)
+                        if (tracks[i].value("name", "") == w.get<std::string>()) found = i;
+                if (found < 0 || found >= (int)tracks.size()) fail("ValueError", n->name + " has no track " + w.dump());
+                which.push_back(found);
+            }
+        } else {
+            for (int i = 0; i < (int)tracks.size(); ++i) which.push_back(i);
+        }
+        if (method == "tracker.clear_filled") {
+            const int cnt = track::clearFilled(tracks, which);
+            n->paramsChanged();
+            host_.changed(n);
+            return {{"removed", cnt}};
+        }
+        track::FillOptions o;
+        o.method = p.value("method", std::string("auto"));
+        if (o.method != "auto" && o.method != "from other tracks" && o.method != "smooth" && o.method != "linear")
+            fail("ValueError", "method is one of: auto, from other tracks, smooth, linear");
+        o.inside = p.value("inside", true);
+        o.before = p.value("before", false);
+        o.after = p.value("after", true);
+        o.first = num(p, "first", comp().firstFrame);
+        o.last = num(p, "last", comp().lastFrame);
+        o.redoAbove = num(p, "redo_above", 0);
+        o.maxGap = (int)num(p, "max_gap", 0);
+        const track::FillReport r = track::fillGaps(tracks, which, o);
+        n->paramsChanged();
+        host_.changed(n);
+        return {{"filled", r.frames}, {"from_tracks", r.fromTracks}, {"interpolated", r.interpolated}, {"skipped", r.skipped}};
+    }
     if (method == "node.set_input") {
         Node* n = node(p);
         Comp& c = comp();

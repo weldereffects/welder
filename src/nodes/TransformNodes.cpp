@@ -477,7 +477,8 @@ public:
 
 // Tracker: tracks (see Track.h) and, from them, the Transform tab's transform:
 // transform ("none" | "stabilize" | "stabilize 1pt" | "match-move" | "match-move 1pt" |
-// "remove jitter" | "add jitter"), reference_frame, jitter_period, smooth [t, r, s],
+// "remove jitter" | "add jitter" | "corner pin match-move" | "corner pin stabilize": the
+// perspective from the enabled T tracks, see track::pinSolve), reference_frame, jitter_period, smooth [t, r, s],
 // then filter / clamp / black_outside / motionblur / shutter / shutteroffset as Transform's.
 class TrackerNode : public TransformNode {
 public:
@@ -487,15 +488,14 @@ public:
     Mat3 matrixAt(Engine& e, double f) override {
         Mat3 M;
         if (mode() == "none") return M;
-        track::Affine A = track::trackerTransform(params.data, f);
-        const double sc = e.scale();
-        M.m[0][0] = A.a;
-        M.m[0][1] = A.b;
-        M.m[0][2] = A.tx * sc;
-        M.m[1][0] = A.c;
-        M.m[1][1] = A.d;
-        M.m[1][2] = A.ty * sc;
-        return M;
+        return toRenderScale(track::trackerMatrix(params.data, f), e.scale());
+    }
+    // A full-resolution 3x3 at render scale: S H S^-1.
+    static Mat3 toRenderScale(const track::H9& H, double sc) {
+        Mat3 M;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) M.m[i][j] = H.m[i * 3 + j];
+        return Mat3::scale(sc, sc) * M * Mat3::scale(1 / sc, 1 / sc);
     }
 };
 
@@ -737,6 +737,11 @@ public:
         const double sc = e.scale();
         if (n->type == "Tracker") {  // whatever the tracker itself is set to do
             if (!n->params.has("tracks")) return std::nullopt;
+            if (track::isPinMode(n->params.str("transform", "none"))) {  // the tracker's corner pin
+                track::Fit fit = track::pinSolve(n->params.data["tracks"], ref, f);
+                if (!fit.ok) return std::nullopt;
+                return TrackerNode::toRenderScale(fit.H, sc);
+            }
             track::Solve so = track::solve(n->params.data["tracks"], ref, f);
             if (!so.ok) return std::nullopt;
             track::Affine A = so.matrix();

@@ -86,11 +86,14 @@ def probe_packages(home=None):
     try:
         import torch
         info["torch"] = torch.__version__
-        info["cuda"] = bool(torch.cuda.is_available())
-        if torch.cuda.is_available():
-            p = torch.cuda.get_device_properties(0)
-            info["gpu"] = p.name
-            info["vram_gb"] = round(p.total_memory / 2**30, 1)
+        info["cuda"] = bool(torch.cuda.is_available())  # (ROCm's PyTorch says yes too)
+        from .device import current
+        d = current()
+        info["backend"] = d.kind  # cuda, rocm, xpu, directml, mps or cpu
+        if d.is_gpu:
+            info["gpu"] = d.name
+            if d.vram_bytes:
+                info["vram_gb"] = round(d.vram_bytes / 2**30, 1)
     except Exception as e:  # noqa: BLE001
         info["torch"] = None
         info["torch_error"] = str(e)
@@ -121,12 +124,15 @@ class Worker:
         self.started_by_welder = False  # Welder launched it: the last Welder to quit stops it (one started by hand stays)
 
     def _probe_splat(self):
-        from .subtask import check_splat_env
+        from .subtask import check_directml_env, check_splat_env
         r = check_splat_env(self.home)
-        if r is None:
-            return
-        with self.lock:
-            self.packages = dict(self.packages, splat_env=r)
+        if r is not None:
+            with self.lock:
+                self.packages = dict(self.packages, splat_env=r)
+        r = check_directml_env(self.home)  # AMD / DirectX 12 GPUs on Windows: the masking tasks run there
+        if r is not None:
+            with self.lock:
+                self.packages = dict(self.packages, directml_env=r)
 
     # ------------------------------------------------------------ heartbeat
     def heartbeat(self):
@@ -195,12 +201,8 @@ class Worker:
             except OSError:
                 pass
             ctx.close()
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
+            from .device import empty_cache
+            empty_cache()
 
     CODE_CHECK = 5.0  # seconds between looks at the code on disk
 

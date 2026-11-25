@@ -280,6 +280,11 @@ struct TrackerState {
     int exportChoice = 0;              // the panel's export menu
     float keyScroll = 0;               // keyframe snapshots: scroll (in snapshots)
     double lastDragAt = -1;            // when a track was last moved (zoom window "on track change")
+    // the panel's Fill gaps settings
+    int fillMethod = 0;                // auto | from other tracks | smooth | linear
+    bool fillInside = true, fillBefore = false, fillAfter = true;
+    float fillRedo = 0;                // also refill keys with an error above this (0: off)
+    int fillMaxGap = 0;                // longest gap filled (0: any)
 };
 
 // PlanarTracker tools in the viewer.

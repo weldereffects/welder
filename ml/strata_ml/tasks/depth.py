@@ -52,7 +52,10 @@ def load_model(ctx, kind, size):
     except TypeError:  # older torch
         sd = torch.load(path, map_location="cpu")
     net.load_state_dict(sd, strict=True)
-    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    from ..device import current
+    d = current()
+    # Video Depth Anything takes the device by name and runs its own autocast: CUDA, ROCm and Intel XPU
+    dev = {"cuda": "cuda", "rocm": "cuda", "xpu": "xpu"}.get(d.kind, "cpu")
     return net.to(dev).eval(), dev
 
 

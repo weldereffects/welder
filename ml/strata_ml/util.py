@@ -78,26 +78,26 @@ class FrameSeq:
 
 # ---------------------------------------------------------------- where models live
 # ---------------------------------------------------------------- GPU memory
+_OOM_MARKERS = ("out of memory", "cudnn_status_alloc_failed", "cublas_status_alloc_failed",
+                "out_of_device_memory", "out of device memory", "e_outofmemory", "8007000e",
+                "not enough memory", "hipErrorOutOfMemory".lower())
+
+
 def is_oom(e):
-    """Whether an exception is the GPU running out of memory (torch's OutOfMemoryError, or a CUDA / cuDNN /
-    cuBLAS allocation failure reported as a RuntimeError)."""
+    """Whether an exception is the GPU running out of memory: torch's OutOfMemoryError, or an allocation failure
+    reported as a RuntimeError by CUDA / cuDNN / cuBLAS, ROCm, Intel's XPU runtime or DirectML."""
     if type(e).__name__ == "OutOfMemoryError":
         return True
     s = str(e).lower()
-    return isinstance(e, (RuntimeError, MemoryError)) and ("out of memory" in s or "cudnn_status_alloc_failed" in s
-                                                            or "cublas_status_alloc_failed" in s)
+    return isinstance(e, (RuntimeError, MemoryError)) and any(k in s for k in _OOM_MARKERS)
 
 
 def free_gpu():
     """Let go of the GPU memory torch keeps cached (after an out-of-memory, before trying again)."""
     import gc
     gc.collect()
-    try:
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception:  # noqa: BLE001
-        pass
+    from .device import empty_cache
+    empty_cache()
 
 
 def vram_limit_bytes():
@@ -112,7 +112,8 @@ def vram_limit_bytes():
 
 def apply_vram_limit():
     """Cap PyTorch's allocations at the VRAM limit (if one is set): past it, allocations fail with
-    out-of-memory just as they would on the smaller card. Returns the cap in GB, or None."""
+    out-of-memory just as they would on the smaller card. Returns the cap in GB, or None. (CUDA / ROCm only:
+    the other backends have no such cap.)"""
     cap = vram_limit_bytes()
     if cap is None:
         return None
@@ -130,31 +131,31 @@ def apply_vram_limit():
 
 
 def gpu_total_bytes():
-    """The GPU's memory (or the VRAM limit, when it's smaller). None: no CUDA."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            total = torch.cuda.get_device_properties(0).total_memory
-            cap = vram_limit_bytes()
-            return min(total, cap) if cap else total
-    except Exception:  # noqa: BLE001
-        pass
+    """The GPU's memory (or the VRAM limit, when it's smaller). None: no GPU, or one whose memory the backend
+    can't tell (DirectML)."""
+    from .device import current
+    d = current()
+    total = d.vram_bytes if d.is_gpu else None
+    if total:
+        cap = vram_limit_bytes()
+        return min(total, cap) if cap else total
     return None
 
 
 def gpu_free_mb():
-    """Free GPU memory in MB (None: no CUDA). Under a VRAM limit: what's left below the limit."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            free, total = torch.cuda.mem_get_info()
-            cap = vram_limit_bytes()
-            if cap and cap < total:
-                free = min(free, max(0, cap - torch.cuda.memory_reserved()))
-            return free / (1024 * 1024)
-    except Exception:  # noqa: BLE001
-        pass
-    return None
+    """Free GPU memory in MB (None: no GPU, or the backend can't say). Under a VRAM limit: what's left below it."""
+    from .device import current, mem_info, memory_reserved
+    d = current()
+    if not d.is_gpu:
+        return None
+    info = mem_info(d)
+    if info is None:
+        return None
+    free, total = info
+    cap = vram_limit_bytes()
+    if cap and cap < total:
+        free = min(free, max(0, cap - memory_reserved(d)))
+    return free / (1024 * 1024)
 
 
 def offline(home=None):

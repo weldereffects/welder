@@ -61,6 +61,76 @@ _SPLAT_CHECK = (
 )
 
 
+# ---------------------------------------------------------------- the DirectML environment
+# PyTorch has no AMD build for Windows that covers the Radeon range, so on a Windows PC without an NVIDIA or
+# Intel Arc GPU ML setup makes venv-directml: Python 3.12, PyTorch 2.4.1 and Microsoft's torch-directml, which
+# runs PyTorch on any DirectX 12 GPU. The AI masking tasks (TrackMask's SAM 2.1, OWLv2 text find, the matte
+# refiners) run there, through run_in; everything else stays in the main environment.
+DIRECTML_TASKS = ("segment", "textfind", "matte_refine")
+
+
+def directml_python(home):
+    """The python of the DirectML environment, if there is one."""
+    p = os.environ.get("STRATA_ML_DIRECTML_PYTHON")
+    if p and os.path.exists(p):
+        return p
+    if not home:
+        return None
+    for rel in (("venv-directml", "Scripts", "python.exe"), ("venv-directml", "bin", "python")):
+        q = os.path.join(home, *rel)
+        if os.path.exists(q):
+            return q
+    return None
+
+
+def accelerated_python(home, task):
+    """The Python to hand `task` to so it runs on the GPU, or None to run it here: the DirectML environment, for
+    the masking tasks, when this worker's own PyTorch has no GPU (and WELDER_ML_DEVICE doesn't ask for the CPU)."""
+    if task not in DIRECTML_TASKS or os.environ.get("STRATA_ML_SUBTASK"):
+        return None
+    from .device import current, requested
+    if requested() not in ("auto", "directml") or current().is_gpu:
+        return None
+    return directml_python(home)
+
+
+_DIRECTML_CHECK = (
+    "import sys, json\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "r = {}\n"
+    "try:\n"
+    "    import torch\n"
+    "    r['torch'] = torch.__version__\n"
+    "    import torch_directml\n"
+    "    r['adapters'] = [str(torch_directml.device_name(i)) for i in range(torch_directml.device_count())]\n"
+    "    from strata_ml.device import detect\n"
+    "    d = detect('directml')\n"
+    "    r['gpu'] = d.name if d.kind == 'directml' else None\n"
+    "    if d.kind == 'directml':\n"  # loading isn't enough: run something on it
+    "        x = torch.ones(64, 64, device=d.torch_device)\n"
+    "        r['ok'] = float((x @ x).sum().cpu()) == 64.0 ** 3\n"
+    "except Exception as e:\n"
+    "    r['error'] = '%s: %s' % (type(e).__name__, e)\n"
+    "print(json.dumps(r))\n"
+)
+
+
+def check_directml_env(home):
+    """Does the DirectML environment load and see a GPU? None when there's no such environment."""
+    py = directml_python(home)
+    if not py:
+        return None
+    try:
+        out = subprocess.run([py, "-c", _DIRECTML_CHECK, HERE], capture_output=True, text=True, timeout=180,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        lines = [ln for ln in out.stdout.strip().splitlines() if ln.startswith("{")]
+        if lines:
+            return json.loads(lines[-1])
+        return {"error": (out.stderr.strip().splitlines() or ["the DirectML environment's python failed"])[-1]}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 # PyTorch's CUDA errors end with boilerplate; the first real line says what went wrong.
 _BOILERPLATE = ("CUDA kernel errors might be", "For debugging consider passing", "Compile with `TORCH_USE_CUDA_DSA`",
                 "Search for `cudaErrorIllegalAddress`", "Exception raised from")
@@ -107,6 +177,7 @@ def run_in(python, ctx, task, params, extra_env=None):
             pass
     env = dict(os.environ)
     env["PYTHONPATH"] = HERE + os.pathsep + env.get("PYTHONPATH", "")
+    env["STRATA_ML_SUBTASK"] = "1"  # (the child runs the task itself, never hands it on again)
     env.update(extra_env or {})
     ctx.log(f"running {task} with {python}")
     proc = subprocess.Popen([python, "-m", "strata_ml.subtask", ctx.home, ctx.jobdir, task], env=env, cwd=HERE,
@@ -131,7 +202,7 @@ def run_in(python, ctx, task, params, extra_env=None):
             return json.load(f)
     if os.path.exists(ctx.cancel_path):
         raise Cancelled()
-    msg = "the training process failed"
+    msg = f"the {task} process failed"
     if os.path.exists(err_path):
         with open(err_path, encoding="utf-8") as f:
             lines = [ln for ln in f.read().strip().splitlines() if ln.strip()]
