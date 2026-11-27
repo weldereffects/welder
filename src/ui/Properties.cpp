@@ -3428,10 +3428,24 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
                 if (!k.name.empty() && k.type != Knob::File && k.type != Knob::Button && k.type != Knob::Divider &&
                     k.type != Knob::Info && k.type != Knob::Json && k.type != Knob::Text)
                     keys.push_back(k.name);
+            // the roto nodes draw their own panel (no knobs): their node-wide settings, and every shape's
+            // and stroke's settings back to default; the shapes, strokes, transforms and keys stay (#20)
+            const bool roto = n->type == "Roto" || n->type == "RotoPaint" || n->type == "PowerRoto" || n->type == "SplineWarp";
+            if (roto)
+                for (const char* k : {"output", "premultiply", "clip_to", "replace", "motionblur", "shutter", "shutter_offset"}) keys.push_back(k);
             app.checkpoint();
             std::string name = n->name;
-            app.edit([name, keys](Comp& comp) {
+            app.edit([name, keys, roto](Comp& comp) {
                 if (Node* nd = comp.find(name)) {
+                    if (roto && nd->params.data.contains("shapes") && nd->params.data["shapes"].is_array())
+                        for (json& it : nd->params.data["shapes"]) {
+                            if (!it.is_object()) continue;
+                            for (const char* k : {"opacity", "feather", "feather_on", "falloff", "feather_type", "visible", "locked",
+                                                  "motionblur", "invert", "blend", "color", "size", "hardness", "spacing", "effect",
+                                                  "grain", "repair_gap", "build_up", "write_on", "pressure", "time_offset", "time_mode",
+                                                  "align", "grow", "blur", "blur_type", "channel", "tension"})
+                                it.erase(k);  // (not their transforms, points or clone offsets: the work itself)
+                        }
                     for (auto& key : keys) eraseParam(nd, key);
                     nd->paramsChanged();
                 }

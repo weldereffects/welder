@@ -3504,6 +3504,30 @@ int main(int argc, char** argv) {
         CHECK_NEAR(px(img, 8, 8, "R"), 0.25, 1e-5);
     });
 
+    test("rotopaint: every stroke has an alpha; with replace each is the stroke alone (#20)", [] {
+        // a plate whose alpha is 0 (an RGB plate): before, only paint strokes made any alpha
+        for (const char* tool : {"clone", "blur", "smear", "dodge", "burn", "sharpen", "repair"}) {
+            json st = {{"name", "S1"}, {"kind", "stroke"}, {"tool", tool}, {"size", 12}, {"hardness", 0.95}, {"effect", 1.0},
+                       {"offset", {-4, 0}}, {"points", {{20, 24, 1}, {40, 24, 1}}}};
+            for (bool rep : {false, true}) {
+                auto c = comp(json::array({
+                    {{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.4, 0.4, 0.4, 0}}}}},
+                    {{"name", "RP"}, {"type", "RotoPaint"}, {"inputs", {"K"}},
+                     {"params", {{"replace", rep}, {"output", "rgba"}, {"shapes", json::array({st})}}}},
+                }), 64, 48);
+                auto img = render(*c, "RP");
+                const float a = px(img, 30, 24, "A"), r = px(img, 30, 24, "R");
+                if (a < 0.9f) std::printf("  %s replace %d: alpha %g\n", tool, (int)rep, a);
+                CHECK(a > 0.9f);
+                // the picture is still there (not black: replace starts empty, the tools take the input)
+                const float want = std::string(tool) == "dodge" ? 0.6f : std::string(tool) == "burn" ? 0.2f : 0.4f;
+                if (std::fabs(r - want) > 0.05f) std::printf("  %s replace %d: R %g, want %g\n", tool, (int)rep, r, want);
+                CHECK_NEAR(r, want, 0.05);
+                if (rep) CHECK_NEAR(px(img, 5, 5, "A"), 0, 1e-6);  // outside the stroke: nothing
+            }
+        }
+    });
+
     test("Keyer: the default range keys luminance, not a solid white alpha (#31)", [] {
         auto c = comp(json::array({
             {{"name", "Dark"}, {"type", "Constant"}, {"params", {{"color", {0.1, 0.1, 0.1, 1}}}}},

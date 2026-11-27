@@ -233,6 +233,9 @@ struct RotoState {
     std::string node;                   // node the selection belongs to
     std::set<std::pair<int, int>> sel;  // selected (item, point)
     int curShape = -1;                  // item shown in the properties panel
+    std::set<int> listSel;              // layers picked in the curves list too (Ctrl / Shift: #20)
+    int listAnchor = -1;                // the list's last plain click (Shift selects from it)
+    std::set<std::string> folded;       // layers folded up in the curves list ("node/layer")
     // Bezier / B-spline being drawn
     bool drawing = false;
     roto::Pts drawPts;

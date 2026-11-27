@@ -1291,7 +1291,7 @@ int main(int argc, char** argv) {
         }
         // STRATA_TEST_KEYS=tok;tok;...: one step every 12 frames from frame 15, then the viewers' routing is
         // printed. Tokens: "at=x,y" (move the mouse), "sel=Node" (select it), "key=[ctrl+][shift+]K"
-        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "dclick=x,y" (double),
+        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "dclick=x,y" (double), "ctrlclick=x,y", "shiftclick=x,y",
         // "rclick=x,y" (right), "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
         bool keysTest = false;
         if (const char* tk = std::getenv("STRATA_TEST_KEYS"); tk && *tk && !opt.screenshot.empty()) {
@@ -1344,10 +1344,12 @@ int main(int argc, char** argv) {
                             held = (ImGuiKey)(ImGuiKey_F1 + std::atoi(kk.c_str() + 1) - 1);
                         if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
                         if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
-                    } else if (what == "click" || what == "dclick" || what == "rclick") {
+                    } else if (what == "click" || what == "dclick" || what == "rclick" || what == "ctrlclick" || what == "shiftclick") {
                         float x = 0, y = 0;
                         std::sscanf(arg.c_str(), "%f,%f", &x, &y);
                         tio.AddMousePosEvent(x, y);
+                        if (what == "ctrlclick") { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
+                        if (what == "shiftclick") { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
                     } else if (what == "circle") {  // circle=cx,cy,r: a drag once round a circle (freehand drawing)
                         std::sscanf(arg.c_str(), "%f,%f,%f", &drag[0], &drag[1], &drag[2]);
                         tio.AddMousePosEvent(drag[0] + drag[2], drag[1]);
@@ -1460,10 +1462,15 @@ int main(int argc, char** argv) {
                     if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, false); tio.AddKeyEvent(ImGuiKey_LeftCtrl, false); }
                     if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, false); tio.AddKeyEvent(ImGuiKey_LeftShift, false); }
                     held = ImGuiKey_None;
-                } else if (what == "click" && k == 2) {
+                } else if ((what == "click" || what == "ctrlclick" || what == "shiftclick") && k == 2) {
                     tio.AddMouseButtonEvent(0, true);
-                } else if (what == "click" && k == 4) {
+                } else if ((what == "click" || what == "ctrlclick" || what == "shiftclick") && k == 4) {
                     tio.AddMouseButtonEvent(0, false);
+                } else if ((what == "ctrlclick" || what == "shiftclick") && k == 6) {
+                    tio.AddKeyEvent(ImGuiMod_Ctrl, false);
+                    tio.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+                    tio.AddKeyEvent(ImGuiMod_Shift, false);
+                    tio.AddKeyEvent(ImGuiKey_LeftShift, false);
                 } else if (what == "dclick" && (k == 2 || k == 4)) {  // two quick clicks
                     tio.AddMouseButtonEvent(0, true);
                 } else if (what == "dclick" && (k == 3 || k == 5)) {
