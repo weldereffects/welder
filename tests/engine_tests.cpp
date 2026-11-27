@@ -2496,6 +2496,40 @@ int main(int argc, char** argv) {
         CHECK(px(gw, 30, 24, "A") < 0.5f);
     });
 
+    test("Curves: weighted Bezier tangents, loop / ping-pong / relative / linear extrapolation (#139)", [] {
+        // no weights: the Hermite curve; weights of a third of the segment: the same curve
+        json h = {{"keys", {{0, 0, {{"i", "user"}, {"r", 0.0}}}, {10, 10, {{"i", "user"}, {"r", 0.0}}}}}};
+        json w = h;
+        w["keys"][0][2]["rw"] = 10.0 / 3;
+        w["keys"][1][2]["lw"] = 10.0 / 3;
+        for (double f : {1.0, 2.5, 5.0, 7.0, 9.5}) CHECK_NEAR(params::evalCurve(w, f), params::evalCurve(h, f), 1e-6);
+        // long flat handles: an ease that stays near 0 longer, still 5 halfway (symmetric)
+        w["keys"][0][2]["rw"] = 9.0;
+        w["keys"][1][2]["lw"] = 9.0;
+        CHECK(params::evalCurve(w, 2) < params::evalCurve(h, 2) - 0.1);
+        CHECK_NEAR(params::evalCurve(w, 5), 5, 1e-6);
+        CHECK(params::evalCurve(w, 9) > params::evalCurve(h, 9) + 0.1);
+        // extrapolation
+        json c = {{"keys", {{0, 0}, {10, 10}}}, {"interp", "linear"}};
+        CHECK_NEAR(params::evalCurve(c, 15), 10, 1e-9);  // constant
+        c["post"] = "loop";
+        CHECK_NEAR(params::evalCurve(c, 13), 3, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 27), 7, 1e-9);
+        c["post"] = "pingpong";
+        CHECK_NEAR(params::evalCurve(c, 13), 7, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 23), 3, 1e-9);
+        c["post"] = "relative";
+        CHECK_NEAR(params::evalCurve(c, 13), 13, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 25), 25, 1e-9);
+        c["post"] = "linear";
+        CHECK_NEAR(params::evalCurve(c, 20), 20, 1e-9);
+        c["pre"] = "loop";
+        CHECK_NEAR(params::evalCurve(c, -3), 7, 1e-9);
+        c["pre"] = "relative";
+        CHECK_NEAR(params::evalCurve(c, -3), -3, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 4), 4, 1e-9);  // between the keys: unchanged
+    });
+
     test("Text: outline, drop shadow, box behind, text only, more operations; the same in any tiles (#108)", [] {
         json nodes = json::array({
             {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 1, 1}}}}},

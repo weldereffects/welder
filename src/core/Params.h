@@ -10,6 +10,7 @@
 //   string / bool
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
@@ -48,8 +49,14 @@ inline ExprHook& linkHook() {
 //        "smooth", or "user": Hermite with the key's own slopes), overriding
 //        the curve's "interp";
 //   "r" / "l": out / in slope in value per frame ("l" defaults to "r"; both
-//        set and different = broken tangents).
+//        set and different = broken tangents);
+//   "rw" / "lw": out / in handle length in frames (a weighted Bezier tangent, #139); without
+//        them a handle is a third of its segment, which is the same curve as Hermite.
 // Smooth slopes come from the neighbouring keys (Catmull-Rom).
+// The curve's "pre" / "post" say what it does before its first key / after its last (#139):
+//   "constant" (the default: the end key's value), "linear" (on along the end tangent),
+//   "loop" (the keys repeat), "pingpong" (forwards, then backwards) or "relative" (repeats,
+//   each cycle starting where the last ended).
 inline const json* keyOpts(const json& keys, size_t i) {
     const json& k = keys[i];
     return k.size() > 2 && k[2].is_object() ? &k[2] : nullptr;
@@ -84,7 +91,38 @@ inline double keySlope(const json& v, size_t i, int side) {
     return (vp - vm) / (fp - fm);
 }
 
+// A key's handle length (frames) on a side, or -1: not weighted.
+inline double keyWeight(const json& keys, size_t i, int side) {
+    if (auto o = keyOpts(keys, i)) {
+        const char* k = side ? "rw" : "lw";
+        if (o->contains(k) && (*o)[k].is_number()) return (*o)[k].get<double>();
+    }
+    return -1;
+}
+
+inline double evalCurveIn(const json& v, double frame);
+
 inline double evalCurve(const json& v, double frame) {
+    const json& keys = v["keys"];
+    if (!keys.is_array() || keys.empty()) return 0.0;
+    const size_t n = keys.size();
+    const double a = keys[0][0].get<double>(), b = keys[n - 1][0].get<double>();
+    if (n < 2 || b <= a || (frame >= a && frame <= b)) return evalCurveIn(v, frame);
+    const bool before = frame < a;
+    const std::string mode = v.value(before ? "pre" : "post", std::string("constant"));
+    const double va = keys[0][1].get<double>(), vb = keys[n - 1][1].get<double>();
+    // (the end keys' slopes on the curve's side: the tangent the curve really has there)
+    if (mode == "linear") return before ? va + keySlope(v, 0, 1) * (frame - a) : vb + keySlope(v, n - 1, 0) * (frame - b);
+    if (mode != "loop" && mode != "pingpong" && mode != "relative") return before ? va : vb;
+    const double P = b - a, c = std::floor((frame - a) / P), t = frame - a - c * P;  // cycle c, t into it
+    if (mode == "pingpong") return evalCurveIn(v, (long long)c % 2 != 0 ? b - t : a + t);
+    double r = evalCurveIn(v, a + t);
+    if (mode == "relative") r += c * (vb - va);
+    return r;
+}
+
+// The curve between its first and last keys.
+inline double evalCurveIn(const json& v, double frame) {
     const json& keys = v["keys"];
     if (!keys.is_array() || keys.empty()) return 0.0;
     auto kf = [&](size_t i) { return keys[i][0].get<double>(); };
@@ -102,6 +140,23 @@ inline double evalCurve(const json& v, double frame) {
     if (interp == "linear") {
         std::string next = keyInterp(v, i + 1);
         if (next != "smooth" && next != "user") return v0 + (v1 - v0) * t;
+    }
+    // weighted tangents: a cubic Bezier through the handles, solved for the frame
+    const double w0 = keyWeight(keys, i, 1), w1 = keyWeight(keys, i + 1, 0);
+    if (w0 >= 0 || w1 >= 0) {
+        const double span = f1 - f0;
+        const double a = std::clamp(w0 >= 0 ? w0 : span / 3, 0.0, span), b = std::clamp(w1 >= 0 ? w1 : span / 3, 0.0, span);
+        const double x1 = f0 + a, x2 = f1 - b, y1 = v0 + keySlope(v, i, 1) * a, y2 = v1 - keySlope(v, i + 1, 0) * b;
+        auto bz = [](double p0, double p1, double p2, double p3, double u) {
+            const double m = 1 - u;
+            return m * m * m * p0 + 3 * m * m * u * p1 + 3 * m * u * u * p2 + u * u * u * p3;
+        };
+        double lo = 0, hi = 1;  // x(u) only rises (the handles stay inside the segment)
+        for (int it = 0; it < 40; ++it) {
+            const double mid = 0.5 * (lo + hi);
+            (bz(f0, x1, x2, f1, mid) < frame ? lo : hi) = mid;
+        }
+        return bz(v0, y1, y2, v1, 0.5 * (lo + hi));
     }
     // smooth / user: Hermite
     double m0 = keySlope(v, i, 1) * (f1 - f0), m1 = keySlope(v, i + 1, 0) * (f1 - f0);

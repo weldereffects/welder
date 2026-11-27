@@ -533,14 +533,17 @@ void drawCurveEditor(App& app, UiState& ui) {
         int handle = -1;  // -1 key, 0 in, 1 out
         float d = 1e9;
     } hit;
+    // A Bezier handle (#139): along the tangent, as long as the key's weight on that side (frames),
+    // else a third of the way to the neighbouring key - where the curve really is pulled
     auto handlePos = [&](const json& cv, size_t i, int side, ImVec2 kp) {
-        double slope = params::keySlope(cv, i, side);
-        // screen direction of (1 frame, slope)
-        double dx = (double)sz.x / (st.f1 - st.f0), dy = -(double)(sz.y - rulerH) / (st.v1 - st.v0) * slope;
-        double len = std::sqrt(dx * dx + dy * dy);
-        if (len < 1e-12) return kp;
-        double s = (side ? 45.0 : -45.0) / len;
-        return ImVec2((float)(kp.x + dx * s), (float)(kp.y + dy * s));
+        const json& keys = cv["keys"];
+        const double slope = params::keySlope(cv, i, side), kf = keys[i][0].get<double>(), kv = keys[i][1].get<double>();
+        const size_t j = side ? i + 1 : i - 1;
+        const double span = std::fabs(keys[j][0].get<double>() - kf);
+        double w = params::keyWeight(keys, i, side);
+        w = w >= 0 ? std::min(w, span) : span / 3;
+        const double f = kf + (side ? w : -w), v = kv + slope * (f - kf);
+        return ImVec2(X(f), Y(v));
     };
     for (auto& c : visibleCurves()) {
         const json* cvp = curveJson(comp, c);
@@ -721,16 +724,22 @@ void drawCurveEditor(App& app, UiState& ui) {
             const json* cv = curveJson(comp, st.dragHandleKey.curve);
             int i = cv ? keyIndex(*cv, st.dragHandleKey.frame) : -1;
             if (i >= 0) {
-                double kf = (*cv)["keys"][i][0].get<double>(), kv = (*cv)["keys"][i][1].get<double>();
+                const json& keys = (*cv)["keys"];
+                double kf = keys[i][0].get<double>(), kv = keys[i][1].get<double>();
                 double mf = F(mouse.x), mv = V(mouse.y);
                 double dfr = mf - kf;
                 if (st.dragHandleSide == 0) dfr = -dfr;
+                const int nb = st.dragHandleSide ? i + 1 : i - 1;
+                const double span = nb >= 0 && nb < (int)keys.size() ? std::fabs(keys[nb][0].get<double>() - kf) : 1.0;
+                // the handle can't cross its key or pass the next one: its length, in frames
+                const double weight = std::clamp(dfr, span * 0.01, span);
                 double slope = std::fabs(mf - kf) < 1e-9 ? 0 : (mv - kv) / (mf - kf);
+                if (dfr <= 0) slope = params::keySlope(*cv, i, st.dragHandleSide);  // (dragged past the key: keep the angle)
                 CurveRef cr = st.dragHandleKey.curve;
                 double frame = kf;
                 int side = st.dragHandleSide;
                 bool breakT = io.KeyAlt || io.KeyCtrl;
-                edit(app, [cr, frame, slope, side, breakT](Comp& c) {
+                edit(app, [cr, frame, slope, side, breakT, weight](Comp& c) {
                     json* cv = curveJsonMut(c, cr);
                     if (!cv) return;
                     int k = keyIndex(*cv, frame);
@@ -746,6 +755,7 @@ void drawCurveEditor(App& app, UiState& ui) {
                         o["r"] = slope;
                         o.erase("l");
                     }
+                    o[side ? "rw" : "lw"] = weight;
                     o["i"] = "user";
                     // the segment coming in uses the in slope too
                     if (k > 0) {
@@ -800,6 +810,8 @@ void drawCurveEditor(App& app, UiState& ui) {
                     o["i"] = mode;
                     o.erase("l");
                     o.erase("r");
+                    o.erase("lw");
+                    o.erase("rw");
                 }
                 if (o.empty()) (*cv)["keys"][i].erase(2);
             }
@@ -841,6 +853,48 @@ void drawCurveEditor(App& app, UiState& ui) {
         ImGui::Separator();
         if (ImGui::MenuItem("delete keys", "Del")) deleteSel();
         ImGui::EndDisabled();
+        ImGui::Separator();
+        // before the first key / after the last: of the selected keys' curves, else every curve shown
+        std::set<CurveRef> target;
+        for (auto& k : st.sel) target.insert(k.curve);
+        if (target.empty())
+            for (auto& c : visibleCurves()) target.insert(c);
+        auto extrap = [&](const char* side, const char* label) {
+            std::string cur;
+            for (auto& c : target)
+                if (const json* cv = curveJson(comp, c)) {
+                    const std::string m = cv->value(side, std::string("constant"));
+                    cur = cur.empty() || cur == m ? m : "-";
+                }
+            if (!ImGui::BeginMenu(label, !target.empty())) return;
+            static const char* modes[][2] = {{"constant", "constant"}, {"linear", "linear"}, {"loop", "loop"},
+                                             {"pingpong", "ping-pong"}, {"relative", "relative (cycle with offset)"}};
+            for (auto& m : modes)
+                if (ImGui::MenuItem(m[1], nullptr, cur == m[0])) {
+                    app.checkpoint();
+                    const std::string key = side, mode = m[0];
+                    const std::set<CurveRef> to = target;
+                    edit(app, [to, key, mode](Comp& c) {
+                        for (auto& cr : to)
+                            if (json* cv = curveJsonMut(c, cr)) {
+                                if (mode == "constant") cv->erase(key);
+                                else (*cv)[key] = mode;
+                            }
+                    });
+                }
+            ImGui::EndMenu();
+        };
+        extrap("pre", "before first key");
+        extrap("post", "after last key");
+        if (ImGui::MenuItem("loop both ends")) {
+            app.checkpoint();
+            const std::set<CurveRef> to = target;
+            edit(app, [to](Comp& c) {
+                for (auto& cr : to)
+                    if (json* cv = curveJsonMut(c, cr)) (*cv)["pre"] = (*cv)["post"] = "loop";
+            });
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("frame all", "F")) st.fitPending = true;
         ImGui::EndPopup();
     }
