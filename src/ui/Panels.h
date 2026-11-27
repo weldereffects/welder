@@ -65,6 +65,7 @@ struct ViewerState {
     std::vector<std::string> layers = {"rgba"};
     bool fullRes = false;
     bool roiOn = false;   // render only inside `roi` (#126)
+    bool parOn = true;    // show the image's pixel aspect (anamorphic footage unsqueezed, #126)
     Box roi;              // full-res pixels
     Box reqRegion;        // last region requested from the renderer (full-res pixels)
     double reqScale = 0;
@@ -598,10 +599,11 @@ void drawProjectPanel(App& app, UiState& ui, bool* keepOpen);
 struct ViewXf {
     ImVec2 center, pan;
     float zoom = 1;
+    float par = 1;  // the viewer's pixel aspect: image x is drawn par times wider (#126)
     ImVec2 toScreen(double x, double y) const {
-        return ImVec2(center.x + (float)((x - pan.x) * zoom), center.y - (float)((y - pan.y) * zoom));
+        return ImVec2(center.x + (float)((x - pan.x) * zoom * par), center.y - (float)((y - pan.y) * zoom));
     }
-    ImVec2 toImage(ImVec2 s) const { return ImVec2(pan.x + (s.x - center.x) / zoom, pan.y - (s.y - center.y) / zoom); }
+    ImVec2 toImage(ImVec2 s) const { return ImVec2(pan.x + (s.x - center.x) / (zoom * par), pan.y - (s.y - center.y) / zoom); }
 };
 // A node's format at full resolution (the UI's engine; the project's format if it can't be read).
 Format nodeFormatUI(App& app, Node* n, double f);

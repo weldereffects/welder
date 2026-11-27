@@ -175,11 +175,18 @@ static ImVec2 sideOffset(const ViewerState& v) {
     return ImVec2(0, 0);
 }
 
+// The pixel aspect the viewer draws with: the image's (a Read of anamorphic footage, else the
+// project's), when the toolbar's PAR is on
+float viewerPar(const ViewerState& v) {
+    const double p = v.res.format.pixelAspect;
+    return v.parOn && p > 0.01 && p < 100 ? (float)p : 1.0f;
+}
+
 void viewerFit(ViewerState& v, ImVec2 size) {
     const Format& f = v.res.format;
     if (f.width <= 0 || f.height <= 0 || size.x < 10 || size.y < 10) return;
     const ImVec2 off = sideOffset(v);
-    const float w = f.width + std::fabs(off.x), h = f.height + std::fabs(off.y);
+    const float w = (f.width + std::fabs(off.x)) * viewerPar(v), h = f.height + std::fabs(off.y);
     v.zoom = std::min((size.x - 40) / w, (size.y - 40) / h);
     v.zoom = std::max(v.zoom, 0.01f);
     v.pan = ImVec2(f.width * 0.5f + off.x * 0.5f, f.height * 0.5f + off.y * 0.5f);
@@ -719,6 +726,20 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         ImGui::SetTooltip("Region of interest: render only inside a box.\nClick: on / off (the first time, drag the box in the viewer).\n"
                           "Shift+click: draw a new box.");
     ImGui::SameLine(0, 2);
+    {
+        const double fp = v.res.format.pixelAspect;
+        char pl[32];
+        std::snprintf(pl, sizeof pl, std::fabs(fp - 1) > 1e-3 ? "PAR %.3g##par" : "PAR##par", fp);
+        if (toggle(pl, v.parOn)) {
+            v.parOn = !v.parOn;
+            v.fitPending = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Pixel aspect: show the image with its pixel aspect ratio (the footage's, else the project's),\n"
+                              "so anamorphic footage is unsqueezed for paint and roto without reformatting it.\n"
+                              "Off: one image pixel is one square screen pixel.");
+    }
+    ImGui::SameLine(0, 2);
     if (toggle(app.viewPaused ? "paused" : "pause", app.viewPaused)) {
         app.viewPaused = !app.viewPaused;
         if (!app.viewPaused) app.requestView();
@@ -800,7 +821,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     if (v.checkOnScreen && !v.fitPending && v.res.format.width > 0) {
         v.checkOnScreen = false;
         // the part of the image plane on screen, against the new image's format and bounding box
-        const double hx = size.x * 0.5 / v.zoom, hy = size.y * 0.5 / v.zoom;
+        const double hx = size.x * 0.5 / (v.zoom * viewerPar(v)), hy = size.y * 0.5 / v.zoom;
         Box seen((int)std::floor(v.pan.x - hx), (int)std::floor(v.pan.y - hy), (int)std::ceil(v.pan.x + hx), (int)std::ceil(v.pan.y + hy));
         Box shown = v.res.format.box();
         if (!v.res.bbox.empty()) shown = shown.unite(v.res.bbox);
@@ -809,11 +830,12 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     if (v.fitPending && v.res.format.width > 0) viewerFit(v, size);
 
     ImVec2 center(p0.x + size.x * 0.5f, p0.y + size.y * 0.5f);
+    const float vpar = viewerPar(v);
     auto toScreen = [&](double x, double y) {
-        return ImVec2(center.x + (float)((x - v.pan.x) * v.zoom), center.y - (float)((y - v.pan.y) * v.zoom));
+        return ImVec2(center.x + (float)((x - v.pan.x) * v.zoom * vpar), center.y - (float)((y - v.pan.y) * v.zoom));
     };
     auto toImage = [&](ImVec2 s) {
-        return ImVec2(v.pan.x + (s.x - center.x) / v.zoom, v.pan.y - (s.y - center.y) / v.zoom);
+        return ImVec2(v.pan.x + (s.x - center.x) / (v.zoom * vpar), v.pan.y - (s.y - center.y) / v.zoom);
     };
     if (static const char* tdh = std::getenv("STRATA_TEST_DEEPHOVER"); tdh && *tdh) {
         int tx = 0, ty = 0;
@@ -852,7 +874,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         v.pan.y += before.y - after.y;
     } else if (ImGui::IsItemActive() && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
                                   (io.KeyAlt && !io.KeyCtrl && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
-        v.pan.x -= io.MouseDelta.x / v.zoom;
+        v.pan.x -= io.MouseDelta.x / (v.zoom * vpar);
         v.pan.y += io.MouseDelta.y / v.zoom;
     }
 
@@ -914,7 +936,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
             ImVec2 g0 = toScreen(off.x, res.format.height + off.y), g1 = toScreen(off.x + res.format.width, off.y);
             dl->AddRect(g0, g1, IM_COL32(90, 170, 255, 160));
         } else if (v.compare == "wipe" && res.imageB && res.format.width > 0) {
-            wipeHandles(app, vn, v, dl, ViewXf{center, v.pan, v.zoom}, nodeA, nodeB);
+            wipeHandles(app, vn, v, dl, ViewXf{center, v.pan, v.zoom, vpar}, nodeA, nodeB);
         } else if (v.compare != "off" && res.imageB) {
             const std::string t = "A " + v.compare + " B";
             dl->AddText(ImVec2(p0.x + 10, p0.y + 8), IM_COL32(255, 255, 255, 170), t.c_str());
@@ -1071,46 +1093,46 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     // Roto shapes and tools (when a Roto node's properties are open): in the active viewer.
     if (!active) {
     } else if (v.overlays) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         ui.viewerImage = {res.image && v.tex && !v.texBounds.empty() ? v.tex : 0u, v.texBounds, v.texScale, dp};
         drawRotoViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawPlanarViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawTransformViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
         drawKnobHandles(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawViewer3DIn2D(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays && activeVanishCam(app)) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawVanishCamViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays && activeFlowField(app)) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawFlowPaintViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (active && v.overlays && activeMarkup(app)) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawMarkupViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays && activeTrackMask(app)) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawTrackMaskViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
         drawTrackMaskHud(app, ui, p0, p1);
     }
     if (v.overlays) {
-        ViewXf xf{center, v.pan, v.zoom};
+        ViewXf xf{center, v.pan, v.zoom, vpar};
         drawCamTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (!v.overlays) {  // Q hid the shapes and handles: say so, so a tool that ignores clicks isn't a mystery

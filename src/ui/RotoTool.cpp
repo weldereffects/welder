@@ -360,11 +360,11 @@ Pts toScreenPts(const Pts& pts, const ViewXf& xf) {
         ImVec2 s = xf.toScreen(p.x, p.y);
         p.x = s.x;
         p.y = s.y;
-        p.lx *= xf.zoom;
+        p.lx *= xf.zoom * xf.par;
         p.ly *= -xf.zoom;
-        p.rx *= xf.zoom;
+        p.rx *= xf.zoom * xf.par;
         p.ry *= -xf.zoom;
-        p.fx *= xf.zoom;
+        p.fx *= xf.zoom * xf.par;
         p.fy *= -xf.zoom;
     }
     return r;
