@@ -54,6 +54,7 @@ struct ViewResult {
     bool fromDisk = false;  // read back from the disk cache
     uint64_t serial = 0;    // increments with each finished render
     uint64_t content = 0;   // what it shows (the node and all upstream, B, the project): see App::viewStamp
+    bool whole = false;     // all of the image is in `image` (the region asked for didn't crop it)
 };
 
 struct TrackStatus {
@@ -246,6 +247,7 @@ public:
     bool rightAnglePipes = false; // the setting: node graph pipes drawn with square corners
     bool altDragCuts = true;      // the setting: Alt+drag in the node graph cuts pipes (off: it pans)
     int rotoShowPoints = 0;       // the setting: roto points shown on the selected / current / hovered shapes (0) or on all (1)
+    bool autoProxy = true;        // the setting: quick low-res previews of slow renders while you work (viewer toolbar, #126)
     bool middleDragZooms = false; // the setting: a middle-button drag zooms (tablets without a wheel); Alt+middle-drag always does
     bool matchArmed = false;      // this script has had no media yet (the first Read's file brings the offer)
     double playbackCacheGB = 0;  // the setting; 0 = automatic (a quarter of the RAM, 3..64 GB)
@@ -513,6 +515,7 @@ private:
         std::string compare;
         size_t bytes = 0;
         uint64_t content = 0;  // ViewResult::content: an edit that leaves it the same keeps the frame
+        uint64_t checked = 0;  // editGen_ its content was last checked at (revalStep)
     };
     bool servesView(const CachedFrame& c, double scale, const Box& region, const std::string& compare) const;  // resM_ held
     std::map<std::pair<std::string, int>, CachedFrame> frameCache_;  // (node, frame), guarded by resM_
@@ -574,6 +577,8 @@ private:
     // The content of a viewer image (under the comp lock): the node's hash (its knobs and everything
     // upstream, at that scale), B's when comparing, and the project settings images depend on.
     uint64_t viewStamp(Engine& eng, Node* n, Node* b, double f, double sc);
+    std::atomic<bool> revalPending_{false}, revalBusy_{false};  // cached frames an edit left to check
+    bool revalStep(Engine& eng, double budgetMs);  // comp locked; true when all are checked
     void revalidateFrames();  // after an edit (exclusive lock held): cached frames it didn't change stay
     std::thread::id uiThread_;
     std::atomic<int64_t> passStartMs_{0};

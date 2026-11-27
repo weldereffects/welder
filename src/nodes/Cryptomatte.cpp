@@ -215,6 +215,26 @@ Layer findLayer(const ChannelSet& cs, const std::string& layer) {
     return L;
 }
 
+std::vector<std::string> layerNames(const ChannelSet& cs) {
+    // <layer>00.R with its G: named crypto-something (any renderer's own name for it, such as
+    // Redshift's cryptoMesh, #120), or with a second rank (<layer>01.R) as cryptomattes have
+    std::vector<std::string> out;
+    for (auto& c : cs) {
+        if (c.size() < 5) continue;
+        const std::string end = c.substr(c.size() - 4);
+        if (end != "00.R" && end != "00.r") continue;
+        const std::string pre = c.substr(0, c.size() - 4);
+        const auto dot = pre.rfind('.');
+        const std::string tail = dot == std::string::npos ? pre : pre.substr(dot + 1);
+        if (tail.empty() || layerAt(cs, pre).id.empty()) continue;
+        if (normName(tail).find("crypto") == std::string::npos && layerAt(cs, pre).id.size() < 3) continue;
+        bool dup = false;
+        for (auto& o : out) dup |= normName(o) == normName(tail);
+        if (!dup) out.push_back(tail);
+    }
+    return out;
+}
+
 bool topId(const float* px, const Layer& L, float& id) {
     float best = 0;
     bool any = false;
@@ -257,7 +277,7 @@ public:
             }
             throw RenderError(name + ": the input has no " + layer + "00 channels" +
                               (seen.empty() ? std::string(" (enable cryptomatte on the render, and pick its layer)")
-                                            : " (it has: " + seen + "; pick the matching layer)"));
+                                            : " (it has: " + seen + "; pick it in the layer menu)"));
         }
         std::vector<uint32_t> ids;
         for (auto& e : splitList(params.str("matte_list", ""))) {

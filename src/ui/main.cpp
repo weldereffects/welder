@@ -1749,6 +1749,15 @@ int main(int argc, char** argv) {
                                         geo.c_str(), it.value("text", "").c_str());
                         }
         }
+        // STRATA_TEST_ROI=x1,y1,x2,y2: the viewer's region of interest (a screenshot shows only that rendered)
+        if (const char* tr = std::getenv("STRATA_TEST_ROI"); tr && frameCount <= 3) {
+            int x1, y1, x2, y2;
+            if (std::sscanf(tr, "%d,%d,%d,%d", &x1, &y1, &x2, &y2) == 4) {
+                ui.viewer.roi = Box(x1, y1, x2, y2);
+                ui.viewer.roiOn = true;
+                ui.viewer.reqRegion = Box();
+            }
+        }
         // STRATA_TEST_PLAY=<seconds>: play from the first frame, then report the frames shown per second
         bool playTest = false;
         if (const char* tp = std::getenv("STRATA_TEST_PLAY"); tp && *tp && !opt.screenshot.empty()) {
@@ -1764,6 +1773,7 @@ int main(int argc, char** argv) {
                 ui.viewer.fitPending = false;
                 ui.viewer.checkOnScreen = false;
             }
+            if (t0 < 0) playTest = true;  // (not done before it starts)
             if (t0 < 0 && frameCount == 10) {
                 t0 = glfwGetTime();
                 app.frame = app.playRange().first;
@@ -1782,6 +1792,25 @@ int main(int argc, char** argv) {
                     std::printf("PLAYSEC %d: %d fps (full res %s, scale %g), frame %g, showing %g, rendering %d, edits pending %d\n", sec, secShown, ui.viewer.fullRes ? "on" : "off", ui.viewer.reqScale, app.frame, r.frame, (int)app.rendering(), (int)app.editsPending());
                     std::fflush(stdout);
                     sec = (int)el, secShown = 0;
+                }
+                // STRATA_TEST_PLAY_RECACHE=<s>: from then on, every 3 s, one of the changes that used to
+                // re-render every cached frame (#137): zoom out, fps, the range menu, the viewer transform,
+                // wipe on / off. Run with STRATA_DEBUG_AHEAD=1 and count the "store" lines after each ACT.
+                if (const char* rc = std::getenv("STRATA_TEST_PLAY_RECACHE"); rc && *rc) {
+                    static int step = 0;
+                    const double at = std::atof(rc) + 3.0 * step;
+                    if (el >= at && step < 6) {
+                        const char* names[] = {"zoom out", "fps 25", "range input", "viewer transform", "wipe on", "wipe off"};
+                        std::fprintf(stderr, "ACT %s (%zu frames cached)\n", names[step], app.cachedFrames().size());
+                        std::fflush(stderr);
+                        if (step == 0) ui.viewer.zoom *= 0.6f;
+                        else if (step == 1) app.edit([](Comp& c) { c.fps = 25; });
+                        else if (step == 2) app.edit([](Comp& c) { c.project.timelineRange = "input"; });
+                        else if (step == 3) app.edit([](Comp& c) { c.project.viewerView = "Raw"; });
+                        else if (step == 4) app.setViewerParam("Viewer1", "compare", "wipe");
+                        else app.setViewerParam("Viewer1", "compare", "off");
+                        ++step;
+                    }
                 }
                 // STRATA_TEST_PLAY_STRESS=<every s>: while playing, every so often toggle full res, jump to a
                 // frame, change the zoom or switch the viewer between its first two inputs; reports the

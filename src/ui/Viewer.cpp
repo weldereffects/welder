@@ -639,7 +639,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     viewerProcessCombo(app);
     segEnd();
 
-    nextSeg(170);
+    nextSeg(390);
     segBegin();  // the view
     if (ImGui::Button("Fit")) v.fitPending = true;
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fit the image to the viewer (F)");
@@ -662,15 +662,94 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Off: when zoomed out, render at a lower resolution that still fills the screen (faster).\n"
                           "On: always render every pixel.");
+    // a toggle button in the segment's style
+    auto toggle = [&](const char* label, bool on) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImGui::ColorConvertU32ToFloat4(on ? theme().segmentOn : theme().segment));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(on ? themeAccent() : theme().muted));
+        const bool hit = ImGui::Button(label);
+        ImGui::PopStyleColor(2);
+        return hit;
+    };
+    ImGui::SameLine(0, 2);
+    if (toggle("auto proxy", app.autoProxy)) {
+        app.autoProxy = !app.autoProxy;
+        app.saveSettings();
+        app.requestView();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("On: a slow render shows a quick low-resolution pass first, and dragging a handle or\n"
+                          "painting renders at a lower resolution until you let go.\n"
+                          "Off: always the finished image (lining up pixels at high zoom).");
+    ImGui::SameLine(0, 2);
+    {  // proxy mode and scale (also Ctrl+P and the Project panel)
+        const auto& pr = app.comp->project;
+        static const double scales[] = {0.5, 0.25, 0.125};
+        static const char* names[] = {"1/2", "1/4", "1/8"};
+        std::string cur = "proxy off";
+        for (int i = 0; i < 3; ++i)
+            if (pr.proxyMode && std::fabs(pr.proxyScale - scales[i]) < 1e-6) cur = std::string("proxy ") + names[i];
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize("proxy off").x + ImGui::GetFrameHeight() + 8);
+        if (ImGui::BeginCombo("##proxy", cur.c_str())) {
+            if (ImGui::Selectable("off", !pr.proxyMode)) app.edit([](Comp& c) { c.project.proxyMode = false; });
+            for (int i = 0; i < 3; ++i)
+                if (ImGui::Selectable(names[i], pr.proxyMode && std::fabs(pr.proxyScale - scales[i]) < 1e-6)) {
+                    const double sc = scales[i];
+                    app.edit([sc](Comp& c) {
+                        c.project.proxyMode = true;
+                        c.project.proxyScale = sc;
+                    });
+                }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Proxy: the viewer renders at this scale (Ctrl+P toggles). Write nodes render full size.");
+    }
+    ImGui::SameLine(0, 2);
+    if (toggle("ROI", v.roiOn)) {
+        if (ImGui::GetIO().KeyShift || (!v.roiOn && v.roi.empty())) {  // draw one
+            v.roiOn = true;
+            ui.picker = PickerState();
+            ui.picker.active = true;
+            ui.picker.mode = "roi";
+        } else {
+            v.roiOn = !v.roiOn;
+        }
+        v.reqRegion = Box();  // ask again
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Region of interest: render only inside a box.\nClick: on / off (the first time, drag the box in the viewer).\n"
+                          "Shift+click: draw a new box.");
+    ImGui::SameLine(0, 2);
+    if (toggle(app.viewPaused ? "paused" : "pause", app.viewPaused)) {
+        app.viewPaused = !app.viewPaused;
+        if (!app.viewPaused) app.requestView();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Pause viewer updates (P). While paused, U renders the current frame once.");
     segEnd();
     ImGui::PopStyleColor(2);
 
     nextSeg(120);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("%d%%", (int)std::lround(v.zoom * 100));
+    {  // zoom: the level, and a menu of exact ones
+        char zl[32];
+        std::snprintf(zl, sizeof zl, "%d%%", (int)std::lround(v.zoom * 100));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+        ImGui::SetNextItemWidth(ImGui::CalcTextSize("0000%").x + ImGui::GetFrameHeight() + 6);
+        if (ImGui::BeginCombo("##zoom", zl)) {
+            static const int levels[] = {800, 400, 300, 200, 100, 75, 50, 33, 25, 10};
+            for (int z : levels) {
+                char b[16];
+                std::snprintf(b, sizeof b, "%d%%", z);
+                if (ImGui::Selectable(b, std::lround(v.zoom * 100) == z)) v.zoom = z / 100.0f;  // about the centre
+            }
+            ImGui::Separator();
+            if (ImGui::Selectable("Fit  (F)")) v.fitPending = true;
+            ImGui::EndCombo();
+        }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Zoom (wheel; 1:1 shows every pixel)");
+    }
     if (v.res.image && v.res.scale < 1.0) {
         ImGui::SameLine();
-        ImGui::TextDisabled("proxy 1/%d", (int)std::lround(1.0 / v.res.scale));
+        ImGui::TextDisabled("shown at 1/%d", (int)std::lround(1.0 / v.res.scale));
     }
     if (app.comp->project.proxyMode) {
         ImGui::SameLine();
@@ -775,10 +854,23 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         const ImVec2 off = sideOffset(v);  // side by side: what's on screen of B, in B's own pixels, too
         if (off.x != 0 || off.y != 0)
             visible = visible.unite(Box(visible.x1 - (int)off.x, visible.y1 - (int)off.y, visible.x2 - (int)off.x, visible.y2 - (int)off.y));
+        const bool roi = v.roiOn && !v.roi.empty();
+        if (roi) {  // only what's inside the region of interest (#126)
+            visible = visible.intersect(v.roi);
+            if (visible.empty()) visible = v.roi;
+        }
         bool covered = sc == v.reqScale && !v.reqRegion.empty() && visible.intersect(v.reqRegion) == visible;
         if (!covered && !(active && app.viewPaused)) {
             int px = std::max(64, visible.width() / 3), py = std::max(64, visible.height() / 3);
             v.reqRegion = visible.pad(px, py);
+            // Most of the image on screen: ask for all of it, so zooming out further (or back in)
+            // keeps every cached frame instead of rendering them again for the larger region (#137).
+            const Format& vf = v.res.format;
+            if (roi) v.reqRegion = v.reqRegion.intersect(v.roi);
+            else if (vf.width > 0 && vf.height > 0) {
+                const Box fb = vf.box();
+                if (v.reqRegion.intersect(fb).area() * 10 >= fb.area() * 6) v.reqRegion = v.reqRegion.unite(fb.pad(vf.width / 4 + 2, vf.height / 4 + 2));
+            }
             v.reqScale = sc;
             if (active) app.setViewWindow(v.reqRegion, sc);
         }
@@ -814,6 +906,11 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
             const std::string t = "A " + v.compare + " B";
             dl->AddText(ImVec2(p0.x + 10, p0.y + 8), IM_COL32(255, 255, 255, 170), t.c_str());
         }
+        if (v.roiOn && !v.roi.empty()) {  // the region of interest (#126)
+            const ImVec2 r0 = toScreen(v.roi.x1, v.roi.y2), r1 = toScreen(v.roi.x2, v.roi.y1);
+            dl->AddRect(r0, r1, IM_COL32(255, 190, 80, 220), 0, 0, 1.5f);
+            dl->AddText(ImVec2(r0.x + 3, r0.y - 16), IM_COL32(255, 190, 80, 220), "ROI");
+        }
         // Format box and bbox (O toggles them).
         if (v.overlays) {
         ImU32 fmtCol = IM_COL32(150, 150, 150, 200);
@@ -846,19 +943,22 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     PickerState& pk = ui.picker;
     // The picker belongs to its node's panel: closing or folding that panel, or going on to work in
     // another one, puts it down. Left armed, it took every click meant for a Roto or a handle.
-    if (pk.active && (!app.node(pk.node) || !app.panelShown(pk.node))) pk.active = false;
+    if (pk.active && pk.mode != "roi" && (!app.node(pk.node) || !app.panelShown(pk.node))) pk.active = false;
     // So does another node's viewer tool taking over (its panel opened, or clicked in: see nodePanel).
     {
         Node* tn = activeToolNode(app);
         const std::string tool = tn ? tn->name : "";
         if (tool != ui.pickerToolSeen) {
-            if (pk.active && !tool.empty() && tool != pk.node) pk.active = false;
+            if (pk.active && pk.mode != "roi" && !tool.empty() && tool != pk.node) pk.active = false;
             ui.pickerToolSeen = tool;
         }
     }
     if (active && pk.active) {
         ImVec2 mi = toImage(io.MousePos);
-        if (v.hovered && ImGui::IsKeyPressed(ImGuiKey_Escape)) pk.active = false;
+        if (v.hovered && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            if (pk.mode == "roi" && v.roi.empty()) v.roiOn = false;
+            pk.active = false;
+        }
         if (v.hovered && !io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             pk.dragging = true;
             pk.startImg = mi;
@@ -875,7 +975,16 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
             int y2 = std::max(y1 + 1, (int)std::ceil(std::max(pk.startImg.y, mi.y)));
             float rgba[4] = {0, 0, 0, 1};
             bool ok = false;
-            if (pk.mode == "point") {  // an XY knob's crosshair: the clicked spot, in image pixels
+            if (pk.mode == "roi") {  // the region of interest: the dragged box
+                if ((x2 - x1) * (y2 - y1) >= 16) {
+                    v.roi = Box(x1, y1, x2, y2);
+                    v.roiOn = true;
+                } else if (v.roi.empty()) {
+                    v.roiOn = false;
+                }
+                v.reqRegion = Box();
+                pk.active = false;
+            } else if (pk.mode == "point") {  // an XY knob's crosshair: the clicked spot, in image pixels
                 std::string node = pk.node, knob = pk.knob;
                 const double x = std::round(mi.x * 10) / 10, y = std::round(mi.y * 10) / 10, fr = app.frame;
                 app.checkpoint();
@@ -933,6 +1042,7 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
                            : pk.mode == "crypto remove" ? "PICK MATTES: click objects to remove them   Esc: stop"
                            : pk.mode == "focus"         ? "PICK FOCUS: click what should be sharp   Esc: stop"
                            : pk.mode == "point"         ? "PICK POINT: click to place it   Esc: stop"
+                           : pk.mode == "roi"           ? "ROI: drag a box to render inside   Esc: stop"
                            : pk.fromInput ? "PICK (input): click or drag over the screen   Esc: stop" : "PICK: click or drag   Esc: stop";
         dl->AddText(ImVec2(p0.x + 10, p1.y - 22), IM_COL32(255, 210, 120, 255), hint);
     }

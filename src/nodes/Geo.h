@@ -53,6 +53,7 @@ struct Mesh {
     std::vector<float> P;   // xyz per corner
     std::vector<float> N;   // normal per corner
     std::vector<float> UV;  // uv per corner (0..1 over the texture)
+    bool wrapU = false;     // closed around u (Sphere, Cylinder): textures wrap from u = 1 to 0 (no seam)
     size_t triangles() const { return P.size() / 9; }
 };
 
