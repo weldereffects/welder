@@ -8,6 +8,7 @@
 #include <optional>
 #include <functional>
 #include <future>
+#include <set>
 #include <sstream>
 
 #include "Panels.h"
@@ -1728,6 +1729,11 @@ static void drawMetadata(App& app, UiState& ui) {
         ImGui::TableHeadersRow();
         std::string f = filter;
         std::transform(f.begin(), f.end(), f.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        // Rows select (Ctrl / Shift for more) and copy as "key = value" lines, the way SetMetadata
+        // reads them (#99): right-click, or Ctrl+C.
+        static std::set<std::string> sel;
+        static std::string anchor;
+        std::vector<std::pair<std::string, std::string>> rows;
         for (auto& [k, v] : md.items()) {
             const std::string val = v.is_string() ? v.get<std::string>() : v.dump();
             if (!f.empty()) {
@@ -1735,14 +1741,83 @@ static void drawMetadata(App& app, UiState& ui) {
                 std::transform(hay.begin(), hay.end(), hay.begin(), [](unsigned char c) { return (char)std::tolower(c); });
                 if (hay.find(f) == std::string::npos) continue;
             }
+            rows.emplace_back(k, val);
+        }
+        auto lines = [&](bool onlySel) {
+            std::string out;
+            for (auto& [k, val] : rows)
+                if (!onlySel || sel.count(k)) out += k + " = " + val + "\n";
+            return out;
+        };
+        std::string rightOn;
+        for (size_t i = 0; i < rows.size(); ++i) {
+            const auto& [k, val] = rows[i];
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(k.c_str());
+            ImGui::PushID(k.c_str());
+            if (ImGui::Selectable(k.c_str(), sel.count(k) > 0, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
+                ImGuiIO& io = ImGui::GetIO();
+                if (io.KeyShift && !anchor.empty()) {
+                    size_t a = i;
+                    for (size_t j = 0; j < rows.size(); ++j)
+                        if (rows[j].first == anchor) a = j;
+                    if (!io.KeyCtrl) sel.clear();
+                    for (size_t j = std::min(a, i); j <= std::max(a, i); ++j) sel.insert(rows[j].first);
+                } else if (io.KeyCtrl) {
+                    if (!sel.erase(k)) sel.insert(k);
+                    anchor = k;
+                } else {
+                    sel = {k};
+                    anchor = k;
+                }
+            }
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                if (!sel.count(k)) sel = {k};
+                rightOn = k;
+            }
+            ImGui::PopID();
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(val.size() > 300 ? (val.substr(0, 300) + "...").c_str() : val.c_str());
             if (ImGui::IsItemHovered() && val.size() > 60) ImGui::SetTooltip("%s", val.substr(0, 2000).c_str());
         }
         ImGui::EndTable();
+        static std::string menuKey;
+        if (!rightOn.empty()) {
+            menuKey = rightOn;
+            ImGui::OpenPopup("##mdmenu");
+        }
+        const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        if (focused && !sel.empty() && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && !ImGui::GetIO().WantTextInput)
+            ImGui::SetClipboardText(lines(true).c_str());
+        if (ImGui::BeginPopup("##mdmenu")) {
+            std::string val;
+            for (auto& [k, v] : rows)
+                if (k == menuKey) val = v;
+            if (ImGui::MenuItem(sel.size() > 1 ? "Copy selected as key = value" : "Copy as key = value", "Ctrl+C"))
+                ImGui::SetClipboardText(lines(true).c_str());
+            if (ImGui::MenuItem("Copy key")) ImGui::SetClipboardText(menuKey.c_str());
+            if (ImGui::MenuItem("Copy value")) ImGui::SetClipboardText(val.c_str());
+            if (ImGui::MenuItem("Copy all shown")) ImGui::SetClipboardText(lines(false).c_str());
+            // straight into a SetMetadata whose panel is open
+            std::vector<std::string> targets;
+            for (auto& n : app.comp->nodes)
+                if (n->type == "SetMetadata" && app.panelShown(n->name)) targets.push_back(n->name);
+            if (!targets.empty()) ImGui::Separator();
+            for (auto& t : targets)
+                if (ImGui::MenuItem(("Add to " + t).c_str())) {
+                    const std::string add = lines(true), node = t;
+                    app.checkpoint();
+                    app.edit([node, add](Comp& c) {
+                        if (Node* m = c.find(node)) {
+                            std::string cur = m->params.str("set", "");
+                            if (!cur.empty() && cur.back() != '\n') cur += "\n";
+                            m->params.data["set"] = cur + add;
+                            m->paramsChanged();
+                        }
+                    });
+                }
+            ImGui::EndPopup();
+        }
     }
     ImGui::End();
 }

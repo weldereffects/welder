@@ -259,6 +259,31 @@ def get_pipeline(ctx, loras, quant, offload, stage_2_ic_lora=False):
     return pipe
 
 
+def host_memory_error(err):
+    """True for the ways Windows / torch report running out of system memory (not VRAM) while the
+    weights load: a pinned buffer that can't be allocated, a paging file too small to map the
+    safetensors file, or a mapped tensor whose storage went away (#107)."""
+    import traceback
+    t = f"{type(err).__name__}: {err}"
+    if "invalid python storage" in t or "paging file is too small" in t or "os error 1455" in t or "cudaHostAlloc" in t:
+        return True
+    # torch reports a failed pinned (page-locked RAM) buffer as a CUDA out of memory
+    tb = "".join(traceback.format_tb(err.__traceback__)) if err.__traceback__ else ""
+    return "out of memory" in t and ("pin_memory" in tb or "alloc_buffer" in tb)
+
+
+def free_pipeline():
+    _PIPE.update(key=None, pipe=None)
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def generate(ctx, pipe, ref_path, prompt, seed, out_w, out_h, n, fps, ref_strength, two_stage, images=()):
     """Run one window; returns a list of H x W x 3 float32 frames in [0,1] (display-referred).
     images: [(png path, frame index, strength)]: frames the result starts from / passes through."""
@@ -320,7 +345,8 @@ def run(ctx, p):
     if "<" in prompt and ">" in prompt:
         ctx.log("note: the prompt still has <...> placeholders from the template")
     loras = [(lora_file, float(p.get("lora_strength", preset.get("strength", 1.0))))] + user_loras(p.get("loras"))
-    pipe = get_pipeline(ctx, loras, p.get("quantization", "fp8"), p.get("offload", "cpu"), stage_2_ic)
+    quant, offload = p.get("quantization", "fp8"), p.get("offload", "cpu")
+    pipe = get_pipeline(ctx, loras, quant, offload, stage_2_ic)
 
     # the style frame: the look the result starts from (Layout to Render's "look still")
     style = None
@@ -398,8 +424,36 @@ def run(ctx, p):
                 ip = os.path.join(td, "start.png")
                 write_image(ip, start)
                 images.append((ip, 0, strength))
-            out = generate(ctx, pipe, ref_path, prompt, p.get("seed", 1234), PW * scale, PH * scale, n, fps,
-                           p.get("ref_strength", 1.0), two_stage, images)
+            try:
+                out = generate(ctx, pipe, ref_path, prompt, p.get("seed", 1234), PW * scale, PH * scale, n, fps,
+                               p.get("ref_strength", 1.0), two_stage, images)
+            except Exception as err:  # noqa: BLE001
+                if not host_memory_error(err):
+                    raise
+                if offload != "disk":
+                    # weights held in RAM didn't fit: stream them from disk instead (slower, far less RAM)
+                    ctx.log(f"system memory ran out loading the model ({type(err).__name__}); "
+                            "trying again with the weights streamed from disk")
+                    offload = "disk"
+                    free_pipeline()
+                    pipe = get_pipeline(ctx, loras, quant, offload, stage_2_ic)
+                    try:
+                        out = generate(ctx, pipe, ref_path, prompt, p.get("seed", 1234), PW * scale, PH * scale, n, fps,
+                                       p.get("ref_strength", 1.0), two_stage, images)
+                    except Exception as err2:  # noqa: BLE001
+                        if not host_memory_error(err2):
+                            raise
+                        err = err2
+                    else:
+                        err = None
+                if err is not None:
+                    free_pipeline()
+                    raise RuntimeError(
+                        "LTX ran out of system memory loading its weights, even streaming them from disk. Windows "
+                        "needs RAM plus paging file for the model: set the paging file to System managed (or at "
+                        "least 64 GB) in System > About > Advanced system settings > Performance > Virtual memory, "
+                        "close other heavy apps (and any second copy of Welder), and try again. "
+                        f"({type(err).__name__}: {err})") from err
         made = {}
         if chain and wi < len(windows) - 1:
             nxt = windows[wi + 1][0]

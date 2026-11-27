@@ -1758,8 +1758,39 @@ int main(int argc, char** argv) {
                 ui.viewer.reqRegion = Box();
             }
         }
+        // STRATA_TEST_HOLD=<seconds> (with STRATA_TEST_ZOOM=<z>): sit on the frame at that zoom and
+        // print each second whether the viewer is still rendering (#125: a viewer that never settles)
+        bool holdTest = false;
+        if (const char* th = std::getenv("STRATA_TEST_HOLD"); th && *th && !opt.screenshot.empty()) {
+            static double h0 = -1;
+            static int lastSec = -1, serials = 0;
+            static uint64_t lastSerial = 0;
+            if (const char* tz = std::getenv("STRATA_TEST_ZOOM"); tz && frameCount >= 5) {
+                ui.viewer.zoom = (float)std::atof(tz);
+                ui.viewer.fitPending = false;
+                ui.viewer.checkOnScreen = false;
+            }
+            if (h0 < 0 && frameCount == 6) h0 = glfwGetTime();
+            if (h0 >= 0) {
+                const double el = glfwGetTime() - h0;
+                const ViewResult r = app.result();
+                if (r.serial != lastSerial) {
+                    lastSerial = r.serial;
+                    ++serials;
+                }
+                if ((int)el > lastSec) {
+                    lastSec = (int)el;
+                    std::printf("HOLD %ds: rendering %d, results so far %d, last %.0f ms, scale %g, zoom %.2f\n", lastSec, (int)app.rendering(), serials,
+                                app.lastRenderMs(), r.scale, ui.viewer.zoom);
+                    std::fflush(stdout);
+                }
+                holdTest = el < std::atof(th);
+            } else {
+                holdTest = true;
+            }
+        }
         // STRATA_TEST_PLAY=<seconds>: play from the first frame, then report the frames shown per second
-        bool playTest = false;
+        bool playTest = holdTest;
         if (const char* tp = std::getenv("STRATA_TEST_PLAY"); tp && *tp && !opt.screenshot.empty()) {
             static double t0 = -1, secs = std::atof(tp), last = -1e9;
             static int shown = 0, loops = 0;
@@ -2110,7 +2141,7 @@ int main(int argc, char** argv) {
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);
                 break;
             }
-            if (frameCount > 2000 && !scanning) {
+            if (frameCount > 2000 && !scanning && !holdTest) {
                 std::fprintf(stderr, "screenshot timed out\n");
                 break;
             }

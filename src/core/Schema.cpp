@@ -1432,7 +1432,8 @@ std::vector<NodeDef> build() {
                  {Txt("set", "set", "One \"key = value\" a line, e.g. shot = sh010 or exr/lens = 35. A value that reads as JSON "
                                     "(a number, [1, 2], \"text\") keeps its type; anything else is text"),
                   Txt("remove", "remove", "One key a line; a trailing * removes every key starting with what comes before it")},
-                 "Sets or removes metadata on the frames passing through. Write puts it in EXR headers "
+                 "Sets or removes metadata on the frames passing through: one key = value a line (the viewer's Metadata "
+                 "window copies rows in that form: right-click or Ctrl+C). Write puts it in EXR headers "
                  "(exr/<name> as <name>); the viewer's Metadata window lists it."});
     d.push_back({"CopyMetadata", "Time",
                  {C("mode", "mode", "merge, meta wins", {"merge, meta wins", "merge, keep image's", "replace", "remove all"})},

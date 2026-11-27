@@ -5690,6 +5690,35 @@ Connections:  {
         CHECK_NEAR(px(tri, 32, 24, "A"), 1.0, 1e-3);  // solid (not half see-through)
         CHECK_NEAR(px(tri, 32, 24, "B"), 0.6, 1e-3);
     });
+    test("SphericalTransform: reads only the input it needs, same picture in any tiles (#125)", [] {
+        // every projection pair, rotated: small tiles (each reading its own part of the input) give
+        // the same picture as one big tile
+        for (const char* in : {"latlong", "cube", "mirror ball", "fisheye"})
+            for (const char* outp : {"latlong", "cube", "fisheye"}) {
+                json nodes = json::array({
+                    {{"name", "Src"}, {"type", "Plasma"}, {"params", {{"size", 8}, {"format", {256, 128}}}}},
+                    {{"name", "ST"}, {"type", "SphericalTransform"}, {"inputs", {"Src"}},
+                     {"params", {{"input_type", in}, {"output_type", outp}, {"rotate", {20, 75, 10}}, {"format", {160, 120}}}}},
+                });
+                auto c1 = comp(nodes, 160, 120), c2 = comp(nodes, 160, 120);
+                auto big = render(*c1, "ST", 1, 4096), small = render(*c2, "ST", 1, 16);
+                double worst = 0;
+                for (int y = 0; y < 120; ++y)
+                    for (int x = 0; x < 160; ++x)
+                        for (const char* ch : {"R", "G", "B", "A"}) worst = std::max(worst, (double)std::fabs(px(big, x, y, ch) - px(small, x, y, ch)));
+                if (worst > 1e-5) std::printf("    %s -> %s: worst %.3g\n", in, outp, worst);
+                CHECK(worst < 1e-5);
+            }
+        // a tile of a lat-long that looks at a small part of a big input reads about that part
+        Engine e;
+        auto c = comp(json::array({{{"name", "Src"}, {"type", "Constant"}, {"params", {{"format", {4000, 2000}}}}},
+                                   {{"name", "ST"}, {"type", "SphericalTransform"}, {"inputs", {"Src"}}}}),
+                      64, 48);
+        Node* st = c->find("ST");
+        const Box r = st->roi(e, 0, Box(1000, 800, 1064, 864), 1);
+        std::printf("    a 64x64 tile reads %dx%d of the 4000x2000 input\n", r.width(), r.height());
+        CHECK(r.width() < 200 && r.height() < 200);
+    });
     test("ScanlineRender: no seam where a sphere's texture wraps around (#125)", [] {
         // a flat grey texture on a sphere whose u = 0 / 1 seam faces the camera: every pixel on the
         // sphere is that grey (the seam blended with transparent texels outside the texture before)

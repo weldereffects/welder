@@ -839,6 +839,11 @@ void stringEdit(Ctx& c, const KnobDef& k, const std::string& curVal, float width
     ImGui::SetNextItemWidth(width);
     bool enter = ImGui::InputText("##t", tmp, sizeof(tmp), ImGuiInputTextFlags_EnterReturnsTrue);
     buf = tmp;
+    std::string edited = curVal;
+    if (kit::textMenu(edited)) {
+        buf = edited;
+        enter = true;
+    }
     if ((enter || ImGui::IsItemDeactivatedAfterEdit()) && buf != curVal) {
         c.app.checkpoint();
         std::string val = buf;
@@ -856,7 +861,10 @@ void textEdit(Ctx& c, const KnobDef& k, const std::string& curVal, float width) 
     ImGui::InputTextMultiline("##txt", tmp.data(), tmp.size(), ImVec2(width, ImGui::GetTextLineHeight() * 8),
                               ImGuiInputTextFlags_AllowTabInput);
     buf = tmp.data();
-    if (ImGui::IsItemDeactivatedAfterEdit() && buf != curVal) {
+    std::string edited = curVal;
+    const bool menu = kit::textMenu(edited);
+    if (menu) buf = edited;
+    if ((menu || ImGui::IsItemDeactivatedAfterEdit()) && buf != curVal) {
         c.app.checkpoint();
         std::string val = buf;
         change(c, k.name, [val](json& j) { j = val; });
