@@ -10,6 +10,7 @@
 #include <map>
 
 #include "Panels.h"
+#include "nodes/Roto.h"
 #include "nodes/Track.h"
 #include "imgui_internal.h"
 
@@ -80,8 +81,118 @@ void writeBackTrackCurves(Comp& c) {
     gTrackDirty.clear();
 }
 
+// A roto item's animation shows too (#20): param "shape:<i>:<key>" (opacity, feather...) or
+// "shape:<i>:transform/<key>" is the animated value in the item itself, edited in place.
+// "shape:<i>:points" is its shape keys (the points' "anim" keys), a row of keys in the Dope Sheet:
+// built as a curve whose value is the key's original frame, so a key moved, copied or deleted
+// there is written back as the points' key moved, copied or deleted.
+bool shapeRef(const CurveRef& r, int& index, std::string& key) {
+    if (r.param.rfind("shape:", 0) != 0) return false;
+    const size_t c2 = r.param.find(':', 6);
+    if (c2 == std::string::npos) return false;
+    index = std::atoi(r.param.c_str() + 6);
+    key = r.param.substr(c2 + 1);
+    return true;
+}
+json* shapeItem(const Comp& c, const std::string& node, int i) {
+    Node* n = c.find(node);
+    if (!n || !n->params.data.contains("shapes") || !n->params.data["shapes"].is_array() || i < 0 ||
+        i >= (int)n->params.data["shapes"].size())
+        return nullptr;
+    return &n->params.data["shapes"][i];
+}
+json* shapeValue(const Comp& c, const CurveRef& r) {
+    int i;
+    std::string key;
+    if (!shapeRef(r, i, key) || key == "points") return nullptr;
+    json* it = shapeItem(c, r.node, i);
+    if (!it) return nullptr;
+    if (key.rfind("transform/", 0) == 0) {
+        key = key.substr(10);
+        if (!it->contains("transform") || !(*it)["transform"].is_object() || !(*it)["transform"].contains(key)) return nullptr;
+        return &(*it)["transform"][key];
+    }
+    return it->contains(key) ? &(*it)[key] : nullptr;
+}
+std::map<std::string, json> gShapeKeys;
+std::set<std::pair<std::string, std::string>> gShapeDirty;  // (node, param)
+// A drag rewrites the keys every frame from where they started: the keys as they were then (base),
+// what was last written, and each written key's frame in base (so the values stay base frames)
+struct ShapeKeysBase {
+    json base, written;
+    std::map<double, double> from;
+};
+std::map<std::string, ShapeKeysBase> gShapeBase;
+const json* shapeKeysCurve(const Comp& c, const CurveRef& r, bool dirty) {
+    int i;
+    std::string key;
+    if (!shapeRef(r, i, key) || key != "points") return nullptr;
+    json* it = shapeItem(c, r.node, i);
+    if (!it) return nullptr;
+    const json anim = it->value("anim", json::array());
+    ShapeKeysBase& b = gShapeBase[r.node + "|" + r.param];
+    if (anim != b.written) {  // changed elsewhere (or new): these keys are the base
+        b.base = anim;
+        b.written = anim;
+        b.from.clear();
+    }
+    json cv = {{"keys", json::array()}, {"interp", "constant"}};
+    for (double f : roto::keyFrames(*it)) {
+        auto m = b.from.find(f);
+        cv["keys"].push_back({f, m != b.from.end() ? m->second : f});
+    }
+    json& slot = gShapeKeys[r.node + "|" + r.param];
+    if (!dirty || !gShapeDirty.count({r.node, r.param})) slot = cv;
+    if (dirty) gShapeDirty.insert({r.node, r.param});
+    return &slot;
+}
+void writeBackShapeKeys(Comp& c) {
+    for (auto& [node, param] : gShapeDirty) {
+        CurveRef r{node, param, -1};
+        int i;
+        std::string key;
+        if (!shapeRef(r, i, key)) continue;
+        json* it = shapeItem(c, node, i);
+        if (!it || !it->contains("anim") || !(*it)["anim"].is_array()) continue;
+        ShapeKeysBase& b = gShapeBase[node + "|" + param];
+        const json old = b.base.is_array() && !b.base.empty() ? b.base : (*it)["anim"];
+        json out = json::array();
+        std::map<double, double> from;
+        for (auto& k : gShapeKeys[node + "|" + param]["keys"]) {
+            const double f = k[0].get<double>(), src = k[1].get<double>();
+            for (auto& o : old)
+                if (o.is_array() && o.size() >= 2 && std::fabs(o[0].get<double>() - src) < 1e-6) {
+                    json e = o;
+                    e[0] = f;
+                    out.push_back(e);
+                    from[f] = src;
+                    break;
+                }
+        }
+        std::stable_sort(out.begin(), out.end(), [](const json& a, const json& b) { return a[0].get<double>() < b[0].get<double>(); });
+        for (size_t j = 1; j < out.size();)  // (two keys on one frame: the later one)
+            if (std::fabs(out[j][0].get<double>() - out[j - 1][0].get<double>()) < 1e-6) out.erase(out.begin() + (long)j - 1);
+            else ++j;
+        b.from = from;
+        b.written = out.empty() ? json() : out;
+        if (out.empty()) {  // every key deleted: the shape stays where it was on its first key
+            if (!old.empty() && old[0].is_array() && old[0].size() >= 2) (*it)["points"] = old[0][1];
+            it->erase("anim");
+        } else {
+            (*it)["anim"] = out;
+        }
+    }
+    gShapeDirty.clear();
+}
+
 const json* curveJson(const Comp& c, const CurveRef& r) {
     if (r.param.rfind("track:", 0) == 0) return trackCurve(c, r, false);
+    if (r.param.rfind("shape:", 0) == 0) {
+        if (const json* k = shapeKeysCurve(c, r, false)) return k;
+        const json* v = shapeValue(c, r);
+        const json* cv = !v ? nullptr : r.comp < 0 ? v : (v->is_array() && r.comp < (int)v->size() ? &(*v)[r.comp] : nullptr);
+        return cv && params::isAnimated(*cv) ? cv : nullptr;
+    }
     Node* n = c.find(r.node);
     if (!n || !n->params.data.contains(r.param)) return nullptr;
     const json& v = n->params.data[r.param];
@@ -91,6 +202,12 @@ const json* curveJson(const Comp& c, const CurveRef& r) {
 
 json* curveJsonMut(Comp& c, const CurveRef& r) {
     if (r.param.rfind("track:", 0) == 0) return const_cast<json*>(trackCurve(c, r, true));
+    if (r.param.rfind("shape:", 0) == 0) {
+        if (const json* k = shapeKeysCurve(c, r, true)) return const_cast<json*>(k);
+        json* v = shapeValue(c, r);
+        json* cv = !v ? nullptr : r.comp < 0 ? v : (v->is_array() && r.comp < (int)v->size() ? &(*v)[r.comp] : nullptr);
+        return cv && params::isAnimated(*cv) ? cv : nullptr;
+    }
     Node* n = c.find(r.node);
     if (!n || !n->params.data.contains(r.param)) return nullptr;
     json& v = n->params.data[r.param];
@@ -113,6 +230,13 @@ bool internalParam(const std::string& k) {
     return k == "ml" || k == "tracks" || k == "solve" || k == "shapes" || k == "scene" || k == "keys" || k == "ui";
 }
 
+std::map<std::string, std::string> gShapeLabels;  // "node|param" -> "<item name> <key>"
+// what a curve's param is called on screen
+std::string paramLabel(const std::string& node, const std::string& param) {
+    auto it = gShapeLabels.find(node + "|" + param);
+    return it != gShapeLabels.end() ? it->second : param;
+}
+
 std::vector<CurveRef> curvesOf(App& app, const std::string& node) {
     std::vector<CurveRef> v;
     Node* n = app.node(node);
@@ -123,6 +247,35 @@ std::vector<CurveRef> curvesOf(App& app, const std::string& node) {
                 v.push_back({node, "track:" + std::to_string(i) + ":x", -1});
                 v.push_back({node, "track:" + std::to_string(i) + ":y", -1});
             }
+    // a roto's shapes, strokes and layers: their shape keys and animated values, under their names
+    if (n->params.data.contains("shapes") && n->params.data["shapes"].is_array()) {
+        const json& items = n->params.data["shapes"];
+        for (int i = 0; i < (int)items.size(); ++i) {
+            const json& it = items[i];
+            if (!it.is_object()) continue;
+            const std::string nm = it.value("name", std::string("shape ") + std::to_string(i + 1));
+            const std::string pre = "shape:" + std::to_string(i) + ":";
+            auto add = [&](const std::string& key, const json& val, const std::string& label) {
+                if (params::isAnimated(val)) {
+                    v.push_back({node, pre + key, -1});
+                    gShapeLabels[node + "|" + pre + key] = label;
+                } else if (val.is_array())
+                    for (int c = 0; c < (int)val.size() && c < 4; ++c)
+                        if (params::isAnimated(val[c])) {
+                            v.push_back({node, pre + key, c});
+                            gShapeLabels[node + "|" + pre + key] = label;
+                        }
+            };
+            if (it.contains("anim") && it["anim"].is_array() && !it["anim"].empty()) {
+                v.push_back({node, pre + "points", -1});
+                gShapeLabels[node + "|" + pre + "points"] = nm + " shape";
+            }
+            for (auto& [k, val] : it.items())
+                if (k != "anim" && k != "points" && k != "transform" && k != "name") add(k, val, nm + " " + k);
+            if (it.contains("transform") && it["transform"].is_object())
+                for (auto& [k, val] : it["transform"].items()) add("transform/" + k, val, nm + " " + k);
+        }
+    }
     for (auto& [k, val] : n->params.data.items()) {
         if (internalParam(k)) continue;
         if (params::isAnimated(val)) v.push_back({node, k, -1});
@@ -137,7 +290,7 @@ std::string curveName(const CurveRef& r) {
     int ti, ta;
     if (trackCurveRef(r, ti, ta)) return std::string(ta ? "track_y" : "track_x") + " " + std::to_string(ti + 1);
     static const char* xyzw[] = {"x", "y", "z", "w"};
-    std::string s = r.param;
+    std::string s = paramLabel(r.node, r.param);
     if (r.comp >= 0) s += std::string(".") + (r.comp < 4 ? xyzw[r.comp] : std::to_string(r.comp).c_str());
     return s;
 }
@@ -195,6 +348,7 @@ void edit(App& app, std::function<void(Comp&)> fn) {
     app.edit([fn](Comp& c) {
         fn(c);
         writeBackTrackCurves(c);
+        writeBackShapeKeys(c);
         for (auto& n : c.nodes) n->paramsChanged();
     });
 }
@@ -222,6 +376,9 @@ void drawCurveEditor(App& app, UiState& ui) {
     std::vector<CurveRef> all;
     for (auto& n : shownNodes(app)) {
         auto cs = curvesOf(app, n);
+        cs.erase(std::remove_if(cs.begin(), cs.end(), [](const CurveRef& c) {  // (shape keys: Dope Sheet only, they have no value)
+                     return c.param.rfind("shape:", 0) == 0 && c.param.size() > 7 && c.param.compare(c.param.size() - 7, 7, ":points") == 0;
+                 }), cs.end());
         if (cs.empty()) continue;
         groups.push_back({n, cs});
         all.insert(all.end(), cs.begin(), cs.end());
@@ -786,7 +943,7 @@ void drawDopeSheet(App& app, UiState& ui) {
         bool nodeRow = rows[r].param.empty();
         if (nodeRow) dl->AddRectFilled(ImVec2(p0.x, y), ImVec2(p1.x, y + rowH), IM_COL32(44, 44, 48, 255));
         if (mouse.y >= y && mouse.y < y + rowH) hoverRow = (int)r;
-        std::string label = nodeRow ? ((st.collapsed.count({rows[r].node, ""}) ? "+ " : "- ") + rows[r].node) : "    " + rows[r].param;
+        std::string label = nodeRow ? ((st.collapsed.count({rows[r].node, ""}) ? "+ " : "- ") + rows[r].node) : "    " + paramLabel(rows[r].node, rows[r].param);
         dl->AddText(ImVec2(p0.x + 6, y + 3), nodeRow ? IM_COL32(230, 230, 230, 255) : IM_COL32(170, 170, 170, 255), label.c_str());
         for (double f : rows[r].frames) {
             float x = X(f), cy = y + rowH * 0.5f, s = nodeRow ? 5.5f : 4.5f;
@@ -973,7 +1130,7 @@ void drawDopeSheet(App& app, UiState& ui) {
         }
     }
     if (hovered && hit.row >= 0 && st.drag == 0)
-        ImGui::SetTooltip("%s  frame %g", rows[hit.row].param.empty() ? rows[hit.row].node.c_str() : rows[hit.row].param.c_str(), hit.frame);
+        ImGui::SetTooltip("%s  frame %g", rows[hit.row].param.empty() ? rows[hit.row].node.c_str() : paramLabel(rows[hit.row].node, rows[hit.row].param).c_str(), hit.frame);
     dl->PopClipRect();
     ImGui::End();
 }
