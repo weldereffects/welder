@@ -1710,6 +1710,39 @@ void knobBody(Ctx& c, const KnobDef& k) {
         curvesKnob(c, k, avail);
     } else if (k.type == Knob::Text) {
         textEdit(c, k, getString(c.node, k.name, k.def.is_string() ? k.def.get<std::string>() : ""), avail);
+    } else if (k.type == Knob::String && k.name == "mask_channel") {
+        // the mask's channel: auto (alpha, else luminance, else red: resolveMaskChannel) shows what it
+        // picked from what's connected; or pick one, or type a layer's channel (mask.a)
+        const std::string cur = getString(c.node, k.name, "auto");
+        Node* mk = nullptr;
+        for (int i = 0; i < c.node->maxInputs() && !mk; ++i)
+            if (c.node->inputLabel(i) == "mask") mk = c.node->input(i);
+        const ChannelSet chans = mk ? c.app.channelsOf(mk->name) : ChannelSet{};
+        const MaskChannel res = resolveMaskChannel(chans, cur);
+        std::string lc = cur;
+        for (auto& ch : lc) ch = (char)std::tolower((unsigned char)ch);
+        const bool isAuto = lc == "auto" || lc.empty();
+        std::string preview = isAuto ? (mk && !res.name.empty() ? "auto (" + (res.luma ? std::string("luma") : res.name) + ")" : "auto") : cur;
+        if (!isAuto && mk && !res.luma && res.ch < 0) preview += " (missing)";
+        const float w = k.width > 0 ? k.width : std::min(avail, 220.0f);
+        if (kit::beginCombo("##maskch", preview.c_str(), w)) {
+            std::vector<std::string> opts = {"auto", "A", "luminance", "R", "G", "B"};
+            for (auto& ch : chans)
+                if (std::find(opts.begin(), opts.end(), ch) == opts.end()) opts.push_back(ch);
+            if (!isAuto && std::find(opts.begin(), opts.end(), cur) == opts.end()) opts.push_back(cur);
+            for (auto& o : opts) {
+                const bool sel = isAuto ? o == "auto" : o == cur;
+                if (ImGui::Selectable(o.c_str(), sel)) {
+                    c.app.checkpoint();
+                    change(c, k.name, [o](json& j) { j = o; });
+                }
+                if (o == "auto" && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("The mask's alpha; with no alpha, its luminance (Rec.709 of R G B);\nwith neither, its red (or first) channel");
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen("##maskch"))
+            ImGui::SetTooltip(isAuto ? "Mask channel: auto picks alpha, else luminance, else red" : "Mask channel (auto: alpha, else luminance, else red)");
     } else if (k.type == Knob::String) {
         stringEdit(c, k, getString(c.node, k.name, k.def.is_string() ? k.def.get<std::string>() : ""), k.width > 0 ? k.width : avail);
     } else if (k.type == Knob::File && k.name == "font") {

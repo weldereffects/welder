@@ -1,5 +1,6 @@
 #include "NodeUtils.h"
 #include "../core/Parallel.h"
+#include "../gpu/Gpu.h"
 
 #include "../io/MovieIO.h"
 
@@ -49,13 +50,96 @@ ChannelSet parseChannels(const Params& p, const std::string& key, const std::str
     return out;
 }
 
+static std::string lowerCase(std::string s) {
+    for (auto& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+MaskChannel resolveMaskChannel(const ChannelSet& chans, const std::string& setting) {
+    MaskChannel r;
+    auto pick = [&](const std::string& c) {
+        const int i = channelIndex(chans, c);
+        if (i >= 0) { r.ch = i; r.name = c; }
+        return i >= 0;
+    };
+    const std::string l = lowerCase(setting);
+    const bool isLuma = l == "luminance" || l == "luma" || l == "lum";
+    if (isLuma) {
+        r.luma = true;
+        r.name = "luminance";
+        return r;
+    }
+    if (!l.empty() && l != "auto") {
+        pick(resolveChannelName(setting));
+        return r;
+    }
+    if (pick("A")) return r;
+    for (const char* y : {"Y", "luminance", "luma"})
+        if (pick(y)) return r;
+    if (channelIndex(chans, "R") >= 0 && channelIndex(chans, "G") >= 0 && channelIndex(chans, "B") >= 0) {
+        r.luma = true;
+        r.name = "luminance";
+        return r;
+    }
+    if (pick("R")) return r;
+    if (!chans.empty()) pick(chans[0]);
+    return r;
+}
+
+// Rec.709 luminance, as the viewer's Y channel. (The same numbers in mask_luma.comp.)
+constexpr float kLumR = 0.2126f, kLumG = 0.7152f, kLumB = 0.0722f;
+
+MaskPlane maskPlane(const ImagePtr& m, const std::string& setting, bool allowGpu) {
+    MaskPlane p;
+    if (!m) return p;
+    const MaskChannel mc = resolveMaskChannel(m->channels, setting);
+    if (!mc.luma) {
+        p.img = m;
+        p.ch = mc.ch;
+        return p;
+    }
+    auto out = std::make_shared<Image>(m->bounds, ChannelSet{"luminance"});
+    p.img = out;
+    p.ch = 0;
+    const int r = m->ch("R"), g = m->ch("G"), b = m->ch("B"), nc = m->nch();
+    const size_t n = (size_t)m->bounds.area();
+    if (n == 0) return p;
+    // on the GPU for large regions (the router decides when it pays)
+    std::optional<gpu::Routed> rt;
+    if (allowGpu && nc > 0 && n >= 4096 && n < ((size_t)1 << 31) / (size_t)std::max(1, nc)) rt.emplace("mask_luma", 0, n);
+    if (rt && rt->gpu()) {
+        struct Push {
+            uint32_t n, width, stride;
+            int32_t r, g, b;
+        } push{(uint32_t)n, 4096, (uint32_t)nc, r, g, b};
+        const uint32_t rows = (uint32_t)((n + 4095) / 4096);
+        if (gpu::run("mask_luma", {{m->data.data(), m->data.size() * sizeof(float)}}, {{out->data.data(), n * sizeof(float)}}, &push,
+                     sizeof push, 4096 / 256, rows)) {
+            rt->done(true);
+            return p;
+        }
+    }
+    const float* src = m->data.data();
+    float* dst = out->data.data();
+    parallelFor((long)n, 1 << 14, [&](long i0, long i1) {
+        for (long i = i0; i < i1; ++i) {
+            const float* px = src + (size_t)i * nc;
+            const float vr = r >= 0 ? px[r] : 0.0f, vg = g >= 0 ? px[g] : 0.0f, vb = b >= 0 ? px[b] : 0.0f;
+            dst[i] = kLumR * vr + kLumG * vg + kLumB * vb;
+        }
+    });
+    if (rt) rt->done(false);
+    return p;
+}
+
 MaskMix MaskMix::setup(RenderArgs& a, Node* self, int maskInput) {
     MaskMix m;
     m.mix = std::clamp(self->params.num("mix", a.frame, 1.0), 0.0, 1.0);
     Node* mk = maskInput >= 0 ? self->input(maskInput) : nullptr;
     if (mk) {
-        m.mask = a.fetch(mk, a.region);
-        m.maskCh = m.mask->ch(self->params.str("mask_channel", "A"));
+        MaskPlane mp = maskPlane(a.fetch(mk, a.region), maskSetting(self));
+        m.mask = mp.img;
+        m.maskCh = mp.ch;
         m.invert = self->params.flag("invert_mask", false);
         m.fringe = self->params.flag("fringe", false);
     }

@@ -385,10 +385,10 @@ private:
         });
         // where the plate's grain is replaced: the mask, and (optionally) where the comp changed
         if (Node* mk = input(3)) {
-            ImagePtr m = a.fetch(mk, A);
-            int ch = m->ch(params.str("mask_channel", "A"));
-            if (ch < 0) ch = m->ch("A");
-            if (ch < 0) ch = m->ch("R");
+            MaskPlane mp = maskPlane(a.fetch(mk, A), maskSetting(this));
+            if (mp.ch < 0) mp = maskPlane(mp.img, "auto");  // (a channel it hasn't: as auto)
+            const ImagePtr m = mp.img;
+            const int ch = mp.ch;
             const bool inv = params.flag("invert_mask", false);
             if (ch >= 0)
                 for (int y = A.y1; y < A.y2; ++y)

@@ -1388,8 +1388,9 @@ public:
         TransformNode::render(a, out);
         if (!input(1)) return;
         ImagePtr src = a.fetch(input(0), a.region);
-        ImagePtr m = a.fetch(input(1), a.region);
-        const int mc = m->ch(resolveChannelName(params.str("mask_channel", "A")));
+        const MaskPlane mp = maskPlane(a.fetch(input(1), a.region), maskSetting(this));
+        const ImagePtr m = mp.img;
+        const int mc = mp.ch;
         const bool inv = params.flag("invert_mask", false);
         std::vector<int> map(out.nch());
         for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
@@ -1918,8 +1919,9 @@ public:
                     }
             }
         if (input(1)) {  // mask: back towards the input
-            ImagePtr m = a.fetch(input(1), a.region);
-            const int mc = m->ch(resolveChannelName(params.str("mask_channel", "A")));
+            const MaskPlane mp = maskPlane(a.fetch(input(1), a.region), maskSetting(this));
+            const ImagePtr m = mp.img;
+            const int mc = mp.ch;
             std::vector<int> smap(out.nch());
             for (int c = 0; c < out.nch(); ++c) smap[c] = src->ch(out.channels[c]);
             for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
