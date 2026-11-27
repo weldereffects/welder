@@ -625,11 +625,22 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
                               float def, ImGuiSliderFlags sliderFlags) {
         constexpr float fieldWidth = 52, sliderWidth = 90;
         const float labelWidth = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
-        nextSeg(labelWidth + fieldWidth + sliderWidth + 8);
+        const bool exposure = def == 0.0f;  // f/stop: arrows step a whole stop either way
+        nextSeg(labelWidth + fieldWidth + sliderWidth + (exposure ? 42 : 8));
         segBegin();
         ImGui::PushID(label);
+        if (exposure) {
+            if (ImGui::ArrowButton("##less", ImGuiDir_Left)) value = std::max(lo, value - 1);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One stop down");
+            ImGui::SameLine(0, 2);
+        }
         if (ImGui::Button(label)) value = def;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset %s to %g", label, def);
+        if (exposure) {
+            ImGui::SameLine(0, 2);
+            if (ImGui::ArrowButton("##more", ImGuiDir_Right)) value = std::min(hi, value + 1);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One stop up");
+        }
         ImGui::SameLine(0, 4);
         ImGui::SetNextItemWidth(fieldWidth);
         resettingDrag("##value", &value, speed, lo, hi, format, def);
