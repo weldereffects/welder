@@ -830,7 +830,20 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
         v.pan.y += before.y - after.y;
     }
     const bool midZoom = app.middleDragZooms || io.KeyAlt;  // middle-drag zoom: tablets without a wheel (issue #23)
-    if (ImGui::IsItemActive() && midZoom && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    // middle + left held together (a pen's side button, then the tip down) zooms, as in the node
+    // graph (#104); letting the tip up pans again
+    static ImVec2 penAnchor;
+    static bool penZoom = false;
+    const bool penBoth = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Middle) && ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    if (penBoth && !penZoom) penAnchor = io.MousePos;
+    penZoom = penBoth;
+    if (penZoom) {
+        const ImVec2 before = toImage(penAnchor);
+        v.zoom = std::clamp(v.zoom * std::pow(1.006f, io.MouseDelta.x - io.MouseDelta.y), 0.02f, 64.0f);
+        const ImVec2 after = toImage(penAnchor);
+        v.pan.x += before.x - after.x;
+        v.pan.y += before.y - after.y;
+    } else if (ImGui::IsItemActive() && midZoom && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
         const ImVec2 anchor = io.MouseClickedPos[ImGuiMouseButton_Middle];  // about where the drag started
         const ImVec2 before = toImage(anchor);
         v.zoom = std::clamp(v.zoom * std::pow(1.006f, io.MouseDelta.x - io.MouseDelta.y), 0.02f, 64.0f);
@@ -1060,45 +1073,45 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     } else if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
         ui.viewerImage = {res.image && v.tex && !v.texBounds.empty() ? v.tex : 0u, v.texBounds, v.texScale, dp};
-        drawRotoViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawRotoViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawPlanarViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawPlanarViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawTransformViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
-        drawKnobHandles(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawTransformViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
+        drawKnobHandles(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawViewer3DIn2D(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawViewer3DIn2D(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays && activeVanishCam(app)) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawVanishCamViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawVanishCamViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays && activeFlowField(app)) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawFlowPaintViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawFlowPaintViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (active && v.overlays && activeMarkup(app)) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawMarkupViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawMarkupViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (v.overlays && activeTrackMask(app)) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawTrackMaskViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawTrackMaskViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
         drawTrackMaskHud(app, ui, p0, p1);
     }
     if (v.overlays) {
         ViewXf xf{center, v.pan, v.zoom};
-        drawCamTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active);
+        drawCamTrackerViewer(app, ui, dl, p0, p1, xf, (v.hovered || ImGui::IsItemActive()) && !pk.active && !ImGui::IsMouseDown(ImGuiMouseButton_Middle));
     }
     if (!v.overlays) {  // Q hid the shapes and handles: say so, so a tool that ignores clicks isn't a mystery
         const char* t = "overlays off [Q]";

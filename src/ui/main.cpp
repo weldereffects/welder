@@ -1582,6 +1582,44 @@ int main(int argc, char** argv) {
                         std::printf("DRAG %s translate %s\n", n->name.c_str(), n->params.has("translate") ? n->params.data["translate"].dump().substr(0, 120).c_str() : "-");
                 }
         }
+        // STRATA_TEST_PEN=x,y: a pen's moves at that window position (#104): side button (middle) drag,
+        // then the tip (left) down too, then Ctrl held; prints the 2D and 3D viewers' view after each
+        bool penTest = false;
+        if (const char* tp = std::getenv("STRATA_TEST_PEN"); tp && *tp && !opt.screenshot.empty()) {
+            float x = 0, y = 0;
+            std::sscanf(tp, "%f,%f", &x, &y);
+            ImGuiIO& tio = ImGui::GetIO();
+            penTest = frameCount < 80;
+            static float px = 0, py = 0;
+            auto report = [&](const char* what) {
+                const View3DState& d = ui.v3d;
+                std::printf("PEN %s: 2D zoom %.3f pan %.1f %.1f | 3D dist %.3f yaw %.2f pitch %.2f coi %.3f %.3f %.3f\n", what, ui.viewer.zoom,
+                            ui.viewer.pan.x, ui.viewer.pan.y, d.dist, d.yaw, d.pitch, d.coi[0], d.coi[1], d.coi[2]);
+                std::fflush(stdout);
+            };
+            if (frameCount == 18) {
+                px = x, py = y;
+                tio.AddMousePosEvent(px, py);
+                report("start");
+            } else if (frameCount == 20) tio.AddMouseButtonEvent(2, true);
+            else if (frameCount > 20 && frameCount <= 30) tio.AddMousePosEvent(px += 4, py);
+            else if (frameCount == 31) report("middle drag");
+            else if (frameCount == 32) tio.AddMouseButtonEvent(0, true);
+            else if (frameCount > 32 && frameCount <= 42) tio.AddMousePosEvent(px, py -= 4);
+            else if (frameCount == 43) {
+                tio.AddMouseButtonEvent(0, false);
+                report("middle + left");
+            } else if (frameCount == 45) {
+                tio.AddKeyEvent(ImGuiMod_Ctrl, true);
+                tio.AddKeyEvent(ImGuiKey_LeftCtrl, true);
+            } else if (frameCount > 46 && frameCount <= 56) tio.AddMousePosEvent(px += 4, py);
+            else if (frameCount == 57) {
+                tio.AddMouseButtonEvent(2, false);
+                tio.AddKeyEvent(ImGuiMod_Ctrl, false);
+                tio.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+                report("ctrl + middle");
+            }
+        }
         // STRATA_TEST_FLOWPAINT=x0,y0,x1,y1: drag a curved stroke between two window positions
         // (Ctrl held when x0 is negative: erase), then print the FlowField's strokes
         bool flowTest = false;
@@ -2135,7 +2173,7 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !deepHoverTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !vanishTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !deepHoverTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !penTest && !markupTest && !vanishTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);
