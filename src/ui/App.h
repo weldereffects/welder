@@ -246,6 +246,8 @@ public:
     bool askMatchProject = true;  // the setting: offer to match the project to a new script's first Read
     bool rightAnglePipes = false; // the setting: node graph pipes drawn with square corners
     bool altDragCuts = true;      // the setting: Alt+drag in the node graph cuts pipes (off: it pans)
+    bool sidePorts = true;        // the setting: A and mask inputs on the side facing their source (B stays on top)
+    float graphSnapPx = 16;       // the setting: how near (screen px) a dragged node snaps into line with its pipes
     int rotoShowPoints = 0;       // the setting: roto points shown on the selected / current / hovered shapes (0) or on all (1)
     bool autoProxy = true;        // the setting: quick low-res previews of slow renders while you work (viewer toolbar, #126)
     bool middleDragZooms = false; // the setting: a middle-button drag zooms (tablets without a wheel); Alt+middle-drag always does
