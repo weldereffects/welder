@@ -160,6 +160,7 @@ struct GraphState {
     ImVec2 zoomAnchor;  // Zoom drag: the screen point that stays put
     bool comboZoom = false;  // the Zoom came from middle + left held together (back to a pan when left is let go)
     ImVec2 cutStart;    // Alt+drag: where the cutting line started (screen)
+    std::vector<ImVec2> cutPath;  // ... and the path the mouse took since (graph space: it stays put if the graph scrolls)
     std::string level;  // the group shown ("" = the top level)
     ImVec2 resizeOrig;  // backdrop size when a resize started
     ImVec2 dragStartScreen;
@@ -182,6 +183,7 @@ struct GraphState {
     int dragInput = -1;
     // snapping while moving: the line the dragged node lines up on (NaN: none) and where the other node is
     float snapX = 0, snapY = 0, snapXTo = 0, snapYTo = 0;
+    bool ctrlMadeDot = false;  // a Dot made with Ctrl+drag on a pipe: the Ctrl that made it doesn't stop its snapping
     std::string lastClicked;
     std::vector<std::string> selOrder;  // selection in click order (Y / Shift+Y)
     ImVec2 lastSize = {800, 400};
@@ -725,6 +727,8 @@ extern ImVec2 gTest3DOrigin, gTest3DSize;  // STRATA_TEST_SCENE3D: the (first) 3
 extern ImVec2 gTestDeepHover;  // STRATA_TEST_DEEPHOVER: the screen position of the pixel to rest on (Viewer.cpp)
 extern ImVec2 gTestXformCentre;  // STRATA_TEST_VIEWERCLICK: the open Transform's centre handle (TransformTool.cpp)
 bool graphTestPipe(App& app, UiState& ui, int frame);
+// Tests: where each of a node's inputs comes in, "label:side@x,y" (side T, L or R; graph units).
+std::string graphPortsText(App& app, const std::string& node);
 
 bool typingInText();
 void viewerUpload(ViewerState& v);  // rebuild the display texture

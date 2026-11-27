@@ -161,7 +161,7 @@ std::vector<KnobDef> retimeKnobs(bool rife) {
 
 std::vector<KnobDef> maskKnobs() {
     // the classic bottom rows: mask [channel] invert, (un)premult by [channel] invert, mix
-    return {Div(""), Width(S("mask_channel", "mask", "A"), 110), Same(B("invert_mask", "invert", false)),
+    return {Div(""), Width(S("mask_channel", "mask", "auto"), 110), Same(B("invert_mask", "invert", false)),
             Same(B("fringe", "fringe", false)), F("mix", "mix", 1.0, 0, 1)};
 }
 // colour nodes also have "(un)premult by"
@@ -169,7 +169,7 @@ std::vector<KnobDef> colorMask(std::vector<KnobDef> k) {
     k.push_back(Div(""));
     k.push_back(Width(C("unpremult", "(un)premult by", "none", {"none", "A"}), 110));
     k.push_back(Same(B("invert_unpremult", "invert", false)));
-    k.push_back(Width(S("mask_channel", "mask", "A"), 110));
+    k.push_back(Width(S("mask_channel", "mask", "auto"), 110));
     k.push_back(Same(B("invert_mask", "invert", false)));
     k.push_back(Same(B("fringe", "fringe", false)));
     k.push_back(F("mix", "mix", 1.0, 0, 1));
@@ -574,7 +574,7 @@ std::vector<NodeDef> build() {
                     "a degrain takes detail there too"),
                   I("sample_step", "sample every", 2, 1, 8),
                   Div("new grain"),
-                  Tip(S("mask_channel", "mask channel", "A"), "The mask input's channel: where the plate's own grain must not be used"),
+                  Tip(S("mask_channel", "mask channel", "auto"), "The mask input's channel: where the plate's own grain must not be used"),
                   Same(B("invert_mask", "invert", false)),
                   Tip(B("replace_changed", "also where the comp changed", false),
                       "New grain wherever the comp differs from the degrained plate (removed objects, moved elements)."),
@@ -1795,7 +1795,7 @@ std::vector<NodeDef> build() {
                   Same(Width(C("range_from", "range from", "B", {"B", "A"}), 56)),
                   Div("@card"), Ch("Achannels", "A channels", "rgba"), Ch("Bchannels", "B channels", "rgba"),
                   Ch("channels", "output", "rgba"), Ch("also_merge", "also merge", "none"),
-                  Div(""), Width(S("mask_channel", "mask", "A"), 110), Same(B("inject", "inject", false)),
+                  Div(""), Width(S("mask_channel", "mask", "auto"), 110), Same(B("inject", "inject", false)),
                   Same(B("invert_mask", "invert", false)), Same(B("fringe", "fringe", false)), F("mix", "mix", 1.0, 0, 1)},
                  "Inputs: B (main), A (merged on top), mask. Connecting A adds an A2 input."});
     d.push_back({"Premult", "Merge", withMask({Ch("channels", "channels", "rgb"), S("alpha", "by", "A")}), ""});
@@ -1803,7 +1803,7 @@ std::vector<NodeDef> build() {
     d.push_back({"Switch", "Merge", {I("which", "which", 0, 0, 10)}, ""});
     d.push_back({"Dissolve", "Merge", {F("which", "which", 0, 0, 1)}, ""});
     d.push_back({"KeyMix", "Merge",
-                 {Ch("channels", "channels", "all"), Width(S("mask_channel", "mask channel", "A"), 110),
+                 {Ch("channels", "channels", "all"), Width(S("mask_channel", "mask channel", "auto"), 110),
                   Same(B("invert_mask", "invert", false)), Width(C("bbox", "set bbox to", "union", {"union", "B", "A", "intersection"}), 110),
                   F("mix", "mix", 1, 0, 1)},
                  "A over B through the mask input's channel: B where the mask is 0, A where it is 1."});
@@ -1930,7 +1930,7 @@ std::vector<NodeDef> build() {
             if (x.type == "Transform") t = &x;
         std::vector<KnobDef> k = t ? t->knobs : std::vector<KnobDef>{};
         k.push_back(Div(""));
-        k.push_back(Width(S("mask_channel", "mask", "A"), 110));
+        k.push_back(Width(S("mask_channel", "mask", "auto"), 110));
         k.push_back(Same(B("invert_mask", "invert", false)));
         d.push_back({"TransformMasked", "Transform", k, "A Transform applied only where the mask input is (mixed back over the input elsewhere)."});
     }

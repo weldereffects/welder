@@ -326,6 +326,50 @@ void precompTabs(const Node* n, ImVec2& t0, ImVec2& t1, ImVec2& o0, ImVec2& o1) 
 // Where the nodes inside take what's piped into the top from.
 ImVec2 precompInnerPort(const Node* n) { return ImVec2(pos(n).x + size(n).x / 2, pos(n).y); }
 
+// Side ports (Preferences > Node Graph > A and mask inputs on the side, on by default): on a
+// node whose input 0 is B (Merge and the like), B stays top-centre, so the B pipe runs straight
+// down; A, A2... come in on the left or right side, whichever faces the node they come from, and
+// so do masks on every node. Unconnected: A on the left, mask on the right. A source within a
+// deadzone either side of the node's centre keeps the side it had (no flicker while it's dragged
+// over / under the node). The sides are display state only: nothing is saved.
+bool gSidePorts = true;
+constexpr float kSideDeadzone = 24;  // graph px either side of the node's centre
+std::map<std::pair<const Node*, int>, bool> gPortLeft;  // the side each port was last on
+
+bool bInputNode(const Node* n) { return n->maxInputs() > 1 && n->inputLabel(0) == "B"; }
+bool isALabel(const std::string& l) {
+    if (l.empty() || l[0] != 'A') return false;
+    for (size_t k = 1; k < l.size(); ++k)
+        if (!std::isdigit((unsigned char)l[k])) return false;
+    return true;
+}
+// Input i comes in on a side (an A on a B node, or a mask), with side ports on.
+bool sidePort(const Node* n, int i) {
+    if (!gSidePorts || Node::isKnobIndex(i)) return false;
+    const std::string l = n->inputLabel(i);
+    return l == "mask" || (isALabel(l) && bInputNode(n));
+}
+// The side a side port is on: towards its source, with the deadzone.
+bool portLeft(const Node* n, int i) {
+    const bool mask = n->inputLabel(i) == "mask";
+    auto key = std::make_pair(n, i);
+    const Node* src = n->input(i);
+    if (!src || !hasPos(src)) {
+        gPortLeft.erase(key);
+        return !mask;
+    }
+    const float cx = pos(n).x + size(n).x / 2, sx = pos(src).x + size(src).x / 2;
+    bool left;
+    if (sx < cx - kSideDeadzone) left = true;
+    else if (sx > cx + kSideDeadzone) left = false;
+    else {
+        auto it = gPortLeft.find(key);
+        left = it != gPortLeft.end() ? it->second : !mask;
+    }
+    gPortLeft[key] = left;
+    return left;
+}
+
 // Where input i enters the node, and the direction a stub points away from it.
 ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
     ImVec2 p = pos(n), s = size(n);
@@ -334,11 +378,7 @@ ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
         if (!precompOpen(n)) return ImVec2(p.x + s.x / 2, p.y);
         return i == 1 ? ImVec2(p.x + s.x / 2, p.y - kTabH) : ImVec2(p.x + s.x / 2, p.y + s.y);
     }
-    if (Node::isKnobIndex(i)) {  // exposed knobs: down the left side, one under the other
-        *dir = ImVec2(-1, 0);
-        return ImVec2(p.x, p.y + std::min(s.y * 0.5f, 10.0f) + 14.0f * (i - Node::kKnobBase));
-    }
-    std::string label = n->inputLabel(i);
+    std::string label = Node::isKnobIndex(i) ? std::string() : n->inputLabel(i);
     if (n->type == "Viewer") {  // ten pipes across the top, 1 on the left ... 0 on the right
         *dir = ImVec2(0, -1);
         return ImVec2(p.x + s.x * (i + 0.5f) / 10, p.y);
@@ -346,6 +386,41 @@ ImVec2 inputPoint(const Node* n, int i, ImVec2* dir) {
     if (n->type == "Dot") {  // pipes run through a Dot's centre, so a corner made with Dots is square
         *dir = ImVec2(0, -1);
         return ImVec2(p.x + s.x / 2, p.y + s.y / 2);
+    }
+    if (gSidePorts) {
+        // Side ports, one under the other on each side in input order (A, mask, A2, ...; exposed
+        // knobs last on the left), spread about the middle of the side.
+        const bool knob = Node::isKnobIndex(i);
+        if (knob || sidePort(n, i)) {
+            const bool left = knob || portLeft(n, i);
+            int at = 0, count = 0;
+            for (int k = 0; k < n->maxInputs(); ++k)
+                if (sidePort(n, k) && portLeft(n, k) == left) {
+                    if (k == i) at = count;
+                    ++count;
+                }
+            if (left) {
+                const int nk = (int)n->knobInputs.size();
+                if (knob) at = count + (i - Node::kKnobBase);
+                count += nk;
+            }
+            const float gap = count <= 1 ? 0.0f : std::clamp((s.y - 8) / (count - 1), 9.0f, 14.0f);
+            const float y0 = std::max(p.y + 4, p.y + s.y / 2 - gap * (count - 1) / 2);
+            *dir = ImVec2(left ? -1.0f : 1.0f, 0);
+            return ImVec2(left ? p.x : p.x + s.x, std::round(y0 + gap * at));
+        }
+        *dir = ImVec2(0, -1);
+        if (bInputNode(n)) {  // B top-centre; anything else along the top (a depth input) out to the right
+            if (i == 0) return ImVec2(std::round(p.x + s.x / 2), p.y);
+            int j = 0;
+            for (int k = 1; k < i; ++k)
+                if (!sidePort(n, k)) ++j;
+            return ImVec2(std::round(p.x + s.x * std::min(0.78f + 0.08f * j, 0.96f)), p.y);
+        }
+    }
+    if (Node::isKnobIndex(i)) {  // exposed knobs: down the left side, one under the other
+        *dir = ImVec2(-1, 0);
+        return ImVec2(p.x, p.y + std::min(s.y * 0.5f, 10.0f) + 14.0f * (i - Node::kKnobBase));
     }
     // Masks come in on the right side, one under the other; every other input along the top.
     int maskIdx = 0, topIdx = 0, tops = 0;
@@ -384,7 +459,7 @@ std::vector<ImVec2> pipeRoute(ImVec2 a, ImVec2 b, ImVec2 dir, bool square, float
     // into a side (a mask on the right, an exposed knob on the left)
     const float ex = b.x + dir.x * stub * 0.6f;
     const bool sourceOnThatSide = dir.x * (a.x - ex) > 0;
-    if (sourceOnThatSide && a.y < b.y) return {a, ImVec2(a.x, b.y), b};  // down, then across into the side
+    if (sourceOnThatSide && a.y < b.y + 0.5f) return {a, ImVec2(a.x, b.y), b};  // down (or level: straight), then across into the side
     const float ya = a.y < b.y ? std::round((a.y + b.y) / 2) : a.y + stub * 0.5f;
     return {a, ImVec2(a.x, ya), ImVec2(ex, ya), ImVec2(ex, b.y), b};
 }
@@ -559,6 +634,22 @@ void createNode(App& app, UiState& ui, const std::string& type, const json& para
 
 // STRATA_TEST_PIPE: drives the mouse to drag node "C" onto the A->B pipe, then
 // Ctrl-clicks the C->B pipe to make a Dot and drags it aside. Returns true while running.
+std::string graphPortsText(App& app, const std::string& name) {
+    const Node* n = app.node(name);
+    if (!n) return "(none)";
+    gSidePorts = app.sidePorts;
+    std::string r;
+    for (int i = 0; i < n->maxInputs(); ++i) {
+        ImVec2 dir;
+        const ImVec2 p = inputPoint(n, i, &dir);
+        const char* side = dir.x < 0 ? "L" : dir.x > 0 ? "R" : "T";
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "%s%s:%s@%.0f,%.0f", r.empty() ? "" : " ", n->inputLabel(i).c_str(), side, p.x, p.y);
+        r += buf;
+    }
+    return r;
+}
+
 bool graphTestPipe(App& app, UiState& ui, int frame) {
     static const bool on = std::getenv("STRATA_TEST_PIPE") != nullptr;
     if (!on || frame > 46) return false;
@@ -1063,13 +1154,15 @@ Laid layTree(Node* n, const std::set<Node*>& sel, std::set<Node*>& done) {
         const float dx = inputPoint(n, 0, &dir).x - (pos(n).x + s.x / 2);
         L.add(M, dx, -kAlignGapY - size(m).y);
     }
-    // A (and A2...) and masks: up to the right, where their ports are
+    // A (and A2...) and masks: up to the right, where their ports are; with side ports on, A
+    // up to the left (its port's side when nothing pulls it over) and masks to the right
     std::vector<Node*> left, right, knobs;
     const int nin = std::max(n->maxInputs(), (int)n->inputs.size());
     for (int i = 1; i < nin; ++i) {
         Node* in = n->input(i);
         if (!take(in)) continue;
-        right.push_back(in);
+        const bool toLeft = gSidePorts && sidePort(n, i) && n->inputLabel(i) != "mask";
+        (toLeft ? left : right).push_back(in);
     }
     for (auto& [k, in] : n->knobInputs)
         if (take(in)) knobs.push_back(in);
@@ -1095,6 +1188,7 @@ Laid layTree(Node* n, const std::set<Node*>& sel, std::set<Node*>& done) {
 
 void graphAutoAlign(App& app, UiState& ui) {
     Comp& comp = *app.comp;
+    gSidePorts = app.sidePorts;
     const std::string level = ui.graph.level;
     std::set<Node*> sel;
     for (auto& up : comp.nodes) {
@@ -1720,6 +1814,7 @@ void drawNodeGraph(App& app, UiState& ui) {
     ImGui::PopStyleVar();
     ui.noteHover("Node Graph");
     Comp& comp = *app.comp;
+    gSidePorts = app.sidePorts;
     autoLayout(comp);
     if (!g.level.empty()) {  // the group shown was deleted, renamed or isn't a group any more
         Node* lg = comp.find(g.level);
@@ -2070,9 +2165,11 @@ void drawNodeGraph(App& app, UiState& ui) {
             } else if (i < n->maxInputs() && isMask) {  // the classic side tab: drag from it to connect a mask
                 const float t = 6 * std::max(0.6f, g.zoom);
                 ImVec2 b = S(ip);
-                ImVec2 tip(b.x + 1 * g.zoom, b.y), back(b.x + t * 1.3f, b.y);
-                dl->AddTriangleFilled(tip, ImVec2(back.x, back.y - t * 0.75f), ImVec2(back.x, back.y + t * 0.75f), IM_COL32(150, 160, 175, 220));
-                handles.push_back({n, i, ImVec2(b.x + t * 0.9f, b.y)});
+                const float sd = dir.x < 0 ? -1.0f : 1.0f;  // (a mask on the left side, too)
+                ImVec2 tip(b.x + sd * g.zoom, b.y), back(b.x + sd * t * 1.3f, b.y);
+                const ImVec2 u(back.x, back.y - t * 0.75f * sd), v(back.x, back.y + t * 0.75f * sd);  // (same winding either side)
+                dl->AddTriangleFilled(tip, u, v, IM_COL32(150, 160, 175, 220));
+                handles.push_back({n, i, ImVec2(b.x + sd * t * 0.9f, b.y)});
             } else if (knob) {  // an exposed knob waiting for a value: a short stub in the Value colour, named
                 ImVec2 a = S(ImVec2(ip.x - kStub * 0.6f, ip.y)), b = S(ip);
                 const ImU32 vc = categoryColor("Value");
@@ -2096,7 +2193,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 arrow(b, a, sc);
                 handles.push_back({n, i, a});
                 // (a mask's or a spare A2's name only close up: it would sit on its neighbour's)
-                if (drawText && !label.empty() && ((!isMask && dir.y < 0 && i < 2) || g.zoom > 0.9f || (!isMask && dir.y >= 0))) {
+                if (drawText && !label.empty() && ((!isMask && i < 2) || g.zoom > 0.9f)) {
                     ImVec2 ts = font->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, label.c_str());
                     ImVec2 tp(a.x - ts.x / 2 + dir.x * (ts.x / 2 + 3), a.y - ts.y - 1);
                     dl->AddText(font, fs * 0.85f, tp, IM_COL32(190, 190, 190, 220), label.c_str());
@@ -2461,6 +2558,7 @@ void drawNodeGraph(App& app, UiState& ui) {
             if (!app.selection.count(altHit->name)) app.selection = {altHit->name};
             g.dragStartScreen = io.MousePos;
             g.drag = GraphState::Drag::Move;
+            g.ctrlMadeDot = false;
             g.shake = GraphState::Shake();
             g.shake.done = true;  // (no shaking the fresh copies out of anything)
             g.moved = true;       // graphDuplicate takes the undo step
@@ -2469,6 +2567,7 @@ void drawNodeGraph(App& app, UiState& ui) {
         } else if (io.KeyAlt && !io.KeyCtrl && app.altDragCuts && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             g.drag = GraphState::Drag::Cut;  // Alt+drag across pipes: cut them
             g.cutStart = io.MousePos;
+            g.cutPath = {mouseG};
         } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle) && (app.middleDragZooms || io.KeyAlt)) {
             g.drag = GraphState::Drag::Zoom;  // (tablets: a pen has no wheel, issue #23)
             g.zoomAnchor = io.MousePos;
@@ -2502,6 +2601,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 app.selection = {name};
                 g.drag = GraphState::Drag::Move;
                 g.moved = true;  // the checkpoint is taken
+                g.ctrlMadeDot = true;  // (still holding the Ctrl that made it: it snaps all the same)
                 g.moveOrig.clear();
                 g.moveOrig[name] = gp;
             } else if (corner) {
@@ -2538,6 +2638,7 @@ void drawNodeGraph(App& app, UiState& ui) {
                 }
                 if (app.selection.count(hit->name)) g.selOrder.push_back(hit->name);
                 g.drag = GraphState::Drag::Move;
+                g.ctrlMadeDot = false;
                 g.shake = GraphState::Shake();
                 g.moveOrig.clear();
                 for (auto& s : app.selection)
@@ -2603,27 +2704,43 @@ void drawNodeGraph(App& app, UiState& ui) {
 
     switch (g.drag) {
         case GraphState::Drag::Cut: {
-            // the cutting line, and the pipes it crosses lit up; let go to cut them
+            // the cutting stroke (the path the mouse takes, freehand), and the pipes it crosses lit
+            // up; let go to cut them all, one undo step
             auto crosses = [](ImVec2 p, ImVec2 q, ImVec2 a, ImVec2 b) {
                 auto side = [](ImVec2 o, ImVec2 u, ImVec2 v) { return (u.x - o.x) * (v.y - o.y) - (u.y - o.y) * (v.x - o.x); };
                 const float d1 = side(p, q, a), d2 = side(p, q, b), d3 = side(a, b, p), d4 = side(a, b, q);
                 return ((d1 > 0) != (d2 > 0)) && ((d3 > 0) != (d4 > 0));
             };
-            const ImVec2 p = g.cutStart, q = io.MousePos;
+            if (g.cutPath.empty()) g.cutPath.push_back(mouseG);
+            {  // a new point once the mouse has gone a few pixels on
+                const ImVec2 last = S(g.cutPath.back());
+                if (std::hypot(io.MousePos.x - last.x, io.MousePos.y - last.y) >= 3.0f) g.cutPath.push_back(mouseG);
+            }
+            std::vector<ImVec2> stroke;
+            for (const ImVec2& gp : g.cutPath) stroke.push_back(S(gp));
+            stroke.push_back(io.MousePos);
             std::vector<const Pipe*> cut;
-            for (auto& pp : pipes)
-                for (size_t k = 0; k + 1 < pp.pts.size(); ++k)
-                    if (crosses(p, q, pp.pts[k], pp.pts[k + 1])) {
-                        cut.push_back(&pp);
-                        break;
-                    }
+            for (auto& pp : pipes) {
+                bool hit = false;
+                for (size_t k = 0; k + 1 < pp.pts.size() && !hit; ++k)
+                    for (size_t m = 0; m + 1 < stroke.size() && !hit; ++m) hit = crosses(stroke[m], stroke[m + 1], pp.pts[k], pp.pts[k + 1]);
+                if (hit) cut.push_back(&pp);
+            }
             const ImU32 red = IM_COL32(235, 80, 70, 255);
             for (const Pipe* pp : cut) dl->AddPolyline(pp->pts.data(), (int)pp->pts.size(), red, 0, 3.0f);
-            {  // dashed
-                const float len = std::max(1.0f, std::hypot(q.x - p.x, q.y - p.y));
-                const ImVec2 d((q.x - p.x) / len, (q.y - p.y) / len);
-                for (float t = 0; t < len; t += 10)
-                    dl->AddLine(ImVec2(p.x + d.x * t, p.y + d.y * t), ImVec2(p.x + d.x * std::min(len, t + 6), p.y + d.y * std::min(len, t + 6)), red, 2.0f);
+            {  // dashed, the dashes running on round the stroke's bends
+                float phase = 0;
+                for (size_t m = 0; m + 1 < stroke.size(); ++m) {
+                    const ImVec2 p = stroke[m], q = stroke[m + 1];
+                    const float len = std::hypot(q.x - p.x, q.y - p.y);
+                    if (len < 1e-3f) continue;
+                    const ImVec2 d((q.x - p.x) / len, (q.y - p.y) / len);
+                    for (float t = -phase; t < len; t += 10) {
+                        const float t0 = std::max(0.0f, t), t1 = std::min(len, t + 6);
+                        if (t1 > t0) dl->AddLine(ImVec2(p.x + d.x * t0, p.y + d.y * t0), ImVec2(p.x + d.x * t1, p.y + d.y * t1), red, 2.0f);
+                    }
+                    phase = std::fmod(phase + len, 10.0f);
+                }
             }
             ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -2672,9 +2789,13 @@ void drawNodeGraph(App& app, UiState& ui) {
             }
             // Snapping (the classic): the node under the cursor lines up with a node nearby - its centre
             // under / over another's (x), or level with one (y) - when it comes within a few pixels;
-            // drag on past and it lets go. Connected nodes first. Ctrl held: no snapping.
+            // drag on past and it lets go. Connected nodes first. Ctrl held: no snapping (except the
+            // Ctrl still held from making a Dot with Ctrl+drag: let go and press it again to place it freely).
+            // A Dot's centre is its port, so it snaps under / level with the ports it's piped to: square corners.
             g.snapX = g.snapY = std::numeric_limits<float>::quiet_NaN();
-            if (g.moved && !io.KeyCtrl) {
+            if (!io.KeyCtrl) g.ctrlMadeDot = false;
+            const float snapPx = app.graphSnapPx;
+            if (g.moved && (!io.KeyCtrl || g.ctrlMadeDot) && snapPx > 0) {
                 Node* lead = nullptr;
                 const ImVec2 start = G(g.dragStartScreen);
                 for (auto& [name, p] : g.moveOrig)
@@ -2732,9 +2853,9 @@ void drawNodeGraph(App& app, UiState& ui) {
                     // the closest within reach on each axis; pipes and linked nodes reach further
                     float bestX = 1e9f, bestY = 1e9f, sx = 0, sy = 0;
                     for (const Target& t : targets) {
-                        const float thr = (t.linked ? 16.0f : 10.0f) / g.zoom;
+                        const float thr = (t.linked ? snapPx : snapPx * 0.625f) / g.zoom;
                         const float dd = t.v - (t.xAxis ? cx : cy);
-                        const float score = std::fabs(dd) - (t.linked ? 6.0f / g.zoom : 0.0f);  // linked wins a near-tie
+                        const float score = std::fabs(dd) - (t.linked ? snapPx * 0.375f / g.zoom : 0.0f);  // linked wins a near-tie
                         if (std::fabs(dd) >= thr) continue;
                         if (t.xAxis && score < bestX) {
                             bestX = score;

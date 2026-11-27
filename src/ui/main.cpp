@@ -1307,6 +1307,7 @@ int main(int argc, char** argv) {
             static ImGuiKey held = ImGuiKey_None;
             static bool heldShift = false, heldCtrl = false;
             static float drag[4] = {0, 0, 0, 0};
+            static std::vector<float> gstroke;  // gdrag / gstroke: the path (screen)
             static bool dragging = false;
             if (frameCount >= start && frameCount < end) {
                 const int step = (frameCount - start) / per, k = (frameCount - start) % per;
@@ -1392,6 +1393,10 @@ int main(int argc, char** argv) {
                         tio.AddKeyEvent(ImGuiKey_LeftAlt, arg == "1");
                     } else if (what == "rightangle") {  // Preferences: right-angle pipes on (1) / off (0)
                         app.rightAnglePipes = arg == "1";
+                    } else if (what == "sideports") {  // Preferences: A and mask inputs on the side on (1) / off (0)
+                        app.sidePorts = arg == "1";
+                    } else if (what == "ports") {  // where a node's inputs come in (side and graph position)
+                        std::printf("KEYS ports %s: %s\n", arg.c_str(), graphPortsText(app, arg).c_str());
                     } else if (what == "inputs") {  // a node's inputs, by name
                         if (Node* in = app.node(arg)) {
                             std::string s;
@@ -1439,6 +1444,28 @@ int main(int argc, char** argv) {
                         std::string sel;
                         for (auto& x : app.selection) sel += x + " ";
                         std::printf("KEYS   selected [%s] hover panel '%s' mouse %.0f,%.0f popup %d hoveredWin %s\n", sel.c_str(), ui.hoverPanel.c_str(), tio.MousePos.x, tio.MousePos.y, (int)ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId), GImGui->HoveredWindow ? GImGui->HoveredWindow->Name : "-");
+                    } else if (what == "ctrl") {  // Ctrl held (1) or let go (0)
+                        tio.AddKeyEvent(ImGuiMod_Ctrl, arg == "1");
+                        tio.AddKeyEvent(ImGuiKey_LeftCtrl, arg == "1");
+                    } else if (what == "gdrag" || what == "gstroke") {
+                        // gdrag=x0,y0,x1,y1 in node graph units; gstroke=x0,y0,x1,y1,...: a drag through
+                        // each point in turn (an Alt+drag cut's freehand path)
+                        gstroke.clear();
+                        for (size_t q = 0; q <= arg.size();) {
+                            size_t e = arg.find(',', q);
+                            if (e == std::string::npos) e = arg.size();
+                            gstroke.push_back((float)std::atof(arg.substr(q, e - q).c_str()));
+                            q = e + 1;
+                        }
+                        const GraphState& g = ui.graph;
+                        for (size_t q = 0; q + 1 < gstroke.size(); q += 2) {
+                            gstroke[q] = g.canvasOrigin.x + (gstroke[q] - g.pan.x) * g.zoom;
+                            gstroke[q + 1] = g.canvasOrigin.y + (gstroke[q + 1] - g.pan.y) * g.zoom;
+                        }
+                        if (gstroke.size() >= 4) {
+                            tio.AddMousePosEvent(gstroke[0], gstroke[1]);
+                            dragging = true;
+                        }
                     } else if (what == "dragnode") {  // dragnode=Node,dx,dy: drag a node by its middle, dx / dy in screen pixels
                         char nm[128] = {};
                         float dx = 0, dy = 0;
@@ -1485,6 +1512,19 @@ int main(int argc, char** argv) {
                         const float a = (k - 1) / 9.0f * 6.2831853f;
                         tio.AddMousePosEvent(drag[0] + drag[2] * std::cos(a), drag[1] + drag[2] * std::sin(a));
                     } else if (k == 11) {
+                        tio.AddMouseButtonEvent(0, false);
+                        dragging = false;
+                    }
+                } else if ((what == "gdrag" || what == "gstroke") && dragging) {
+                    const int pts = (int)gstroke.size() / 2;
+                    if (k == 2) tio.AddMouseButtonEvent(0, true);
+                    else if (k > 2 && k < 10) {  // along the path, through each point
+                        const float u = (k - 2) / 7.0f * (pts - 1);
+                        const int s0 = std::min(pts - 2, (int)u);
+                        const float f = u - s0;
+                        tio.AddMousePosEvent(gstroke[2 * s0] + (gstroke[2 * s0 + 2] - gstroke[2 * s0]) * f,
+                                             gstroke[2 * s0 + 1] + (gstroke[2 * s0 + 3] - gstroke[2 * s0 + 1]) * f);
+                    } else if (k == 10) {
                         tio.AddMouseButtonEvent(0, false);
                         dragging = false;
                     }

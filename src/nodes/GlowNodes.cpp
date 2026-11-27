@@ -137,7 +137,12 @@ private:
         // the highlights: a luminance key (times the mask), premultiplied, scaled so the levels sum to `intensity`
         ImagePtr src = a.fetch(input(0), in);
         ImagePtr mask = input(1) ? a.fetch(input(1), in) : nullptr;
-        const int mA = mask ? (mask->ch("A") >= 0 ? mask->ch("A") : mask->ch("R")) : -1;
+        int mA = -1;
+        if (mask) {  // (alpha, else luminance, else red: resolveMaskChannel's auto)
+            const MaskPlane mp = maskPlane(mask, "auto");
+            mask = mp.img;
+            mA = mp.ch;
+        }
         const double fo = std::max(params.num("falloff", f, 0.75) / 2 + 0.5, 0.0001);
         double norm = 0;
         for (int k = 1; k <= kLevels; ++k) norm += std::pow(fo, k);
@@ -239,7 +244,12 @@ public:
         const int oc[4] = {out.ch("R"), out.ch("G"), out.ch("B"), out.ch("A")};
         const std::string view = params.str("output", "output");
         ImagePtr mask = (view == "output" && input(2)) ? a.fetch(input(2), a.region) : nullptr;
-        const int mA = mask ? (mask->ch("A") >= 0 ? mask->ch("A") : mask->ch("R")) : -1;
+        int mA = -1;
+        if (mask) {  // (alpha, else luminance, else red: resolveMaskChannel's auto)
+            const MaskPlane mp = maskPlane(mask, "auto");
+            mask = mp.img;
+            mA = mp.ch;
+        }
         const int n = out.nch();
         for (int y = a.region.y1; y < a.region.y2 && (Engine::cancelPoint(), true); ++y) {
             float* o = out.row(y);

@@ -337,9 +337,21 @@ struct Writer {
             if (has(sp)) put(nkKnob ? nkKnob : sp, p[sp]);
         };
         auto raw = [&](const std::string& knob, const std::string& text) { b.knobs.push_back({knob, text}); };
+        auto maskChannel = [&](const char* nkKnob) {
+            // auto (Welder's default: alpha, else luminance, else red) goes as Nuke's default, alpha
+            if (!has("mask_channel") || !p["mask_channel"].is_string()) return;
+            std::string mc = p["mask_channel"].get<std::string>(), l = mc;
+            for (auto& ch : l) ch = (char)std::tolower((unsigned char)ch);
+            if (l == "auto" || l.empty()) return;
+            if (l == "luminance" || l == "luma" || l == "lum") {
+                warnings.push_back(name + ": mask from luminance has no Nuke equivalent; exported as the mask's alpha");
+                return;
+            }
+            raw(nkKnob, nkChannel(mc));
+        };
         auto mixMask = [&] {
             copy("mix");
-            if (has("mask_channel")) raw("maskChannelInput", nkChannel(p["mask_channel"].get<std::string>()));
+            maskChannel("maskChannelInput");
             if (p.value("invert_mask", false)) raw("invert_mask", "true");
             if (p.value("fringe", false)) raw("fringe", "true");
         };
@@ -920,6 +932,7 @@ struct Writer {
                 const json& v = p[pk];
                 const std::string nk = kind.second.empty() ? pk : kind.second;
                 if (kind.first == "ch") raw(nk, nkChannels(v));
+                else if (pk == "mask_channel") maskChannel(nk.c_str());
                 else if (kind.first == "chname" && v.is_string()) raw(nk, nkChannel(v.get<std::string>()));
                 else if (kind.first == "lut" && v.is_object()) {
                     std::string t = "{";

@@ -99,7 +99,7 @@ sheet edit all of this.
 Colour knobs are ordered R, G, B, A. Channels on other layers use component 0 of vector knobs.
 
 Most per-pixel nodes also take `mix` and an optional mask input (input 1 for
-colour/filter nodes, input 2 for Merge/Copy) with `mask_channel` (default `A`), `invert_mask` and `fringe` (only the mask's soft edge); colour nodes also take `unpremult` (a channel: divide by it before, multiply after) and `invert_unpremult`
+colour/filter nodes, input 2 for Merge/Copy) with `mask_channel` (default `auto`: the mask image's alpha, else its luminance (a Y channel, or Rec.709 of R G B), else R, else its first channel; or a channel by name, or `luminance`), `invert_mask` and `fringe` (only the mask's soft edge); colour nodes also take `unpremult` (a channel: divide by it before, multiply after) and `invert_unpremult`
 and `invert_mask`.
 
 ## Nodes

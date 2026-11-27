@@ -32,6 +32,29 @@ ChannelSet channelsToCreate(const std::string& text);
 // {"intensity": [r, g, b, a], "crop": [x1, y1, x2, y2], "max": [x, y, r, g, b], "min": [...]}.
 json curveToolFrame(Engine& e, Node* curveTool, double frame);
 
+// Which channel of a mask input's image drives the mask, by the node's mask_channel knob.
+// "auto" (the default; an unset knob means it too) falls back in order: the image's alpha (A);
+// a luminance channel it has (Y / luminance / luma); Rec.709 luminance of its R, G and B; R; its
+// first channel. It goes by which channels the image has, never by their values, so a matte that
+// is black on some frames keeps its channel. Anything else is that channel, as typed ("A",
+// "rgba.red", "mask.a"), or "luminance" (Rec.709 of R G B, a missing one counting as 0).
+struct MaskChannel {
+    int ch = -1;         // the image's channel (-1: none, or luminance)
+    bool luma = false;   // Rec.709 luminance of R G B
+    std::string name;    // what it resolved to: "A", "luminance", "R", "mask.a", ... ("" none)
+};
+MaskChannel resolveMaskChannel(const ChannelSet& chans, const std::string& setting);
+// The mask as an image and the channel to read: the image itself for a plain channel, a new
+// one-channel image of the luminance for luma (on the GPU for large regions: mask_luma.comp, the
+// same numbers as the CPU). ch -1: no channel (the mask reads 0).
+struct MaskPlane {
+    ImagePtr img;
+    int ch = -1;
+};
+MaskPlane maskPlane(const ImagePtr& m, const std::string& setting, bool allowGpu = true);
+// The mask knob's value on a node ("auto" when unset).
+inline std::string maskSetting(const Node* n) { return n->params.str("mask_channel", "auto"); }
+
 // Mix/mask: blend `out` back towards `src` by (1 - mix * mask) per pixel for
 // the channels in `affected`. Mask input is optional.
 struct MaskMix {

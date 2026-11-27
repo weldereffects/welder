@@ -1,0 +1,27 @@
+// A mask's Rec.709 luminance (nodes/NodeUtils.cpp maskPlane): the image's pixels (`stride`
+// channels each, interleaved) to one value each, 0.2126 R + 0.7152 G + 0.0722 B, a missing channel
+// (index -1) counting as 0. `precise` keeps the sum in the CPU's order, so both give the same numbers.
+// The pixels are a flat list, `width` to a row of work groups.
+#version 450
+layout(local_size_x = 256, local_size_y = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer I { float im[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer O { float o[]; };
+
+layout(push_constant) uniform P {
+    uint n, width, stride;
+    int r, g, b;
+} p;
+
+void main() {
+    uint i = gl_GlobalInvocationID.y * p.width + gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    uint base = i * p.stride;
+    float vr = p.r >= 0 ? im[base + uint(p.r)] : 0.0;
+    float vg = p.g >= 0 ? im[base + uint(p.g)] : 0.0;
+    float vb = p.b >= 0 ? im[base + uint(p.b)] : 0.0;
+    precise float y = 0.2126 * vr;
+    y = y + 0.7152 * vg;
+    y = y + 0.0722 * vb;
+    o[i] = y;
+}

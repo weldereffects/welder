@@ -1007,6 +1007,68 @@ int main(int argc, char** argv) {
         CHECK(aimg->ch("A") >= 0 && std::fabs(px(aimg, 1, 1, "A") - 1) < 1e-6);
     });
 
+    test("Mask channel auto: alpha, else luminance, else red; an explicit channel as set; GPU luma = CPU", [] {
+        // the fallback, by which channels the mask image has
+        auto rc = [](const ChannelSet& cs, const std::string& set) { return resolveMaskChannel(cs, set); };
+        CHECK(rc({"R", "G", "B", "A"}, "auto").name == "A");
+        CHECK(rc({"R", "G", "B"}, "auto").luma);
+        CHECK(rc({"R", "G", "B", "Y"}, "auto").name == "Y");  // a luminance channel it has
+        CHECK(rc({"R", "G"}, "auto").name == "R");
+        CHECK(rc({"R"}, "").name == "R");                      // unset reads as auto
+        CHECK(rc({"depth.Z"}, "auto").name == "depth.Z");      // nothing else: its first channel
+        CHECK(rc({}, "auto").ch == -1);
+        CHECK(rc({"R", "G", "B"}, "A").ch == -1);              // explicit: as set, even when missing
+        CHECK(rc({"R", "G", "B", "A"}, "rgba.red").name == "R");
+        CHECK(rc({"R", "G", "B", "A"}, "luminance").luma);
+        // end to end: a Grade (gain 2) masked by RGBA, RGB-only and R-only images
+        auto c = comp(json::array({
+            {{"name", "P"}, {"type", "Constant"}, {"params", {{"color", {0.4, 0.4, 0.4, 1}}}}},
+            {{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.25, 0.5, 0.75, 0.5}}}}},
+            {{"name", "Krgb"}, {"type", "Remove"}, {"inputs", {"K"}}, {"params", {{"channels", "alpha"}}}},
+            {{"name", "Kr"}, {"type", "Remove"}, {"inputs", {"K"}}, {"params", {{"operation", "keep"}, {"channels", "R"}}}},
+            {{"name", "GA"}, {"type", "Grade"}, {"inputs", {"P", "K"}}, {"params", {{"gain", 2}}}},
+            {{"name", "GL"}, {"type", "Grade"}, {"inputs", {"P", "Krgb"}}, {"params", {{"gain", 2}}}},
+            {{"name", "GR"}, {"type", "Grade"}, {"inputs", {"P", "Kr"}}, {"params", {{"gain", 2}}}},
+            {{"name", "GxA"}, {"type", "Grade"}, {"inputs", {"P", "Krgb"}}, {"params", {{"gain", 2}, {"mask_channel", "A"}}}},
+            {{"name", "GxL"}, {"type", "Grade"}, {"inputs", {"P", "K"}}, {"params", {{"gain", 2}, {"mask_channel", "luminance"}}}},
+            {{"name", "MkL"}, {"type", "KeyMix"}, {"inputs", {"P", "K", "Krgb"}}},
+        }));
+        const double luma = 0.2126 * 0.25 + 0.7152 * 0.5 + 0.0722 * 0.75;
+        auto at = [&](const char* n) { return px(render(*c, n), 3, 3, "R"); };
+        CHECK_NEAR(at("GA"), 0.4 + 0.4 * 0.5, 1e-5);
+        CHECK_NEAR(at("GL"), 0.4 + 0.4 * luma, 1e-5);
+        CHECK_NEAR(at("GR"), 0.4 + 0.4 * 0.25, 1e-5);
+        CHECK_NEAR(at("GxA"), 0.4, 1e-6);  // no alpha, A asked for: no effect, as before
+        CHECK_NEAR(at("GxL"), 0.4 + 0.4 * luma, 1e-5);
+        CHECK_NEAR(at("MkL"), 0.4 + (0.25 - 0.4) * luma, 1e-5);
+        // .nk: auto writes no mask channel (Nuke's default, alpha); an explicit one as before
+        json nodes = json::parse(R"([{"name": "M", "type": "Radial"}, {"name": "Pl", "type": "Constant"},
+            {"name": "G1", "type": "Grade", "inputs": ["Pl", "M"], "params": {"mask_channel": "auto"}},
+            {"name": "G2", "type": "Grade", "inputs": ["Pl", "M"], "params": {"mask_channel": "R"}}])");
+        const std::string t = nk::exportNodes(nodes).text;
+        CHECK(t.find("maskChannelInput rgba.red") != std::string::npos);
+        CHECK(t.find("maskChannelInput auto") == std::string::npos);
+        // the luminance plane: GPU and CPU give the same numbers
+        auto img = std::make_shared<Image>(Box(0, 0, 300, 200), ChannelSet{"R", "G", "B", "depth.Z"});
+        for (size_t i = 0; i < img->data.size(); ++i) img->data[i] = (float)((i * 2654435761u) % 10007) / 3001.0f - 0.7f;
+        const MaskPlane cpu = maskPlane(img, "auto", false);
+        CHECK(cpu.ch == 0 && cpu.img && cpu.img->nch() == 1);
+        CHECK_NEAR(cpu.img->at(17, 9, 0), 0.2126f * img->at(17, 9, 0) + 0.7152f * img->at(17, 9, 1) + 0.0722f * img->at(17, 9, 2), 1e-6);
+        if (gpu::available()) {
+            gpu::setRoute(gpu::RouteMode::Gpu);
+            const auto jobs = gpu::routedGpuJobs("mask_luma");
+            const MaskPlane g = maskPlane(img, "auto", true);
+            gpu::setRoute(gpu::RouteMode::Auto);
+            CHECK(gpu::routedGpuJobs("mask_luma") > jobs);
+            double worst = 0;
+            for (size_t i = 0; i < cpu.img->data.size(); ++i) worst = std::max(worst, (double)std::fabs(cpu.img->data[i] - g.img->data[i]));
+            std::printf("    mask luma: max |cpu - gpu| %g\n", worst);
+            CHECK(worst == 0);
+        } else {
+            std::printf("    (no GPU: the GPU half skipped)\n");
+        }
+    });
+
     test("Grade reverse and (un)premult by; Saturation luminance math; Copy layers; Reformat types", [] {
         auto c = comp(json::array({
             {{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.25, 0.5, 0.75, 0.5}}}}},

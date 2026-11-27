@@ -955,6 +955,17 @@ static void drawPreferences(App& app, UiState& ui) {
     if (kit::checkbox("Right-angle pipes", &app.rightAnglePipes,
                       "Pipes run straight down and across with square corners, instead of in straight lines from node to node"))
         app.saveSettings();
+    if (kit::checkbox("A and mask inputs on the side", &app.sidePorts,
+                      "B stays on top of Merge-type nodes, so the B pipe runs straight down. A inputs (A2, A3...) and masks\n"
+                      "come in on the left or right side, whichever faces the node they come from.\n"
+                      "Unconnected, A waits on the left and a mask on the right. Off: A along the top, masks on the right."))
+        app.saveSettings();
+    ImGui::SetNextItemWidth(160);
+    ImGui::SliderFloat("Snap distance", &app.graphSnapPx, 0, 40, app.graphSnapPx <= 0 ? "off" : "%.0f px");
+    if (ImGui::IsItemDeactivatedAfterEdit()) app.saveSettings();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("A dragged node or Dot snaps into line with the ports it's piped to when it comes this near\n"
+                          "(straight pipes, and square 90-degree corners at Dots). Hold Ctrl while dragging to place it freely.");
     if (kit::checkbox("Middle-drag zooms", &app.middleDragZooms,
                       "A middle-button drag zooms the node graph and the viewers (drag right or up to zoom in),\n"
                       "for tablet pens without a scroll wheel. Off: it pans, as before. Alt+middle-drag always zooms,\n"
@@ -962,7 +973,7 @@ static void drawPreferences(App& app, UiState& ui) {
                       "Alt+left-drag still pans."))
         app.saveSettings();
     if (kit::checkbox("Alt+drag cuts pipes", &app.altDragCuts,
-                      "Alt+drag across pipes in the node graph to disconnect them (one undo step).\n"
+                      "Alt+drag a stroke across pipes in the node graph to disconnect every pipe it crosses (one undo step).\n"
                       "Off: Alt+drag pans the graph. The middle mouse button always pans."))
         app.saveSettings();
     {

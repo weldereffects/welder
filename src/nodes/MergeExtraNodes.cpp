@@ -105,8 +105,9 @@ public:
         std::vector<int> idx;
         for (auto& c : sel)
             if (out.ch(c) >= 0) idx.push_back(out.ch(c));
-        ImagePtr M = a.fetch(input(2), a.region);
-        const int mc = M->ch(resolveChannelName(params.str("mask_channel", "A")));
+        const MaskPlane mp = maskPlane(a.fetch(input(2), a.region), maskSetting(this));
+        const ImagePtr M = mp.img;
+        const int mc = mp.ch;
         const bool inv = params.flag("invert_mask", false);
         const float mix = (float)params.num("mix", a.frame, 1);
         for (int y = out.bounds.y1; y < out.bounds.y2; ++y)

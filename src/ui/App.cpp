@@ -400,6 +400,8 @@ void App::loadSettings() {
             askMatchProject = j.value("ask_match_project", askMatchProject);
             rightAnglePipes = j.value("graph_right_angle_pipes", rightAnglePipes);
             altDragCuts = j.value("graph_alt_drag_cuts", altDragCuts);
+            sidePorts = j.value("graph_side_ports", sidePorts);
+            graphSnapPx = std::clamp(j.value("graph_snap_px", graphSnapPx), 0.0f, 40.0f);
             middleDragZooms = j.value("middle_drag_zooms", middleDragZooms);
             autoProxy = j.value("viewer_auto_proxy", autoProxy);
             uncPaths = j.value("unc_paths", uncPaths);
@@ -464,6 +466,8 @@ void App::saveSettings() {
     j["ask_match_project"] = askMatchProject;
     j["graph_right_angle_pipes"] = rightAnglePipes;
     j["graph_alt_drag_cuts"] = altDragCuts;
+    j["graph_side_ports"] = sidePorts;
+    j["graph_snap_px"] = graphSnapPx;
     j["middle_drag_zooms"] = middleDragZooms;
     j["viewer_auto_proxy"] = autoProxy;
     j["unc_paths"] = uncPaths;
