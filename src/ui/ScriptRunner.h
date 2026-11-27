@@ -10,6 +10,7 @@
 // welder.on() handlers get the editor's events (events.next), each callback one undo step.
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>

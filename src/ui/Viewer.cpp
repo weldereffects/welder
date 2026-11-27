@@ -608,12 +608,6 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     }
     segEnd();
 
-    nextSeg(340);
-    segBegin();  // display: exposure, gamma, the viewer transform
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled(" f/stop");
-    ImGui::SameLine(0, 4);
-    ImGui::SetNextItemWidth(52);
     // Double-click resets (#76). ImGui turns a double-click on a drag field into text entry, so
     // on that frame the field is drawn without it (Ctrl+click still types a value).
     auto resettingDrag = [](const char* id, float* val, float speed, float lo, float hi, const char* fmt, float def) {
@@ -627,15 +621,42 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
             ImGui::ClearActiveID();
         }
     };
-    resettingDrag("##fstop", &v.fstop, 0.05f, -10.0f, 10.0f, v.fstop == 0 ? "0" : "%+.1f", 0.0f);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exposure in stops (double-click: 0, Ctrl+click: type a value)");
-    ImGui::SameLine(0, 8);
-    ImGui::TextDisabled("gamma");
-    ImGui::SameLine(0, 4);
-    ImGui::SetNextItemWidth(52);
-    resettingDrag("##gamma", &v.gamma, 0.01f, 0.2f, 4.0f, "%.2f", 1.0f);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gamma (double-click: 1, Ctrl+click: type a value)");
-    ImGui::SameLine(0, 6);
+    auto displayControl = [&](const char* label, float& value, float speed, float lo, float hi, const char* format,
+                              float def, ImGuiSliderFlags sliderFlags) {
+        constexpr float fieldWidth = 52, sliderWidth = 90;
+        const float labelWidth = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2;
+        const bool exposure = def == 0.0f;  // f/stop: arrows step a whole stop either way
+        nextSeg(labelWidth + fieldWidth + sliderWidth + (exposure ? 42 : 8));
+        segBegin();
+        ImGui::PushID(label);
+        if (exposure) {
+            if (ImGui::ArrowButton("##less", ImGuiDir_Left)) value = std::max(lo, value - 1);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One stop down");
+            ImGui::SameLine(0, 2);
+        }
+        if (ImGui::Button(label)) value = def;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset %s to %g", label, def);
+        if (exposure) {
+            ImGui::SameLine(0, 2);
+            if (ImGui::ArrowButton("##more", ImGuiDir_Right)) value = std::min(hi, value + 1);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("One stop up");
+        }
+        ImGui::SameLine(0, 4);
+        ImGui::SetNextItemWidth(fieldWidth);
+        resettingDrag("##value", &value, speed, lo, hi, format, def);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Double-click to reset or Ctrl+click to enter a value");
+        ImGui::SameLine(0, 4);
+        ImGui::SetNextItemWidth(sliderWidth);
+        ImGui::SliderFloat("##slider", &value, lo, hi, "", sliderFlags | ImGuiSliderFlags_NoInput | ImGuiSliderFlags_NoRoundToFormat);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s: %g", label, value);
+        ImGui::PopID();
+        segEnd();
+    };
+    displayControl("f/stop", v.fstop, 0.05f, -10.0f, 10.0f, "%+.1f", 0.0f, 0);
+    displayControl("gamma", v.gamma, 0.01f, 0.2f, 4.0f, "%.2f", 1.0f, ImGuiSliderFlags_Logarithmic);
+
+    nextSeg(130);
+    segBegin();
     viewerProcessCombo(app);
     segEnd();
 
@@ -783,7 +804,8 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
     }
 
     // ---- image area
-    const float infoH = ImGui::GetFrameHeight() + 4;
+    const bool wrapPixelInfo = ImGui::GetContentRegionAvail().x < ImGui::GetFontSize() * 56;
+    const float infoH = ImGui::GetFrameHeight() + 4 + (wrapPixelInfo ? ImGui::GetTextLineHeightWithSpacing() : 0);
     ImVec2 p0 = ImGui::GetCursorScreenPos();
     p0.y += 4;
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -1129,9 +1151,19 @@ static void drawViewerPanel(App& app, UiState& ui, ViewerState& v, Node* vn, boo
             ImGui::Text("x=%d y=%d", x, y);
             const ImVec4 cols[4] = {ImVec4(1, .45f, .45f, 1), ImVec4(.5f, 1, .5f, 1), ImVec4(.55f, .7f, 1, 1),
                                     ImVec4(.85f, .85f, .85f, 1)};
+            float rgba[4];
             for (int c = 0; c < 4; ++c) {
+                rgba[c] = im.at(sx, sy, m[c]);
                 ImGui::SameLine(0, 12);
-                ImGui::TextColored(cols[c], "%.5f", im.at(sx, sy, m[c]));
+                ImGui::TextColored(cols[c], "%.5f", rgba[c]);
+            }
+            if (im.bounds.contains(sx, sy) && m[0] >= 0 && m[1] >= 0 && m[2] >= 0) {
+                float h, s, value;
+                ImGui::ColorConvertRGBtoHSV(rgba[0], rgba[1], rgba[2], h, s, value);
+                // Same RGB weights as the Viewer's Y channel.
+                const float luminance = 0.2126f * rgba[0] + 0.7152f * rgba[1] + 0.0722f * rgba[2];
+                if (!wrapPixelInfo) ImGui::SameLine(0, 12);
+                ImGui::Text("H: %.1f  S: %.2f  V: %.2f  L: %.5f", h * 360.0f, s, value, luminance);
             }
             if (v.deepReadout) drawDeepReadout(app, v, x, y);
         }

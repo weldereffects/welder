@@ -181,7 +181,22 @@ int tick(App& app, UiState& ui, float lastFrameMs) {
             app.newComp();
             app.applyEdits();
             const ImVec2 c(ui.graph.canvasOrigin.x + ui.graph.canvasSize.x * 0.5f, ui.graph.canvasOrigin.y + ui.graph.canvasSize.y * 0.4f);
-            graphDropFiles(app, ui, {it}, c);  // as if dropped on the node graph
+            if (fs::is_directory(it)) {
+                // Exercise clipboard paste for sequence folders without changing the user's clipboard.
+                auto& platform = ImGui::GetPlatformIO();
+                const auto getClipboard = platform.Platform_GetClipboardTextFn;
+                auto* clipboardData = platform.Platform_ClipboardUserData;
+                platform.Platform_ClipboardUserData = &s;
+                platform.Platform_GetClipboardTextFn = [](ImGuiContext*) {
+                    const auto& smoke = *static_cast<const State*>(ImGui::GetPlatformIO().Platform_ClipboardUserData);
+                    return smoke.items[smoke.idx].c_str();
+                };
+                graphPaste(app, ui);
+                platform.Platform_GetClipboardTextFn = getClipboard;
+                platform.Platform_ClipboardUserData = clipboardData;
+            } else {
+                graphDropFiles(app, ui, {it}, c);  // as if dropped on the node graph
+            }
         }
         app.requestView();
         s.phase = State::Wait;
@@ -198,6 +213,8 @@ int tick(App& app, UiState& ui, float lastFrameMs) {
         }
         if (++s.sub > 10 && settledFrames(5)) {
             const ViewResult r = app.result();
+            if (fs::is_directory(it) && (r.node.empty() || (!r.image && !r.half) || !r.error.empty()))
+                fail("pasting the sequence folder did not render footage: " + it + " " + r.error);
             std::printf("SMOKE open %s: %.2f s to the first full render%s%s\n", fs::path(it).filename().string().c_str(), now - s.stepT0,
                         r.error.empty() ? "" : ", render error: ", r.error.c_str());
             s.phase = State::Play;

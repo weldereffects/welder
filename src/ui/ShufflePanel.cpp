@@ -18,6 +18,7 @@
 
 #include "Panels.h"
 #include "PanelKit.h"
+#include "imgui_internal.h"
 
 namespace strata::ui {
 
@@ -481,7 +482,20 @@ void drawShufflePanel(App& app, UiState& ui, Node* n) {
         ImGui::PopID();
     }
 
-    // ---- wires
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    auto hit = [&](const Dot& d) { return std::abs(mouse.x - d.pos.x) < 9 && std::abs(mouse.y - d.pos.y) < 8; };
+    const bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    const Dot* hovered = nullptr;
+    bool hoveredIn = false;
+    for (auto& d : inDots)
+        if (hit(d)) { hovered = &d; hoveredIn = true; }
+    for (auto& d : outDots)
+        if (hit(d)) { hovered = &d; hoveredIn = false; }
+
+    // Use the drawn curve for hit testing and choose the closest wire at crossings.
+    const bool canPickWire = windowHovered && !hovered && !g_drag.active && !ImGui::IsAnyItemActive();
+    const Dot* wireOutput = nullptr;
+    float nearestWire = 25.0f;
     auto inDotFor = [&](const std::string& src) -> const Dot* {
         for (auto& d : inDots)
             if (d.id == src) return &d;
@@ -492,15 +506,26 @@ void drawShufflePanel(App& app, UiState& ui, Node* n) {
         std::string src = s ? *s : od.id;  // unmapped: passes through from the same channel of B
         if (const Dot* id = inDotFor(src)) {
             ImVec2 a(id->pos.x + 5, id->pos.y), b(od.pos.x - 5, od.pos.y);
-            dl->AddBezierCubic(a, ImVec2(a.x + (b.x - a.x) * 0.4f, a.y), ImVec2(b.x - (b.x - a.x) * 0.4f, b.y), b, id->color,
-                               s ? 2.5f : 1.2f);
+            const ImVec2 c(a.x + (b.x - a.x) * 0.4f, a.y), d(b.x - (b.x - a.x) * 0.4f, b.y);
+            constexpr int wireSegments = 24;
+            dl->AddBezierCubic(a, c, d, b, id->color, s ? 2.5f : 1.2f, wireSegments);
+            if (canPickWire && mouse.x >= a.x && mouse.x <= b.x) {
+                const auto p = ImBezierCubicClosestPoint(a, c, d, b, mouse, wireSegments);
+                const float dx = p.x - mouse.x, dy = p.y - mouse.y;
+                if (dx * dx + dy * dy < nearestWire) {
+                    nearestWire = dx * dx + dy * dy;
+                    wireOutput = &od;
+                }
+            }
         }
+    }
+    if (wireOutput) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+        ImGui::SetTooltip("Click to disconnect %s (black)", displayName(wireOutput->id).c_str());
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) setSource(wireOutput->id, "0");
     }
 
     // ---- dots and dragging
-    ImVec2 mouse = ImGui::GetIO().MousePos;
-    auto hit = [&](const Dot& d) { return std::abs(mouse.x - d.pos.x) < 9 && std::abs(mouse.y - d.pos.y) < 8; };
-    bool windowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
     // Invisible buttons over the dots, so a drag from one doesn't move or scroll the window.
     {
         ImVec2 keep = ImGui::GetCursorScreenPos();
@@ -514,12 +539,6 @@ void drawShufflePanel(App& app, UiState& ui, Node* n) {
             }
         ImGui::SetCursorScreenPos(keep);
     }
-    const Dot* hovered = nullptr;
-    bool hoveredIn = false;
-    for (auto& d : inDots)
-        if (hit(d)) { hovered = &d; hoveredIn = true; }
-    for (auto& d : outDots)
-        if (hit(d)) { hovered = &d; hoveredIn = false; }
     for (auto& d : inDots) dl->AddCircleFilled(d.pos, 5, d.color);
     for (auto& d : outDots) {
         const std::string* s = srcFor(d.id);
@@ -552,7 +571,7 @@ void drawShufflePanel(App& app, UiState& ui, Node* n) {
         }
     }
     ImGui::PopID();
-    ImGui::TextDisabled("drag between dots to route; drag a wire off an output for black");
+    ImGui::TextDisabled("drag between dots to route; click a wire to disconnect");
 }
 
 }  // namespace strata::ui

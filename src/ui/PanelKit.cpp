@@ -234,6 +234,19 @@ bool iconButton(const char* id, Icon icon, bool on, const char* tip) {
             dl->AddLine(ImVec2(c.x + s * 0.05f, c.y - s * 0.6f), ImVec2(c.x + s * 0.6f, c.y - s * 0.05f), col, t * 1.4f);
             break;
         }
+        case Icon::ColorWheel: {
+            const float radius = s * 0.62f;
+            if (hot || on) dl->AddCircle(c, radius + t * 1.5f, col, 24, t);
+            constexpr int segments = 12;
+            constexpr float turn = 6.2831853f;
+            for (int i = 0; i < segments; ++i) {
+                float r, g, b;
+                ImGui::ColorConvertHSVtoRGB(static_cast<float>(i) / segments, 0.85f, 1.0f, r, g, b);
+                dl->PathArcTo(c, radius, turn * i / segments, turn * (i + 1) / segments, 3);
+                dl->PathStroke(ImGui::GetColorU32(ImVec4(r, g, b, 1.0f)), 0, t * 1.5f);
+            }
+            break;
+        }
         case Icon::Crosshair:
             dl->AddCircle(c, s * 0.5f, col, 20, t);
             dl->AddLine(ImVec2(c.x - s * 0.8f, c.y), ImVec2(c.x - s * 0.25f, c.y), col, t);
