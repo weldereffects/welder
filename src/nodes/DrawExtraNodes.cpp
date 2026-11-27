@@ -41,11 +41,11 @@ public:
     }
     Box dod(Engine& e, double f) override {
         Box b = drawBox(e, f);
-        return input(0) ? b.unite(e.dod(input(0), f)) : b;
+        return input(0) && !params.flag("text_only", false) ? b.unite(e.dod(input(0), f)) : b;
     }
     void render(RenderArgs& a, Image& out) override {
         std::fill(out.data.begin(), out.data.end(), 0.0f);
-        if (input(0)) out.copyFrom(*a.fetch(input(0), a.region));
+        if (input(0) && !params.flag("text_only", false)) out.copyFrom(*a.fetch(input(0), a.region));
         Image fg(out.bounds, rgbaChannels());
         draw(a, fg);
         const int ch[4] = {out.ch("R"), out.ch("G"), out.ch("B"), out.ch("A")};
@@ -60,7 +60,13 @@ public:
                 for (int k = 0; k < 4; ++k) {
                     if (ch[k] < 0) continue;
                     const float b = o[ch[k]];
-                    float r = op == "plus" ? s[k] + b : op == "replace" ? s[k] : s[k] + b * (1 - s[3]);
+                    const float ba = ch[3] >= 0 ? o[ch[3]] : 1.0f;
+                    float r = op == "plus"       ? s[k] + b
+                              : op == "replace"  ? s[k]
+                              : op == "under"    ? b + s[k] * (1 - ba)
+                              : op == "screen"   ? (k == 3 ? s[3] + b - s[3] * b : s[k] + b - s[k] * b)
+                              : op == "multiply" ? (k == 3 ? s[3] + b - s[3] * b : s[k] * b + s[k] * (1 - ba) + b * (1 - s[3]))
+                                                 : s[k] + b * (1 - s[3]);
                     o[ch[k]] = b + (r - b) * w;
                 }
             }
@@ -160,13 +166,24 @@ public:
     }
 
 protected:
+    // how far the outline, the shadow and the box reach past the letters (render pixels)
+    int reach(double f, double sc) const {
+        double r = std::max(0.0, params.num("outline", f, 0));
+        if (params.flag("shadow", false)) {
+            auto o = params.vec<2>("shadow_offset", f, {6, -6});
+            r = std::max(r, r + std::max(std::fabs(o[0]), std::fabs(o[1])) + 3 * std::max(0.0, params.num("shadow_softness", f, 4)));
+        }
+        if (params.flag("box_bg", false)) r = std::max(r, std::max(0.0, params.num("box_margin", f, 12)));
+        return (int)std::ceil(r * sc) + 2;
+    }
     Box drawBox(Engine& e, double f) override {
         text::Layout L;
         text::Xf X;
         std::string msg;
         std::shared_ptr<const text::Font> font;
         if (!layout(e, f, L, X, msg, font)) return Box();
-        return text::bounds(*font, msg, L, X).pad(2, 2);
+        const int p = reach(f, e.scale());
+        return text::bounds(*font, msg, L, X).pad(p, p);
     }
     void draw(RenderArgs& a, Image& fg) override {
         text::Layout L;
@@ -174,21 +191,134 @@ protected:
         std::string msg;
         std::shared_ptr<const text::Font> font;
         if (!layout(a.engine, a.frame, L, X, msg, font)) throw RenderError(name + ": no font could be read");
+        const double f = a.frame, sc = a.engine.scale();
+        const double outline = std::max(0.0, params.num("outline", f, 0)) * sc;
+        const bool shadow = params.flag("shadow", false), boxBg = params.flag("box_bg", false);
+        auto col = params.vec<4>("color", f, {1, 1, 1, 1});
+        const float op = (float)params.num("opacity", f, 1);
+        // the letters' coverage over this tile and what the outline / shadow reach into it from
+        const int pad = (outline > 0 || shadow) ? reach(f, sc) : 0;
+        const Box big = fg.bounds.pad(pad, pad);
+        const int BW = big.width(), BH = big.height();
         std::vector<float> cov;
-        text::coverage(*font, msg, L, X, fg.bounds, &cov);
-        auto col = params.vec<4>("color", a.frame, {1, 1, 1, 1});
-        const float op = (float)params.num("opacity", a.frame, 1);
-        const int W = fg.bounds.width();
+        text::coverage(*font, msg, L, X, big, &cov);
+        auto at = [&](const std::vector<float>& v, int x, int y) { return v[(size_t)(y - big.y1) * BW + (x - big.x1)]; };
+        // outline: letters grown by its width (distance to the nearest letter pixel)
+        std::vector<float> grown;
+        if (outline > 0) {
+            grown = cov;
+            std::vector<float> d = distanceTo(cov, BW, BH);
+            for (size_t i = 0; i < grown.size(); ++i) grown[i] = std::max(cov[i], std::clamp((float)(outline + 0.5 - d[i]), 0.0f, 1.0f));
+        }
+        // shadow: the letters (with their outline), moved and softened
+        std::vector<float> sh;
+        int sdx = 0, sdy = 0;
+        if (shadow) {
+            sh = outline > 0 ? grown : cov;
+            const double soft = std::max(0.0, params.num("shadow_softness", f, 4)) * sc;
+            if (soft > 0.3) blurCoverage(sh, BW, BH, soft);
+            auto o = params.vec<2>("shadow_offset", f, {6, -6});
+            sdx = (int)std::lround(o[0] * sc), sdy = (int)std::lround(o[1] * sc);
+        }
+        std::array<double, 4> boxR{};
+        if (boxBg) {  // the letters' bounds (before the box), plus the margin
+            const double m = std::max(0.0, params.num("box_margin", f, 12)) * sc;
+            const Box tb = text::bounds(*font, msg, L, X);
+            boxR = {tb.x1 - m, tb.y1 - m, tb.x2 + m, tb.y2 + m};
+        }
+        auto oc = params.vec<4>("outline_color", f, {0, 0, 0, 1});
+        auto scol = params.vec<4>("shadow_color", f, {0, 0, 0, 0.6});
+        auto bcol = params.vec<4>("box_color", f, {0, 0, 0, 0.5});
+        auto over = [](float* p, const std::array<double, 4>& c, float cov) {  // c unpremultiplied, alpha in c[3]
+            const float a = cov * (float)c[3];
+            if (a <= 0) return;
+            for (int k = 0; k < 3; ++k) p[k] = (float)c[k] * a + p[k] * (1 - a);
+            p[3] = a + p[3] * (1 - a);
+        };
+        const std::array<double, 4> tc{col[0], col[1], col[2], col[3] * op}, ocA{oc[0], oc[1], oc[2], oc[3] * op},
+            scA{scol[0], scol[1], scol[2], scol[3] * op}, bcA{bcol[0], bcol[1], bcol[2], bcol[3] * op};
+        auto span = [](double p, double lo, double hi) { return std::clamp(std::min(p + 0.5, hi) - std::max(p - 0.5, lo), 0.0, 1.0); };
         for (int y = fg.bounds.y1; y < fg.bounds.y2; ++y)
             for (int x = fg.bounds.x1; x < fg.bounds.x2; ++x) {
-                const float c = cov[(size_t)(y - fg.bounds.y1) * W + (x - fg.bounds.x1)] * op * (float)col[3];
-                if (c <= 0) continue;
                 float* p = fg.px(x, y);
-                p[0] = (float)col[0] * c;
-                p[1] = (float)col[1] * c;
-                p[2] = (float)col[2] * c;
-                p[3] = c;
+                if (boxBg) over(p, bcA, (float)(span(x + 0.5, boxR[0], boxR[2]) * span(y + 0.5, boxR[1], boxR[3])));
+                if (shadow) {
+                    const int sx = x - sdx, sy = y - sdy;
+                    if (sx >= big.x1 && sx < big.x2 && sy >= big.y1 && sy < big.y2) over(p, scA, at(sh, sx, sy));
+                }
+                if (outline > 0) over(p, ocA, at(grown, x, y));
+                over(p, tc, at(cov, x, y));
             }
+    }
+
+    // Euclidean distance (pixels) from each pixel to the nearest one at least half covered
+    // (Felzenszwalb & Huttenlocher's two-pass transform).
+    static std::vector<float> distanceTo(const std::vector<float>& cov, int W, int H) {
+        constexpr double INF = 1e20;
+        std::vector<double> g((size_t)W * H);
+        for (size_t i = 0; i < g.size(); ++i) g[i] = cov[i] >= 0.5f ? 0 : INF;
+        auto pass = [](const double* fin, double* dout, int n, std::vector<int>& v, std::vector<double>& z) {
+            int k = 0;
+            v[0] = 0;
+            z[0] = -INF, z[1] = INF;
+            for (int q = 1; q < n; ++q) {
+                double s;
+                while (true) {
+                    s = ((fin[q] + (double)q * q) - (fin[v[k]] + (double)v[k] * v[k])) / (2.0 * q - 2.0 * v[k]);
+                    if (s <= z[k] && k > 0) --k;
+                    else break;
+                }
+                if (s <= z[k]) {  // k == 0
+                    v[0] = q;
+                    z[0] = -INF, z[1] = INF;
+                    continue;
+                }
+                ++k;
+                v[k] = q;
+                z[k] = s;
+                z[k + 1] = INF;
+            }
+            k = 0;
+            for (int q = 0; q < n; ++q) {
+                while (z[k + 1] < q) ++k;
+                dout[q] = (double)(q - v[k]) * (q - v[k]) + fin[v[k]];
+            }
+        };
+        const int N = std::max(W, H);
+        std::vector<int> v(N + 1);
+        std::vector<double> z(N + 2), fin(N), dout(N);
+        for (int x = 0; x < W; ++x) {  // columns
+            for (int y = 0; y < H; ++y) fin[y] = g[(size_t)y * W + x];
+            pass(fin.data(), dout.data(), H, v, z);
+            for (int y = 0; y < H; ++y) g[(size_t)y * W + x] = dout[y];
+        }
+        for (int y = 0; y < H; ++y) {  // rows
+            pass(&g[(size_t)y * W], dout.data(), W, v, z);
+            for (int x = 0; x < W; ++x) g[(size_t)y * W + x] = dout[x];
+        }
+        std::vector<float> d(g.size());
+        for (size_t i = 0; i < g.size(); ++i) d[i] = (float)std::sqrt(std::min(g[i], 1e12));
+        return d;
+    }
+    // about a gaussian of `sigma`: three box blurs each way
+    static void blurCoverage(std::vector<float>& v, int W, int H, double sigma) {
+        const int r = std::max(1, (int)std::lround(std::sqrt(4.0 * sigma * sigma + 1) / 2));  // box radius for 3 passes
+        std::vector<float> tmp(std::max(W, H));
+        auto run = [&](float* base, int n, int stride) {
+            for (int pass = 0; pass < 3; ++pass) {
+                double acc = 0;  // (outside the buffer counts as empty)
+                for (int i = 0; i <= r && i < n; ++i) acc += base[(size_t)i * stride];
+                for (int i = 0; i < n; ++i) {
+                    tmp[i] = (float)(acc / (2 * r + 1));
+                    const int add = i + r + 1, sub = i - r;
+                    if (add < n) acc += base[(size_t)add * stride];
+                    if (sub >= 0) acc -= base[(size_t)sub * stride];
+                }
+                for (int i = 0; i < n; ++i) base[(size_t)i * stride] = tmp[i];
+            }
+        };
+        for (int y = 0; y < H; ++y) run(&v[(size_t)y * W], W, 1);
+        for (int x = 0; x < W; ++x) run(&v[x], H, W);
     }
 };
 

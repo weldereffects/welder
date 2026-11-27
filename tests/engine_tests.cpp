@@ -2496,6 +2496,45 @@ int main(int argc, char** argv) {
         CHECK(px(gw, 30, 24, "A") < 0.5f);
     });
 
+    test("Text: outline, drop shadow, box behind, text only, more operations; the same in any tiles (#108)", [] {
+        json nodes = json::array({
+            {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 1, 1}}}}},
+            {{"name", "T"}, {"type", "Text"}, {"inputs", {"Bg"}},
+             {"params", {{"message", "I"}, {"size", 60}, {"box", {0, 0, 128, 96}}, {"xjustify", "center"}, {"yjustify", "center"},
+                         {"color", {1, 1, 1, 1}}, {"outline", 4}, {"outline_color", {1, 0, 0, 1}}, {"shadow", true},
+                         {"shadow_offset", {20, 0}}, {"shadow_softness", 0}, {"shadow_color", {0, 1, 0, 1}}}}},
+        });
+        auto c1 = comp(nodes, 128, 96), c2 = comp(nodes, 128, 96);
+        auto big = render(*c1, "T", 1, 4096), small = render(*c2, "T", 1, 16);
+        double worst = 0;
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 128; ++x)
+                for (const char* ch : {"R", "G", "B", "A"}) worst = std::max(worst, (double)std::fabs(px(big, x, y, ch) - px(small, x, y, ch)));
+        CHECK(worst < 1e-5);
+        // along the middle row: white letter, red outline beside it, then the green shadow to the right
+        int white = -1, red = -1, green = -1;
+        for (int x = 0; x < 128; ++x) {
+            const float r = px(big, x, 48, "R"), g = px(big, x, 48, "G"), b = px(big, x, 48, "B");
+            if (white < 0 && r > 0.9f && g > 0.9f && b > 0.9f) white = x;
+            if (red < 0 && r > 0.9f && g < 0.1f) red = x;
+            if (g > 0.9f && r < 0.1f) green = x;
+        }
+        std::printf("    first white %d, first red %d, last green %d\n", white, red, green);
+        CHECK(white > 0 && red >= 0 && red < white && green > white + 10);
+        CHECK_NEAR(px(big, 2, 2, "B"), 1, 1e-6);  // the background elsewhere
+        // text only: no background; a box behind
+        auto c3 = comp(json::array({nodes[0], {{"name", "T"}, {"type", "Text"}, {"inputs", {"Bg"}},
+                                               {"params", {{"message", "I"}, {"size", 40}, {"box", {0, 0, 128, 96}}, {"xjustify", "center"},
+                                                           {"yjustify", "center"}, {"text_only", true}, {"box_bg", true}, {"box_margin", 10},
+                                                           {"box_color", {1, 1, 0, 1}}}}}}),
+                       128, 96);
+        auto to = render(*c3, "T");
+        CHECK_NEAR(px(to, 2, 2, "A"), 0, 1e-6);  // transparent away from the text
+        CHECK_NEAR(px(to, 2, 2, "B"), 0, 1e-6);
+        bool boxSeen = false;
+        for (int x = 0; x < 128; ++x) boxSeen |= px(to, x, 48, "R") > 0.9f && px(to, x, 48, "B") < 0.1f && px(to, x, 48, "A") > 0.9f;
+        CHECK(boxSeen);
+    });
     test("draw extras: Text, Rectangle, Grid, ColorBars, ColorWheel, Grain, Dither, Glint, Flare, MarkerRemoval, CurveTool", [] {
         auto c = comp(json::array({
             {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 0, 1}}}}},
