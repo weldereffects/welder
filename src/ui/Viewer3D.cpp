@@ -1454,12 +1454,18 @@ void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool intera
         else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) s.nav = View3DState::Nav::Track;
         else if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) s.nav = View3DState::Nav::Dolly;
     }
-    // Preferences > Middle-drag zooms: a middle drag dollies without Alt (tablets, issue #23)
-    if (hovered && !alt && app.middleDragZooms && s.nav == View3DState::Nav::None && ImGui::IsMouseClicked(ImGuiMouseButton_Middle))
-        s.nav = View3DState::Nav::Dolly;
+    // Without Alt a middle drag works like the node graph (issue #104, pens): it pans, middle + left
+    // zooms, and holding Ctrl rotates. Preferences > Middle-drag zooms makes the plain drag zoom (#23).
+    static bool graphNav = false;
+    if (hovered && !alt && s.nav == View3DState::Nav::None && ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+        s.nav = app.middleDragZooms ? View3DState::Nav::Dolly : View3DState::Nav::Track;
+        graphNav = true;
+    }
+    if (s.nav == View3DState::Nav::None) graphNav = false;
     if (s.nav != View3DState::Nav::None && interactive) {
         bool down = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Middle) ||
                     ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        if (graphNav && !ImGui::IsMouseDown(ImGuiMouseButton_Middle)) down = false;  // the middle drag ended
         if (!down) {
             s.nav = View3DState::Nav::None;
         } else if (io.MouseDelta.x != 0 || io.MouseDelta.y != 0) {
@@ -1467,6 +1473,11 @@ void drawViewer3DPane(App& app, UiState& ui, ImVec2 p0, ImVec2 size, bool intera
             View3DState::Nav nav = s.nav;
             // left + middle together dollies, like Maya
             if (nav == View3DState::Nav::Tumble && ImGui::IsMouseDown(ImGuiMouseButton_Middle)) nav = View3DState::Nav::Dolly;
+            if (graphNav && ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+                if (io.KeyCtrl) nav = View3DState::Nav::Tumble;
+                else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) nav = View3DState::Nav::Dolly;
+                else nav = app.middleDragZooms ? View3DState::Nav::Dolly : View3DState::Nav::Track;
+            }
             if (!v.camNode.empty()) toPersp(s, v);
             int oi = orthoIndex(s.view);
             if (oi >= 0) {

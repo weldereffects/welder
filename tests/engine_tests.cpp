@@ -2496,6 +2496,79 @@ int main(int argc, char** argv) {
         CHECK(px(gw, 30, 24, "A") < 0.5f);
     });
 
+    test("Curves: weighted Bezier tangents, loop / ping-pong / relative / linear extrapolation (#139)", [] {
+        // no weights: the Hermite curve; weights of a third of the segment: the same curve
+        json h = {{"keys", {{0, 0, {{"i", "user"}, {"r", 0.0}}}, {10, 10, {{"i", "user"}, {"r", 0.0}}}}}};
+        json w = h;
+        w["keys"][0][2]["rw"] = 10.0 / 3;
+        w["keys"][1][2]["lw"] = 10.0 / 3;
+        for (double f : {1.0, 2.5, 5.0, 7.0, 9.5}) CHECK_NEAR(params::evalCurve(w, f), params::evalCurve(h, f), 1e-6);
+        // long flat handles: an ease that stays near 0 longer, still 5 halfway (symmetric)
+        w["keys"][0][2]["rw"] = 9.0;
+        w["keys"][1][2]["lw"] = 9.0;
+        CHECK(params::evalCurve(w, 2) < params::evalCurve(h, 2) - 0.1);
+        CHECK_NEAR(params::evalCurve(w, 5), 5, 1e-6);
+        CHECK(params::evalCurve(w, 9) > params::evalCurve(h, 9) + 0.1);
+        // extrapolation
+        json c = {{"keys", {{0, 0}, {10, 10}}}, {"interp", "linear"}};
+        CHECK_NEAR(params::evalCurve(c, 15), 10, 1e-9);  // constant
+        c["post"] = "loop";
+        CHECK_NEAR(params::evalCurve(c, 13), 3, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 27), 7, 1e-9);
+        c["post"] = "pingpong";
+        CHECK_NEAR(params::evalCurve(c, 13), 7, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 23), 3, 1e-9);
+        c["post"] = "relative";
+        CHECK_NEAR(params::evalCurve(c, 13), 13, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 25), 25, 1e-9);
+        c["post"] = "linear";
+        CHECK_NEAR(params::evalCurve(c, 20), 20, 1e-9);
+        c["pre"] = "loop";
+        CHECK_NEAR(params::evalCurve(c, -3), 7, 1e-9);
+        c["pre"] = "relative";
+        CHECK_NEAR(params::evalCurve(c, -3), -3, 1e-9);
+        CHECK_NEAR(params::evalCurve(c, 4), 4, 1e-9);  // between the keys: unchanged
+    });
+
+    test("Text: outline, drop shadow, box behind, text only, more operations; the same in any tiles (#108)", [] {
+        json nodes = json::array({
+            {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 1, 1}}}}},
+            {{"name", "T"}, {"type", "Text"}, {"inputs", {"Bg"}},
+             {"params", {{"message", "I"}, {"size", 60}, {"box", {0, 0, 128, 96}}, {"xjustify", "center"}, {"yjustify", "center"},
+                         {"color", {1, 1, 1, 1}}, {"outline", 4}, {"outline_color", {1, 0, 0, 1}}, {"shadow", true},
+                         {"shadow_offset", {20, 0}}, {"shadow_softness", 0}, {"shadow_color", {0, 1, 0, 1}}}}},
+        });
+        auto c1 = comp(nodes, 128, 96), c2 = comp(nodes, 128, 96);
+        auto big = render(*c1, "T", 1, 4096), small = render(*c2, "T", 1, 16);
+        double worst = 0;
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 128; ++x)
+                for (const char* ch : {"R", "G", "B", "A"}) worst = std::max(worst, (double)std::fabs(px(big, x, y, ch) - px(small, x, y, ch)));
+        CHECK(worst < 1e-5);
+        // along the middle row: white letter, red outline beside it, then the green shadow to the right
+        int white = -1, red = -1, green = -1;
+        for (int x = 0; x < 128; ++x) {
+            const float r = px(big, x, 48, "R"), g = px(big, x, 48, "G"), b = px(big, x, 48, "B");
+            if (white < 0 && r > 0.9f && g > 0.9f && b > 0.9f) white = x;
+            if (red < 0 && r > 0.9f && g < 0.1f) red = x;
+            if (g > 0.9f && r < 0.1f) green = x;
+        }
+        std::printf("    first white %d, first red %d, last green %d\n", white, red, green);
+        CHECK(white > 0 && red >= 0 && red < white && green > white + 10);
+        CHECK_NEAR(px(big, 2, 2, "B"), 1, 1e-6);  // the background elsewhere
+        // text only: no background; a box behind
+        auto c3 = comp(json::array({nodes[0], {{"name", "T"}, {"type", "Text"}, {"inputs", {"Bg"}},
+                                               {"params", {{"message", "I"}, {"size", 40}, {"box", {0, 0, 128, 96}}, {"xjustify", "center"},
+                                                           {"yjustify", "center"}, {"text_only", true}, {"box_bg", true}, {"box_margin", 10},
+                                                           {"box_color", {1, 1, 0, 1}}}}}}),
+                       128, 96);
+        auto to = render(*c3, "T");
+        CHECK_NEAR(px(to, 2, 2, "A"), 0, 1e-6);  // transparent away from the text
+        CHECK_NEAR(px(to, 2, 2, "B"), 0, 1e-6);
+        bool boxSeen = false;
+        for (int x = 0; x < 128; ++x) boxSeen |= px(to, x, 48, "R") > 0.9f && px(to, x, 48, "B") < 0.1f && px(to, x, 48, "A") > 0.9f;
+        CHECK(boxSeen);
+    });
     test("draw extras: Text, Rectangle, Grid, ColorBars, ColorWheel, Grain, Dither, Glint, Flare, MarkerRemoval, CurveTool", [] {
         auto c = comp(json::array({
             {{"name", "Bg"}, {"type", "Constant"}, {"params", {{"color", {0, 0, 0, 1}}}}},
@@ -3463,6 +3536,30 @@ int main(int argc, char** argv) {
         }));
         img = render(*c3, "RP");
         CHECK_NEAR(px(img, 8, 8, "R"), 0.25, 1e-5);
+    });
+
+    test("rotopaint: every stroke has an alpha; with replace each is the stroke alone (#20)", [] {
+        // a plate whose alpha is 0 (an RGB plate): before, only paint strokes made any alpha
+        for (const char* tool : {"clone", "blur", "smear", "dodge", "burn", "sharpen", "repair"}) {
+            json st = {{"name", "S1"}, {"kind", "stroke"}, {"tool", tool}, {"size", 12}, {"hardness", 0.95}, {"effect", 1.0},
+                       {"offset", {-4, 0}}, {"points", {{20, 24, 1}, {40, 24, 1}}}};
+            for (bool rep : {false, true}) {
+                auto c = comp(json::array({
+                    {{"name", "K"}, {"type", "Constant"}, {"params", {{"color", {0.4, 0.4, 0.4, 0}}}}},
+                    {{"name", "RP"}, {"type", "RotoPaint"}, {"inputs", {"K"}},
+                     {"params", {{"replace", rep}, {"output", "rgba"}, {"shapes", json::array({st})}}}},
+                }), 64, 48);
+                auto img = render(*c, "RP");
+                const float a = px(img, 30, 24, "A"), r = px(img, 30, 24, "R");
+                if (a < 0.9f) std::printf("  %s replace %d: alpha %g\n", tool, (int)rep, a);
+                CHECK(a > 0.9f);
+                // the picture is still there (not black: replace starts empty, the tools take the input)
+                const float want = std::string(tool) == "dodge" ? 0.6f : std::string(tool) == "burn" ? 0.2f : 0.4f;
+                if (std::fabs(r - want) > 0.05f) std::printf("  %s replace %d: R %g, want %g\n", tool, (int)rep, r, want);
+                CHECK_NEAR(r, want, 0.05);
+                if (rep) CHECK_NEAR(px(img, 5, 5, "A"), 0, 1e-6);  // outside the stroke: nothing
+            }
+        }
     });
 
     test("Keyer: the default range keys luminance, not a solid white alpha (#31)", [] {
@@ -5689,6 +5786,35 @@ Connections:  {
         auto tri = render(*c3, "S");
         CHECK_NEAR(px(tri, 32, 24, "A"), 1.0, 1e-3);  // solid (not half see-through)
         CHECK_NEAR(px(tri, 32, 24, "B"), 0.6, 1e-3);
+    });
+    test("SphericalTransform: reads only the input it needs, same picture in any tiles (#125)", [] {
+        // every projection pair, rotated: small tiles (each reading its own part of the input) give
+        // the same picture as one big tile
+        for (const char* in : {"latlong", "cube", "mirror ball", "fisheye"})
+            for (const char* outp : {"latlong", "cube", "fisheye"}) {
+                json nodes = json::array({
+                    {{"name", "Src"}, {"type", "Plasma"}, {"params", {{"size", 8}, {"format", {256, 128}}}}},
+                    {{"name", "ST"}, {"type", "SphericalTransform"}, {"inputs", {"Src"}},
+                     {"params", {{"input_type", in}, {"output_type", outp}, {"rotate", {20, 75, 10}}, {"format", {160, 120}}}}},
+                });
+                auto c1 = comp(nodes, 160, 120), c2 = comp(nodes, 160, 120);
+                auto big = render(*c1, "ST", 1, 4096), small = render(*c2, "ST", 1, 16);
+                double worst = 0;
+                for (int y = 0; y < 120; ++y)
+                    for (int x = 0; x < 160; ++x)
+                        for (const char* ch : {"R", "G", "B", "A"}) worst = std::max(worst, (double)std::fabs(px(big, x, y, ch) - px(small, x, y, ch)));
+                if (worst > 1e-5) std::printf("    %s -> %s: worst %.3g\n", in, outp, worst);
+                CHECK(worst < 1e-5);
+            }
+        // a tile of a lat-long that looks at a small part of a big input reads about that part
+        Engine e;
+        auto c = comp(json::array({{{"name", "Src"}, {"type", "Constant"}, {"params", {{"format", {4000, 2000}}}}},
+                                   {{"name", "ST"}, {"type", "SphericalTransform"}, {"inputs", {"Src"}}}}),
+                      64, 48);
+        Node* st = c->find("ST");
+        const Box r = st->roi(e, 0, Box(1000, 800, 1064, 864), 1);
+        std::printf("    a 64x64 tile reads %dx%d of the 4000x2000 input\n", r.width(), r.height());
+        CHECK(r.width() < 200 && r.height() < 200);
     });
     test("ScanlineRender: no seam where a sphere's texture wraps around (#125)", [] {
         // a flat grey texture on a sphere whose u = 0 / 1 seam faces the camera: every pixel on the

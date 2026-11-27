@@ -360,11 +360,11 @@ Pts toScreenPts(const Pts& pts, const ViewXf& xf) {
         ImVec2 s = xf.toScreen(p.x, p.y);
         p.x = s.x;
         p.y = s.y;
-        p.lx *= xf.zoom;
+        p.lx *= xf.zoom * xf.par;
         p.ly *= -xf.zoom;
-        p.rx *= xf.zoom;
+        p.rx *= xf.zoom * xf.par;
         p.ry *= -xf.zoom;
-        p.fx *= xf.zoom;
+        p.fx *= xf.zoom * xf.par;
         p.fy *= -xf.zoom;
     }
     return r;
@@ -3053,14 +3053,41 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
             else sh[i][key] = v;
         });
     };
+    // add an item to the selection (its points; a layer: listSel)
+    auto addSel = [&](int i) {
+        if (i < 0 || i >= (int)items.size()) return;
+        const json& s = items[i];
+        if (roto::isLayer(s)) r.listSel.insert(i);
+        int count = roto::isLayer(s) ? 0 : roto::isStroke(s) ? (int)s.value("points", json::array()).size() : (int)roto::pointsAt(s, frame).size();
+        for (int pi = 0; pi < count; ++pi) r.sel.insert({i, pi});
+    };
     auto select = [&](int i) {
         r.curShape = i;
         r.sel.clear();
         r.fsel.clear();
-        if (i < 0) return;
-        const json& s = items[i];
-        int count = roto::isLayer(s) ? 0 : roto::isStroke(s) ? (int)s.value("points", json::array()).size() : (int)roto::pointsAt(s, frame).size();
-        for (int pi = 0; pi < count; ++pi) r.sel.insert({i, pi});
+        r.listSel.clear();
+        r.listAnchor = i;
+        addSel(i);
+    };
+    for (auto it = r.listSel.begin(); it != r.listSel.end();)  // (gone, or no longer a layer)
+        it = *it < (int)items.size() && roto::isLayer(items[*it]) ? std::next(it) : r.listSel.erase(it);
+    std::set<int> picked = selItemsOf(r);
+    picked.insert(r.listSel.begin(), r.listSel.end());
+    if (r.curShape >= 0 && r.curShape < (int)items.size()) picked.insert(r.curShape);
+    // a click on a selected row's toggle (vis, lock...) sets every selected row the same way
+    auto setPicked = [&](int i, const std::string& key, json v) {
+        if (!picked.count(i) || picked.size() < 2) return setItem(i, key, v);
+        app.checkpoint();
+        const std::set<int> all = picked;
+        const bool lay = roto::isLayer(items[i]), str = roto::isStroke(items[i]);
+        const bool any = key == "visible" || key == "locked";  // (on every kind; the rest: the clicked row's kind)
+        std::set<int> to;
+        for (int j : all)
+            if (j < (int)items.size() && (any || (roto::isLayer(items[j]) == lay && roto::isStroke(items[j]) == str))) to.insert(j);
+        editShapes(app, name, [to, key, v](json& sh) {
+            for (int j : to)
+                if (j < (int)sh.size()) sh[j][key] = v;
+        });
     };
     // display order: each parent's children topmost first, a layer's contents under it
     std::vector<std::pair<int, int>> rows;  // (item, depth)
@@ -3074,7 +3101,8 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
             if (!layerNames.count(p)) p.clear();
             if (p != parent) continue;
             rows.push_back({i, depth});
-            if (roto::isLayer(items[i])) walk(items[i].value("name", std::string()), depth + 1);
+            if (roto::isLayer(items[i]) && !r.folded.count(name + "/" + items[i].value("name", std::string())))
+                walk(items[i].value("name", std::string()), depth + 1);
         }
     };
     walk("", 1);
@@ -3174,6 +3202,30 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Delete every stroke on this frame (undo brings them back)");
         ImGui::EndDisabled();
     }
+    if (ImGui::SmallButton("select all##list")) {
+        r.sel.clear();
+        r.fsel.clear();
+        r.listSel.clear();
+        for (auto& rw : rows) {  // what the list shows (its search, this frame only), and what's in folded layers
+            addSel(rw.first);
+            const json& it = items[rw.first];
+            if (roto::isLayer(it) && r.folded.count(name + "/" + it.value("name", std::string())))
+                for (int j = 0; j < (int)items.size(); ++j)
+                    if (layerInside(items, items[j], it.value("name", std::string()))) addSel(j);
+        }
+        if (!rows.empty()) r.curShape = rows.front().first;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Select everything in the list. Ctrl+click a row adds or takes it out, Shift+click selects a run;\n"
+                          "then the list's toggles and the settings tabs change all of them");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(picked.empty());
+    if (ImGui::SmallButton("select none##list")) select(-1);
+    ImGui::EndDisabled();
+    if (!picked.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu selected", picked.size());
+    }
     const float rowH = ImGui::GetFrameHeight();
     const float tableH = std::clamp((float)(rows.size() + 2) * (rowH + 2) + 6, rowH * 4, rowH * 14);
     const ImGuiTableFlags tf = ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
@@ -3238,10 +3290,39 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 const ImVec2 at = ImGui::GetCursorScreenPos();
                 ImGui::SetCursorScreenPos(ImVec2(at.x + 16, at.y));
                 ImGui::PushStyleColor(ImGuiCol_Header, ImGui::ColorConvertU32ToFloat4(themeAccent(70)));  // the selected row stands out
-                const bool picked = ImGui::Selectable(label.c_str(), r.curShape == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap |
-                                                                                           ImGuiSelectableFlags_AllowDoubleClick);
+                const bool clicked = ImGui::Selectable(label.c_str(), picked.count(i) > 0, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap |
+                                                                                               ImGuiSelectableFlags_AllowDoubleClick);
                 ImGui::PopStyleColor();
-                if (picked) {
+                const ImGuiIO& io = ImGui::GetIO();
+                if (clicked && io.KeyShift && r.listAnchor >= 0) {  // from the last click to this row
+                    int a = -1, b = -1;
+                    for (int k = 0; k < (int)rows.size(); ++k) {
+                        if (rows[k].first == r.listAnchor) a = k;
+                        if (rows[k].first == i) b = k;
+                    }
+                    if (a < 0) a = b;
+                    if (!io.KeyCtrl) {
+                        r.sel.clear();
+                        r.fsel.clear();
+                        r.listSel.clear();
+                    }
+                    for (int k = std::min(a, b); k <= std::max(a, b); ++k) addSel(rows[k].first);
+                    r.curShape = i;
+                } else if (clicked && io.KeyCtrl) {  // add or take out this row
+                    if (picked.count(i)) {
+                        for (auto it = r.sel.begin(); it != r.sel.end();) it = it->first == i ? r.sel.erase(it) : std::next(it);
+                        r.listSel.erase(i);
+                        if (r.curShape == i) {
+                            std::set<int> left = selItemsOf(r);
+                            left.insert(r.listSel.begin(), r.listSel.end());
+                            r.curShape = left.empty() ? -1 : *left.rbegin();
+                        }
+                    } else {
+                        addSel(i);
+                        r.curShape = i;
+                    }
+                    r.listAnchor = i;
+                } else if (clicked) {
                     select(i);
                     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         renaming = i;
@@ -3249,7 +3330,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                     }
                 }
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                    select(i);
+                    if (!picked.count(i)) select(i);  // (a right-click in the selection keeps it)
                     contextFor = i;
                 }
                 // drag to reorder, or onto a layer to put it in
@@ -3267,7 +3348,18 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 const std::string kind = s.value("kind", std::string("bezier"));
                 const Tool kt = layer ? Tool::Select : stroke ? Tool::Brush : kind == "ellipse" ? Tool::Ellipse : kind == "rectangle" ? Tool::CuspedRectangle
                                 : kind == "bspline" ? Tool::BSpline : !s.value("closed", true) ? Tool::OpenSpline : Tool::Bezier;
-                if (layer) {  // a folder
+                if (layer) {  // a folder, with a triangle to fold up what's in it
+                    const std::string fk = name + "/" + s.value("name", std::string());
+                    const bool fold = r.folded.count(fk) > 0;
+                    ImGui::SetCursorScreenPos(ImVec2(at.x - 12, at.y));
+                    if (ImGui::InvisibleButton("##fold", ImVec2(12, rowH))) {
+                        if (fold) r.folded.erase(fk);
+                        else r.folded.insert(fk);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip(fold ? "unfold: show what's in the layer" : "fold up what's in the layer");
+                    const ImVec2 tc(at.x - 7, at.y + rowH * 0.5f);
+                    if (fold) dl->AddTriangleFilled(ImVec2(tc.x - 2.5f, tc.y - 4), ImVec2(tc.x + 3, tc.y), ImVec2(tc.x - 2.5f, tc.y + 4), dim);
+                    else dl->AddTriangleFilled(ImVec2(tc.x - 4, tc.y - 2.5f), ImVec2(tc.x + 4, tc.y - 2.5f), ImVec2(tc.x, tc.y + 3), dim);
                     dl->AddRect(ImVec2(c.x - 6, c.y - 3), ImVec2(c.x + 6, c.y + 5), ic, 1.5f);
                     dl->AddRectFilled(ImVec2(c.x - 6, c.y - 5), ImVec2(c.x - 1, c.y - 3), ic);
                 } else {
@@ -3283,7 +3375,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                     if (vis) dl->AddCircleFilled(c, 2.2f, col);
                     else dl->AddLine(ImVec2(c.x - 7, c.y + 5), ImVec2(c.x + 7, c.y - 5), col, 1.3f);
                 }))
-                setItem(i, "visible", !vis);
+                setPicked(i, "visible", !vis);
             // locked
             ImGui::TableNextColumn();
             const bool lk = s.value("locked", false);
@@ -3292,7 +3384,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                     dl->PathArcTo(ImVec2(c.x, c.y - 1), 3.5f, 3.14159f, lk ? 6.2832f : 5.4f, 8);
                     dl->PathStroke(col, 0, 1.6f);
                 }))
-                setItem(i, "locked", !lk);
+                setPicked(i, "locked", !lk);
             // invert
             ImGui::TableNextColumn();
             if (!layer && !stroke) {
@@ -3302,7 +3394,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                         if (inv) dl->AddTriangleFilled(ImVec2(c.x - 6, c.y + 6), ImVec2(c.x + 6, c.y - 6), ImVec2(c.x + 6, c.y + 6), col);
                         else dl->AddLine(ImVec2(c.x - 6, c.y + 6), ImVec2(c.x + 6, c.y - 6), col, 1.3f);
                     }))
-                    setItem(i, "invert", !inv);
+                    setPicked(i, "invert", !inv);
             }
             // colour
             ImGui::TableNextColumn();
@@ -3316,9 +3408,18 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 if (ImGui::BeginPopup("##colpick")) {
                     if (ImGui::IsWindowAppearing()) app.checkpoint();
                     if (ImGui::ColorPicker3("##cp", col, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
-                        editShapes(app, name, [i, c = std::array<float, 4>{col[0], col[1], col[2], col[3]}](json& sh) {
-                            if (i < (int)sh.size()) sh[i]["color"] = {c[0], c[1], c[2], c[3]};
+                    {
+                        std::set<int> to{i};
+                        if (picked.count(i))  // the selected shapes / paint strokes too
+                            for (int j : picked)
+                                if (j < (int)items.size() && !roto::isLayer(items[j]) &&
+                                    (!roto::isStroke(items[j]) || items[j].value("tool", std::string("paint")) == "paint"))
+                                    to.insert(j);
+                        editShapes(app, name, [to, c = std::array<float, 4>{col[0], col[1], col[2], col[3]}](json& sh) {
+                            for (int j : to)
+                                if (j < (int)sh.size()) sh[j]["color"] = {c[0], c[1], c[2], c[3]};
                         });
+                    }
                     ImGui::EndPopup();
                 }
             }
@@ -3329,7 +3430,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 if (ImGui::Selectable((b + "##bl").c_str(), false)) ImGui::OpenPopup("##blendpick");
                 if (ImGui::BeginPopup("##blendpick")) {
                     for (const char* o : blendModes(n))
-                        if (ImGui::Selectable(o, b == o)) setItem(i, "blend", o);
+                        if (ImGui::Selectable(o, b == o)) setPicked(i, "blend", o);
                     ImGui::EndPopup();
                 }
             }
@@ -3340,7 +3441,7 @@ static void rotoCurvesTable(App& app, UiState& ui, Node* n) {
                 if (glyphCell("##mb", mb, "motion blur (the Motion Blur tab)", [&](ImVec2 c, ImU32 col) {
                         for (int k = 0; k < 3; ++k) dl->AddLine(ImVec2(c.x - 7, c.y - 4 + k * 4), ImVec2(c.x + 7, c.y - 4 + k * 4), col, 1.3f);
                     }))
-                    setItem(i, "motionblur", !mb);
+                    setPicked(i, "motionblur", !mb);
             }
             // life
             ImGui::TableNextColumn();
@@ -3505,9 +3606,13 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
         r.fsel.clear();
         r.curShape = -1;
     }
+    // A control's label: double-click it, or right-click it or the control, to reset (#20)
+    static bool rowDbl = false, rowCtx = false;
     auto row = [](const char* label) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", label);
+        rowDbl = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        rowCtx = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right);
         ImGui::SameLine(kit::labelWidth());
     };
     auto setParam = [&](const std::string& key, json v) {
@@ -3524,18 +3629,61 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
     const json& s = cs >= 0 ? items[cs] : kNone;
     const bool stroke = cs >= 0 && roto::isStroke(s);
     const bool layer = cs >= 0 && roto::isLayer(s);
+    // The items a setting goes to: the shown one, and with it every other selected item of its kind
+    // (shapes, strokes of the same brush, layers), so a setting changes the whole selection (#20)
+    std::set<int> targets;
+    if (cs >= 0) {
+        targets.insert(cs);
+        std::set<int> sel = selItemsOf(r);
+        sel.insert(r.listSel.begin(), r.listSel.end());
+        if (sel.count(cs))
+            for (int j : sel)
+                if (j < (int)items.size() && roto::isLayer(items[j]) == layer && roto::isStroke(items[j]) == stroke &&
+                    (!stroke || items[j].value("tool", std::string("paint")) == s.value("tool", std::string("paint"))))
+                    targets.insert(j);
+    }
     auto itemSet = [&](const std::string& key, json v) {
-        app.edit([name, cs, key, v](Comp& c) {
+        app.edit([name, targets, key, v](Comp& c) {
             Node* x = c.find(name);
-            if (!x || !x->params.data["shapes"].is_array() || cs < 0 || cs >= (int)x->params.data["shapes"].size()) return;
-            x->params.data["shapes"][cs][key] = v;
+            if (!x || !x->params.data["shapes"].is_array()) return;
+            for (int j : targets)
+                if (j < (int)x->params.data["shapes"].size()) x->params.data["shapes"][j][key] = v;
             x->paramsChanged();
         });
     };
     auto itemEdit = [&](std::function<void(json&)> fn) {
-        editShapes(app, name, [cs, fn](json& sh) {
-            if (cs >= 0 && cs < (int)sh.size()) fn(sh[cs]);
+        editShapes(app, name, [targets, fn](json& sh) {
+            for (int j : targets)
+                if (j < (int)sh.size()) fn(sh[j]);
         });
+    };
+    // Called after a control: reset its value to the default (the key erased) from its label or a
+    // right-click menu. node: a key of the node's own; else of the selected shape or stroke.
+    // onItem false: the control has a right-click menu of its own (colours), so only the label.
+    auto reset = [&](const std::string& key, bool node = false, bool onItem = true) {
+        bool doIt = rowDbl;
+        rowDbl = false;
+        const std::string pid = "##reset_" + key;
+        if ((onItem && ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) || rowCtx) ImGui::OpenPopup(pid.c_str());
+        rowCtx = false;
+        if (ImGui::BeginPopup(pid.c_str())) {
+            if (ImGui::MenuItem("Reset to default")) doIt = true;
+            ImGui::EndPopup();
+        }
+        if (!doIt) return;
+        app.checkpoint();
+        if (node)
+            app.edit([name, key](Comp& c) {
+                if (Node* x = c.find(name)) {
+                    x->params.data.erase(key);
+                    x->paramsChanged();
+                }
+            });
+        else if (key.rfind("transform/", 0) == 0)
+            itemEdit([key](json& x) {
+                if (x.contains("transform") && x["transform"].is_object()) x["transform"].erase(key.substr(10));
+            });
+        else itemEdit([key](json& x) { x.erase(key); });
     };
     auto number = [&](const char* label, const char* key, double def, float lo, float hi, const char* fmt, bool drag = false) {
         row(label);
@@ -3545,6 +3693,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                             : ImGui::SliderFloat((std::string("##") + key).c_str(), &v, lo, hi, fmt);
         if (ImGui::IsItemActivated()) app.checkpoint();
         if (changed) itemSet(key, v);
+        reset(key);
         return changed;
     };
     auto noShape = [&](const char* what) {
@@ -3563,10 +3712,12 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     if (ImGui::Selectable(o, out == o)) setParam("output", o);
                 ImGui::EndCombo();
             }
+            reset("output", true);
             if (out == "alpha") {
                 ImGui::SameLine();
                 bool pm = n->params.flag("premultiply", false);
                 if (kit::checkbox("premultiply", &pm)) setParam("premultiply", pm);
+                reset("premultiply", true);
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("multiply the background's rgb by the new alpha");
             }
             row("clip to");
@@ -3577,11 +3728,13 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     if (ImGui::Selectable(o, clip == o)) setParam("clip_to", o);
                 ImGui::EndCombo();
             }
+            reset("clip_to", true);
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Where the output is kept: everywhere (no clip / union bbox), the input's bbox,\nthe format, or where the input's bbox and the shapes meet");
             ImGui::SameLine();
             bool rep = n->params.flag("replace", false);
             if (kit::checkbox("replace", &rep)) setParam("replace", rep);
+            reset("replace", true);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The output channels start empty: only the shapes are in them (the input's are replaced)");
         }
         if (paint) {
@@ -3626,6 +3779,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 app.checkpoint();
                 itemSet("feather_on", on);
             }
+            reset("feather_on");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("The feather (shape and point feathers) on or off");
             ImGui::BeginDisabled(!fOn);
             row("feather falloff");
@@ -3635,6 +3789,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 const bool ch = ImGui::SliderFloat("##falloff", &v, 0.1f, 4, "%.2f");
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (ch) itemSet("falloff", v);
+                reset("falloff");
                 ImGui::SameLine();
                 const std::string ft = s.value("feather_type", std::string("smooth"));
                 ImGui::SetNextItemWidth(82);
@@ -3646,6 +3801,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                         }
                     ImGui::EndCombo();
                 }
+                reset("feather_type");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("The falloff's curve: linear, smooth, or eased at the outer (smooth0) / inner (smooth1) end");
             }
@@ -3706,11 +3862,13 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 app.checkpoint();
                 itemSet("visible", vis);
             }
+            reset("visible");
             ImGui::SameLine(0, 16);
             if (kit::checkbox("locked", &lk)) {
                 app.checkpoint();
                 itemSet("locked", lk);
             }
+            reset("locked");
         }
         rotoCurvesTable(app, ui, n);
     }
@@ -3738,11 +3896,17 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
             if (ch) {
                 std::string k = key;
                 double a = v[0], b = v[1];
-                itemEdit([k, a, b, frame](json& x) {
+                auto fn = [k, a, b, frame](json& x) {
                     setTransformValue(x, k.c_str(), 0, frame, a, false);
                     setTransformValue(x, k.c_str(), 1, frame, b, false);
-                });
+                };
+                if (k == "center")  // (each shape's own pivot: only the shown one's)
+                    editShapes(app, name, [cs, fn](json& sh) {
+                        if (cs >= 0 && cs < (int)sh.size()) fn(sh[cs]);
+                    });
+                else itemEdit(fn);
             }
+            reset(std::string("transform/") + key);
         };
         field2("translate", "translate", 0.0, 0.5f);
         row("rotate");
@@ -3755,6 +3919,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 double a = v;
                 itemEdit([a, frame](json& x) { setTransformValue(x, "rotate", -1, frame, a, false); });
             }
+            reset("transform/rotate");
         }
         field2("scale", "scale", 1.0, 0.005f);
         field2("skew", "skew", 0.0, 0.005f);
@@ -3834,6 +3999,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
         if (ImGui::GetActiveID() != ImGui::GetID("##mb")) mbEdit = mb;
         ImGui::SliderInt("##mb", &mbEdit, 0, 32, mbEdit == 0 ? "off" : "%d samples");
         if (ImGui::IsItemDeactivatedAfterEdit()) setParam("motionblur", mbEdit);
+        reset("motionblur", true);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Samples across the shutter for moving shapes (0 = off)");
         row("shutter");
         float sh = (float)n->params.num("shutter", frame, 0.5);
@@ -3846,6 +4012,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 if (Node* x = c.find(name)) x->params.data["shutter"] = v;
             });
         }
+        reset("shutter", true);
         row("shutter offset");
         std::string off = n->params.str("shutter_offset", "centred");
         ImGui::SetNextItemWidth(110);
@@ -3854,6 +4021,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 if (ImGui::Selectable(o, off == o)) setParam("shutter_offset", o);
             ImGui::EndCombo();
         }
+        reset("shutter_offset", true);
         if (cs >= 0 && !layer && !stroke) {
             row(s.value("name", "shape").c_str());
             bool on = s.value("motionblur", true);
@@ -3861,6 +4029,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 app.checkpoint();
                 itemSet("motionblur", on);
             }
+            reset("motionblur");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: this shape stays sharp (drawn as on the frame) while the others blur");
         }
     }
@@ -3883,6 +4052,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 bool ch = ImGui::ColorEdit4("##col", col, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (ch) itemSet("color", json::array({col[0], col[1], col[2], col[3]}));
+                reset("color", false, false);
             }
         } else {
             // (opacity and feather: in the shape's header above, on every panel; drawn here too they were the
@@ -3893,6 +4063,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 app.checkpoint();
                 itemSet("closed", closed);
             }
+            reset("closed");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Off: an open spline, drawn as a line `width` wide");
             if (!closed) number("width", "width", 10.0, 0.5f, 1000, "%.1f px", true);
             if (s.value("kind", std::string()) == "bspline") number("tension", "tension", 0.0, 0, 1, "%.2f");
@@ -3911,6 +4082,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 app.checkpoint();
                 itemSet("invert", inv);
             }
+            reset("invert");
             row("blend");
             {
                 std::string b = s.value("blend", std::string("over"));
@@ -3923,6 +4095,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                         }
                     ImGui::EndCombo();
                 }
+                reset("blend");
             }
             if (n->params.str("output", paint ? "rgba" : "alpha") != "alpha") {
                 row("color");
@@ -3932,6 +4105,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 bool ch = ImGui::ColorEdit3("##col", col, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (ch) itemSet("color", json::array({col[0], col[1], col[2], 1.0}));
+                reset("color", false, false);
             }
         }
     }
@@ -4039,7 +4213,9 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                                 bake.push_back({f, out});
                             }
                             app.checkpoint();
-                            itemEdit([bake](json& x) {
+                            editShapes(app, name, [cs, bake](json& sh) {  // (this shape's own points: not the selection's)
+                                if (cs < 0 || cs >= (int)sh.size()) return;
+                                json& x = sh[cs];
                                 x.erase("transform");
                                 x.erase("anim");
                                 x.erase("points");
@@ -4104,6 +4280,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     }
                 ImGui::EndCombo();
             }
+            reset("tool");
             number("opacity", "opacity", 1.0, 0, 1, "%.3f");
             number("size", "size", 25.0, 1, 2000, "%.0f px", true);
             number("hardness", "hardness", 0.2, 0, 1, "%.2f");
@@ -4128,6 +4305,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 bool ch = ImGui::ColorEdit4("##col", col, ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (ch) itemSet("color", json::array({col[0], col[1], col[2], col[3]}));
+                reset("color", false, false);
             }
             row("build up");
             bool bu = s.value("build_up", false);
@@ -4135,6 +4313,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 app.checkpoint();
                 itemSet("build_up", bu);
             }
+            reset("build_up");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Overlapping dabs add up (off: as strong as the strongest dab)");
             row("write on");
             {
@@ -4145,6 +4324,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 const bool ch = ImGui::DragFloat2("##wo", wo, 0.005f, 0, 1, "%.3f");
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (ch) itemSet("write_on", json::array({std::clamp(wo[0], 0.0f, 1.0f), std::clamp(std::max(wo[0], wo[1]), 0.0f, 1.0f)}));
+                reset("write_on");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("start, end: the part of the stroke drawn (0 to 1 along it); key them to write it on");
             }
             row("pressure alters");
@@ -4160,6 +4340,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     app.checkpoint();
                     itemSet("pressure", {{"size", ps}, {"opacity", po}, {"hardness", ph}});
                 }
+                reset("pressure");
             }
         }
     }
@@ -4179,12 +4360,14 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     }
                 ImGui::EndCombo();
             }
+            reset("source");
             row("time offset");
             int to = (int)s.value("time_offset", 0.0);
             ImGui::SetNextItemWidth(90);
             const bool ch = ImGui::DragInt("##ctoff", &to, 0.1f);
             if (ImGui::IsItemActivated()) app.checkpoint();
             if (ch) itemSet("time_offset", to);
+            reset("time_offset");
             ImGui::SameLine();
             const std::string mode = s.value("time_mode", std::string("relative"));
             ImGui::SetNextItemWidth(90);
@@ -4196,6 +4379,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     }
                 ImGui::EndCombo();
             }
+            reset("time_mode");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("relative: frames away from the current one; absolute: that frame");
             row("align");
             {
@@ -4204,6 +4388,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                     app.checkpoint();
                     itemSet("align", al ? json("flow") : json(""));
                 }
+                reset("align");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("From another frame: its picture lined up with this one along the optical flow,\n"
                                       "so a patch from a moving plate fits (slower to render)");
@@ -4217,6 +4402,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 const bool c2 = ImGui::DragFloat2("##coff", off, 0.5f);
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (c2) itemSet("offset", json::array({off[0], off[1]}));
+                reset("offset");
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("from the source to where it's painted, in pixels");
                 number("rotate", "source_rotate", 0.0, -360, 360, "%.1f deg", true);
                 number("scale", "source_scale", 1.0, 0.05f, 20, "%.3f", true);
@@ -4243,6 +4429,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                         }
                     ImGui::EndCombo();
                 }
+                reset("blur_type");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("centred: across the edge; inner: only inside it (the shape never grows);\nouter: only outside it (the inside stays solid)");
             }
@@ -4259,6 +4446,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                         }
                     ImGui::EndCombo();
                 }
+                reset("channel");
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("output: the node's output channels (and the shape's colour). R, G, B or A: the shape is a\n"
                                       "plain matte in that channel only - several mattes in one image, one per channel");
@@ -4268,6 +4456,7 @@ static void rotoSection(App& app, UiState& ui, Node* n, int section, bool combin
                 const ImU32 c = shapeUiColor(s, cs);
                 float col[3] = {((c >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f, ((c >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f, ((c >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f};
                 if (ImGui::ColorEdit3("##uicol", col, ImGuiColorEditFlags_NoInputs)) itemSet("ui_color", {col[0], col[1], col[2]});
+                reset("ui_color", false, false);
                 if (ImGui::IsItemActivated()) app.checkpoint();
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("The shape's outline in the viewer (not its render)");
             }

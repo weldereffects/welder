@@ -1291,7 +1291,7 @@ int main(int argc, char** argv) {
         }
         // STRATA_TEST_KEYS=tok;tok;...: one step every 12 frames from frame 15, then the viewers' routing is
         // printed. Tokens: "at=x,y" (move the mouse), "sel=Node" (select it), "key=[ctrl+][shift+]K"
-        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "dclick=x,y" (double),
+        // (K: a digit, a letter, "grave", f1-f12), "click=x,y", "dclick=x,y" (double), "ctrlclick=x,y", "shiftclick=x,y",
         // "rclick=x,y" (right), "drag=x0,y0,x1,y1", "circle=cx,cy,r" (a drag round a circle).
         bool keysTest = false;
         if (const char* tk = std::getenv("STRATA_TEST_KEYS"); tk && *tk && !opt.screenshot.empty()) {
@@ -1344,10 +1344,12 @@ int main(int argc, char** argv) {
                             held = (ImGuiKey)(ImGuiKey_F1 + std::atoi(kk.c_str() + 1) - 1);
                         if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
                         if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
-                    } else if (what == "click" || what == "dclick" || what == "rclick") {
+                    } else if (what == "click" || what == "dclick" || what == "rclick" || what == "ctrlclick" || what == "shiftclick") {
                         float x = 0, y = 0;
                         std::sscanf(arg.c_str(), "%f,%f", &x, &y);
                         tio.AddMousePosEvent(x, y);
+                        if (what == "ctrlclick") { tio.AddKeyEvent(ImGuiMod_Ctrl, true); tio.AddKeyEvent(ImGuiKey_LeftCtrl, true); }
+                        if (what == "shiftclick") { tio.AddKeyEvent(ImGuiMod_Shift, true); tio.AddKeyEvent(ImGuiKey_LeftShift, true); }
                     } else if (what == "circle") {  // circle=cx,cy,r: a drag once round a circle (freehand drawing)
                         std::sscanf(arg.c_str(), "%f,%f,%f", &drag[0], &drag[1], &drag[2]);
                         tio.AddMousePosEvent(drag[0] + drag[2], drag[1]);
@@ -1460,10 +1462,15 @@ int main(int argc, char** argv) {
                     if (heldCtrl) { tio.AddKeyEvent(ImGuiMod_Ctrl, false); tio.AddKeyEvent(ImGuiKey_LeftCtrl, false); }
                     if (heldShift) { tio.AddKeyEvent(ImGuiMod_Shift, false); tio.AddKeyEvent(ImGuiKey_LeftShift, false); }
                     held = ImGuiKey_None;
-                } else if (what == "click" && k == 2) {
+                } else if ((what == "click" || what == "ctrlclick" || what == "shiftclick") && k == 2) {
                     tio.AddMouseButtonEvent(0, true);
-                } else if (what == "click" && k == 4) {
+                } else if ((what == "click" || what == "ctrlclick" || what == "shiftclick") && k == 4) {
                     tio.AddMouseButtonEvent(0, false);
+                } else if ((what == "ctrlclick" || what == "shiftclick") && k == 6) {
+                    tio.AddKeyEvent(ImGuiMod_Ctrl, false);
+                    tio.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+                    tio.AddKeyEvent(ImGuiMod_Shift, false);
+                    tio.AddKeyEvent(ImGuiKey_LeftShift, false);
                 } else if (what == "dclick" && (k == 2 || k == 4)) {  // two quick clicks
                     tio.AddMouseButtonEvent(0, true);
                 } else if (what == "dclick" && (k == 3 || k == 5)) {
@@ -1581,6 +1588,44 @@ int main(int argc, char** argv) {
                     if (n->type == "Card" || n->type == "Camera" || n->type == "Card3D")
                         std::printf("DRAG %s translate %s\n", n->name.c_str(), n->params.has("translate") ? n->params.data["translate"].dump().substr(0, 120).c_str() : "-");
                 }
+        }
+        // STRATA_TEST_PEN=x,y: a pen's moves at that window position (#104): side button (middle) drag,
+        // then the tip (left) down too, then Ctrl held; prints the 2D and 3D viewers' view after each
+        bool penTest = false;
+        if (const char* tp = std::getenv("STRATA_TEST_PEN"); tp && *tp && !opt.screenshot.empty()) {
+            float x = 0, y = 0;
+            std::sscanf(tp, "%f,%f", &x, &y);
+            ImGuiIO& tio = ImGui::GetIO();
+            penTest = frameCount < 80;
+            static float px = 0, py = 0;
+            auto report = [&](const char* what) {
+                const View3DState& d = ui.v3d;
+                std::printf("PEN %s: 2D zoom %.3f pan %.1f %.1f | 3D dist %.3f yaw %.2f pitch %.2f coi %.3f %.3f %.3f\n", what, ui.viewer.zoom,
+                            ui.viewer.pan.x, ui.viewer.pan.y, d.dist, d.yaw, d.pitch, d.coi[0], d.coi[1], d.coi[2]);
+                std::fflush(stdout);
+            };
+            if (frameCount == 18) {
+                px = x, py = y;
+                tio.AddMousePosEvent(px, py);
+                report("start");
+            } else if (frameCount == 20) tio.AddMouseButtonEvent(2, true);
+            else if (frameCount > 20 && frameCount <= 30) tio.AddMousePosEvent(px += 4, py);
+            else if (frameCount == 31) report("middle drag");
+            else if (frameCount == 32) tio.AddMouseButtonEvent(0, true);
+            else if (frameCount > 32 && frameCount <= 42) tio.AddMousePosEvent(px, py -= 4);
+            else if (frameCount == 43) {
+                tio.AddMouseButtonEvent(0, false);
+                report("middle + left");
+            } else if (frameCount == 45) {
+                tio.AddKeyEvent(ImGuiMod_Ctrl, true);
+                tio.AddKeyEvent(ImGuiKey_LeftCtrl, true);
+            } else if (frameCount > 46 && frameCount <= 56) tio.AddMousePosEvent(px += 4, py);
+            else if (frameCount == 57) {
+                tio.AddMouseButtonEvent(2, false);
+                tio.AddKeyEvent(ImGuiMod_Ctrl, false);
+                tio.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+                report("ctrl + middle");
+            }
         }
         // STRATA_TEST_FLOWPAINT=x0,y0,x1,y1: drag a curved stroke between two window positions
         // (Ctrl held when x0 is negative: erase), then print the FlowField's strokes
@@ -1758,8 +1803,39 @@ int main(int argc, char** argv) {
                 ui.viewer.reqRegion = Box();
             }
         }
+        // STRATA_TEST_HOLD=<seconds> (with STRATA_TEST_ZOOM=<z>): sit on the frame at that zoom and
+        // print each second whether the viewer is still rendering (#125: a viewer that never settles)
+        bool holdTest = false;
+        if (const char* th = std::getenv("STRATA_TEST_HOLD"); th && *th && !opt.screenshot.empty()) {
+            static double h0 = -1;
+            static int lastSec = -1, serials = 0;
+            static uint64_t lastSerial = 0;
+            if (const char* tz = std::getenv("STRATA_TEST_ZOOM"); tz && frameCount >= 5) {
+                ui.viewer.zoom = (float)std::atof(tz);
+                ui.viewer.fitPending = false;
+                ui.viewer.checkOnScreen = false;
+            }
+            if (h0 < 0 && frameCount == 6) h0 = glfwGetTime();
+            if (h0 >= 0) {
+                const double el = glfwGetTime() - h0;
+                const ViewResult r = app.result();
+                if (r.serial != lastSerial) {
+                    lastSerial = r.serial;
+                    ++serials;
+                }
+                if ((int)el > lastSec) {
+                    lastSec = (int)el;
+                    std::printf("HOLD %ds: rendering %d, results so far %d, last %.0f ms, scale %g, zoom %.2f\n", lastSec, (int)app.rendering(), serials,
+                                app.lastRenderMs(), r.scale, ui.viewer.zoom);
+                    std::fflush(stdout);
+                }
+                holdTest = el < std::atof(th);
+            } else {
+                holdTest = true;
+            }
+        }
         // STRATA_TEST_PLAY=<seconds>: play from the first frame, then report the frames shown per second
-        bool playTest = false;
+        bool playTest = holdTest;
         if (const char* tp = std::getenv("STRATA_TEST_PLAY"); tp && *tp && !opt.screenshot.empty()) {
             static double t0 = -1, secs = std::atof(tp), last = -1e9;
             static int shown = 0, loops = 0;
@@ -2104,13 +2180,13 @@ int main(int argc, char** argv) {
                     scanResult = conflicts.empty() ? 0 : 3;
                     break;
                 }
-            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !deepHoverTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !markupTest && !vanishTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
+            } else if (frameCount > 8 && (settled > 4 || forceShot) && !pipeTest && !playTest && !altTest && !vclickTest && !deepHoverTest && !vdragTest && !sc3Test && !stabTest && !flowTest && !penTest && !markupTest && !vanishTest && !matchTest && !dragTest && !camTest && !swapTest && !exposeTest && !shakeTest && !alignTest && !altDragTest && !messTest && !panelDragTest && !actionsTest && !keysTest && !menuTest && !tmTest && !reTest && !pcTest && !trackTest) {
                 if (std::getenv("STRATA_TEST_OPEN")) std::fprintf(stderr, "OPENTEST viewed '%s'\n", app.viewed.c_str());
                 bool ok = savePng(opt.screenshot, fbw, fbh);
                 std::printf("%s %s (%dx%d)\n", ok ? "wrote" : "failed to write", opt.screenshot.c_str(), fbw, fbh);
                 break;
             }
-            if (frameCount > 2000 && !scanning) {
+            if (frameCount > 2000 && !scanning && !holdTest) {
                 std::fprintf(stderr, "screenshot timed out\n");
                 break;
             }

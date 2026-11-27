@@ -11,6 +11,10 @@
 
 namespace strata::ui::kit {
 
+// Right-click menu for the text field just drawn (#99): cut / copy / paste / copy all / clear.
+// `text` is the field's value; true when the menu changed it (apply it as an edit).
+bool textMenu(std::string& text);
+
 // The knob label column (scales with the font).
 float labelWidth();
 // A row's label, then the cursor on the field column.

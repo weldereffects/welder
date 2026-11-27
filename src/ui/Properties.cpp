@@ -743,7 +743,11 @@ void numericKnob(Ctx& c, const KnobDef& k) {
         kit::altClickItem();
         startGesture();
         ImGui::SameLine();
-        float rest = avail - ImGui::GetFrameHeight() * 2 - 30 - ImGui::GetStyle().ItemSpacing.x * 2;  // room for "1|4" and the pipette
+        // what's left after the swatch, the "1|4" button and the pipette (measured: the key button
+        // then lines up with the other rows', #108)
+        const float sp = ImGui::GetStyle().ItemSpacing.x;
+        const float small = ImGui::CalcTextSize("4").x + ImGui::GetStyle().FramePadding.x * 2;
+        float rest = avail - ImGui::GetFrameHeight() * 2 - small - sp * 3;
         if (split) {
             ImGui::SetNextItemWidth(rest);
             float fv[4] = {col[0], col[1], col[2], col[3]};
@@ -754,12 +758,13 @@ void numericKnob(Ctx& c, const KnobDef& k) {
             startGesture();
         } else {
             double fv = col[0];
-            const float fw = std::round(ImGui::GetFontSize() * 4.6f);
+            // the value field gives way when the panel is narrow, so the row ends where the others do
+            const float fw = std::max(36.0f, std::min(std::round(ImGui::GetFontSize() * 4.6f), rest - sp - 40));
             if (kit::valueField("##v", &fv, fw, nullptr, false, dragSpeed)) commit(-1, fv);
             startGesture();
             ImGui::SameLine();
             double sv = fv;
-            if (kit::tickSlider("##s", &sv, k.lo, k.hi, std::max(30.0f, rest - fw - 8))) commit(-1, sv);
+            if (kit::tickSlider("##s", &sv, k.lo, k.hi, std::max(20.0f, rest - fw - sp))) commit(-1, sv);
             startGesture();
         }
         ImGui::SameLine();
@@ -839,6 +844,11 @@ void stringEdit(Ctx& c, const KnobDef& k, const std::string& curVal, float width
     ImGui::SetNextItemWidth(width);
     bool enter = ImGui::InputText("##t", tmp, sizeof(tmp), ImGuiInputTextFlags_EnterReturnsTrue);
     buf = tmp;
+    std::string edited = curVal;
+    if (kit::textMenu(edited)) {
+        buf = edited;
+        enter = true;
+    }
     if ((enter || ImGui::IsItemDeactivatedAfterEdit()) && buf != curVal) {
         c.app.checkpoint();
         std::string val = buf;
@@ -856,7 +866,10 @@ void textEdit(Ctx& c, const KnobDef& k, const std::string& curVal, float width) 
     ImGui::InputTextMultiline("##txt", tmp.data(), tmp.size(), ImVec2(width, ImGui::GetTextLineHeight() * 8),
                               ImGuiInputTextFlags_AllowTabInput);
     buf = tmp.data();
-    if (ImGui::IsItemDeactivatedAfterEdit() && buf != curVal) {
+    std::string edited = curVal;
+    const bool menu = kit::textMenu(edited);
+    if (menu) buf = edited;
+    if ((menu || ImGui::IsItemDeactivatedAfterEdit()) && buf != curVal) {
         c.app.checkpoint();
         std::string val = buf;
         change(c, k.name, [val](json& j) { j = val; });
@@ -1715,7 +1728,9 @@ void knobBody(Ctx& c, const KnobDef& k) {
     } else if (k.type == Knob::File && k.name == "font") {
         // a font: pick one installed on this machine by name (#108), or browse for a font file
         const std::string cur = p.str(k.name, k.def.is_string() ? k.def.get<std::string>() : "");
-        stringEdit(c, k, cur, avail - 56);
+        // room for the font list arrow and the browse button (#108: "..." sat partly off the panel)
+        const float sp = ImGui::GetStyle().ItemSpacing.x;
+        stringEdit(c, k, cur, avail - ImGui::GetFrameHeight() - (ImGui::CalcTextSize("...").x + ImGui::GetStyle().FramePadding.x * 2) - sp * 2);
         ImGui::SameLine();
         if (ImGui::ArrowButton("##fonts", ImGuiDir_Down)) ImGui::OpenPopup("##fontlist");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fonts installed on this computer");
@@ -3413,10 +3428,24 @@ static void nodePanelBody(App& app, UiState& ui, Node* n, bool* keepOpen) {
                 if (!k.name.empty() && k.type != Knob::File && k.type != Knob::Button && k.type != Knob::Divider &&
                     k.type != Knob::Info && k.type != Knob::Json && k.type != Knob::Text)
                     keys.push_back(k.name);
+            // the roto nodes draw their own panel (no knobs): their node-wide settings, and every shape's
+            // and stroke's settings back to default; the shapes, strokes, transforms and keys stay (#20)
+            const bool roto = n->type == "Roto" || n->type == "RotoPaint" || n->type == "PowerRoto" || n->type == "SplineWarp";
+            if (roto)
+                for (const char* k : {"output", "premultiply", "clip_to", "replace", "motionblur", "shutter", "shutter_offset"}) keys.push_back(k);
             app.checkpoint();
             std::string name = n->name;
-            app.edit([name, keys](Comp& comp) {
+            app.edit([name, keys, roto](Comp& comp) {
                 if (Node* nd = comp.find(name)) {
+                    if (roto && nd->params.data.contains("shapes") && nd->params.data["shapes"].is_array())
+                        for (json& it : nd->params.data["shapes"]) {
+                            if (!it.is_object()) continue;
+                            for (const char* k : {"opacity", "feather", "feather_on", "falloff", "feather_type", "visible", "locked",
+                                                  "motionblur", "invert", "blend", "color", "size", "hardness", "spacing", "effect",
+                                                  "grain", "repair_gap", "build_up", "write_on", "pressure", "time_offset", "time_mode",
+                                                  "align", "grow", "blur", "blur_type", "channel", "tension"})
+                                it.erase(k);  // (not their transforms, points or clone offsets: the work itself)
+                        }
                     for (auto& key : keys) eraseParam(nd, key);
                     nd->paramsChanged();
                 }

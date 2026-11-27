@@ -1568,6 +1568,15 @@ private:
         const auto& pts = draw.pts;
         const roto::Brush brush = roto::brushOf(s);
         const int iA = img.ch("A");
+        // Every stroke has an alpha, as paint does (#20): its coverage. With "replace" the output starts
+        // empty, so the tools that work on the picture (blur, smear, dodge...) take it from the input,
+        // and the result is the stroke alone, premultiplied, ready to merge over the plate.
+        const bool replaced = params.flag("replace", false);
+        auto under = [&](int k, int x, int y, float here) {  // what the tool works on at a pixel
+            if (!replaced) return here;
+            const int bc = bg ? bg->ch(img.channels[k]) : -1;
+            return bc >= 0 && bg->bounds.contains(x, y) ? bg->at(x, y, bc) : 0.0f;
+        };
 
         if (tool == "smear") {  // drag the picture along the stroke, dab by dab
             const auto dabs = roto::strokeDabs(pts, sc, brush);
@@ -1589,7 +1598,9 @@ private:
                             const Box& T = a.region;  // (what img holds)
                             const bool inside = sx >= T.x1 && sx < T.x2 && sy >= T.y1 && sy < T.y2;
                             const int bc = bg ? bg->ch(img.channels[k]) : -1;
-                            const float src = inside ? sampleBilinear(img, k, sx, sy) : bc >= 0 ? sampleBilinear(*bg, bc, sx, sy) : px[k];
+                            const float src = k == iA ? 1.0f
+                                              : inside && !replaced ? sampleBilinear(img, k, sx, sy)
+                                              : bc >= 0 ? sampleBilinear(*bg, bc, sx, sy) : px[k];
                             px[k] = src * w + px[k] * (1 - w);
                         }
                     }
@@ -1688,9 +1699,12 @@ private:
                     const std::string& chn = img.channels[k];
                     const bool alpha = k == iA;
                     float src;
-                    if (tool == "eraser") {
+                    const float here = under(k, px, y, p[k]);
+                    if (tool == "eraser") {  // back to the input (replace: to nothing)
                         int bc = bg ? bg->ch(chn) : -1;
-                        src = bc >= 0 && bg->bounds.contains(px, y) ? bg->at(px, y, bc) : 0.0f;
+                        src = !replaced && bc >= 0 && bg->bounds.contains(px, y) ? bg->at(px, y, bc) : 0.0f;
+                    } else if (alpha && tool != "paint") {
+                        src = 1.0f;  // (the stroke's coverage, as paint's: also a clone of an RGB plate read with alpha 0)
                     } else if (tool == "clone" || tool == "reveal") {
                         const int bc = srcImg ? srcImg->ch(chn) : -1;
                         if (bc < 0) src = 0.0f;
@@ -1703,17 +1717,17 @@ private:
                         }
                     } else if (tool == "repair") {
                         const int pc = prevImg ? prevImg->ch(chn) : -1, nc2 = nextImg ? nextImg->ch(chn) : -1;
-                        const float a0 = p[k], a1 = pc >= 0 ? prevImg->at(px, y, pc) : p[k], a2 = nc2 >= 0 ? nextImg->at(px, y, nc2) : p[k];
+                        const float a0 = here, a1 = pc >= 0 ? prevImg->at(px, y, pc) : here, a2 = nc2 >= 0 ? nextImg->at(px, y, nc2) : here;
                         src = std::max(std::min(a0, a1), std::min(std::max(a0, a1), a2));  // the median
                     } else if (tool == "blur") {
-                        src = blurred.empty() ? p[k] : blurred[((size_t)(y - R.y1) * W + x) * nch + k];
+                        src = blurred.empty() ? here : blurred[((size_t)(y - R.y1) * W + x) * nch + k];
                     } else if (tool == "sharpen") {  // the detail pushed: p + (p - blurred) * effect
-                        const float bl = blurred.empty() ? p[k] : blurred[((size_t)(y - R.y1) * W + x) * nch + k];
-                        src = alpha ? p[k] : p[k] + (p[k] - bl) * (float)effect;
+                        const float bl = blurred.empty() ? here : blurred[((size_t)(y - R.y1) * W + x) * nch + k];
+                        src = here + (here - bl) * (float)effect;
                     } else if (tool == "dodge") {  // brighter
-                        src = alpha ? p[k] : p[k] * (1.0f + 0.5f * (float)effect);
+                        src = here * (1.0f + 0.5f * (float)effect);
                     } else if (tool == "burn") {  // darker
-                        src = alpha ? p[k] : p[k] * std::max(0.0f, 1.0f - 0.5f * (float)effect);
+                        src = here * std::max(0.0f, 1.0f - 0.5f * (float)effect);
                     } else {  // paint: colour premultiplied by the brush alpha
                         src = chn == "A" ? col[3] : chn == "R" ? col[0] * col[3] : chn == "G" ? col[1] * col[3]
                               : chn == "B" ? col[2] * col[3] : 0.0f;

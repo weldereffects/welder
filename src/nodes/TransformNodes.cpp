@@ -1689,6 +1689,30 @@ bool fromDir(Proj p, const double d[3], double& u, double& v) {
 }
 
 class SphericalTransformNode : public Node {
+    // output pixel -> input pixel (the rotation applied to the output's directions)
+    struct Mapper {
+        double cx, sx, cy, sy, cz, sz;
+        bool source(Proj po, Proj pi, double x, double y, const Format& fo, const Format& fi, double& sxp, double& syp) const {
+            double d[3];
+            if (!toDir(po, x / fo.width, y / fo.height, d)) return false;
+            // Y (pan), then X (tilt), then Z (roll)
+            double x1 = cy * d[0] + sy * d[2], z1 = -sy * d[0] + cy * d[2], y1 = d[1];
+            double y2 = cx * y1 - sx * z1, z2 = sx * y1 + cx * z1;
+            double x3 = cz * x1 - sz * y2, y3 = sz * x1 + cz * y2;
+            const double q[3] = {x3, y3, z2};
+            double u, v;
+            if (!fromDir(pi, q, u, v)) return false;
+            sxp = u * fi.width, syp = v * fi.height;
+            if (pi == Proj::LatLong) sxp = std::fmod(std::fmod(sxp, (double)fi.width) + fi.width, (double)fi.width);
+            return true;
+        }
+    };
+    Mapper mapper(double f) const {
+        auto r = params.vec<3>("rotate", f, {0, 0, 0});
+        const double rx = r[0] * M_PI / 180, ry = r[1] * M_PI / 180, rz = r[2] * M_PI / 180;
+        return {std::cos(rx), std::sin(rx), std::cos(ry), std::sin(ry), std::cos(rz), std::sin(rz)};
+    }
+
 public:
     Format format(Engine& e, double f) override {
         Format in = nodeFormat(e, this, input(0), f);
@@ -1710,33 +1734,60 @@ public:
         return r;
     }
     Box dod(Engine& e, double f) override { return format(e, f).box(); }
-    Box roi(Engine& e, int, const Box&, double f) override { return nodeFormat(e, this, input(0), f).box(); }
+    // The input pixels an output region reads: its directions mapped back, sampled on a grid and
+    // densely along the edges, plus the filter's reach. (It used to be the whole input for every
+    // tile: a 14000x7000 lat-long copied per tile took minutes and gigabytes, #125.)
+    Box roi(Engine& e, int, const Box& req, double f) override {
+        const Format fo = format(e, f), fi = nodeFormat(e, this, input(0), f);
+        const Box all = fi.box();
+        if (req.empty()) return all;
+        const Proj pi = parseProj(params.str("input_type", "latlong")), po = parseProj(params.str("output_type", "latlong"));
+        const Mapper M = mapper(f);
+        double xa = 1e300, xb = -1e300, ya = 1e300, yb = -1e300;
+        int seen = 0;
+        auto at = [&](double x, double y) {
+            double sxp, syp;
+            if (!M.source(po, pi, x, y, fo, fi, sxp, syp)) return;  // a hole (outside a fisheye's circle...)
+            ++seen;
+            xa = std::min(xa, sxp), xb = std::max(xb, sxp), ya = std::min(ya, syp), yb = std::max(yb, syp);
+        };
+        const int n = 17, edge = 65;
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i)
+                at(req.x1 + (req.x2 - req.x1) * (i + 0.5) / n, req.y1 + (req.y2 - req.y1) * (j + 0.5) / n);
+        for (int i = 0; i <= edge; ++i) {
+            const double t = (double)i / edge;
+            at(req.x1 + (req.x2 - req.x1) * t, req.y1 + 0.5), at(req.x1 + (req.x2 - req.x1) * t, req.y2 - 0.5);
+            at(req.x1 + 0.5, req.y1 + (req.y2 - req.y1) * t), at(req.x2 - 0.5, req.y1 + (req.y2 - req.y1) * t);
+        }
+        if (!seen) return Box();  // (only holes: nothing to read)
+        const double step = std::max((xb - xa) / n, (yb - ya) / n);
+        const int pad = 6 + (int)std::ceil(step);  // the filter, and what falls between the samples
+        if (pi == Proj::LatLong && xb - xa > fi.width * 0.5) {
+            // across the wrap or round a pole: every longitude, and on to the pole it nears
+            xa = 0, xb = fi.width;
+            if (ya < fi.height - yb) ya = 0;
+            else yb = fi.height;
+        }
+        Box b((int)std::floor(xa) - pad, (int)std::floor(ya) - pad, (int)std::ceil(xb) + pad, (int)std::ceil(yb) + pad);
+        return b.intersect(all);
+    }
     void render(RenderArgs& a, Image& out) override {
         std::fill(out.data.begin(), out.data.end(), 0.0f);
         const double f = a.frame;
         Format fo = format(a.engine, f), fi = nodeFormat(a.engine, this, input(0), f);
-        ImagePtr src = a.fetch(input(0), fi.box());
+        const Box need = roi(a.engine, 0, a.region, f);
+        if (need.empty()) return;
+        ImagePtr src = a.fetch(input(0), need);
         const Proj pi = parseProj(params.str("input_type", "latlong")), po = parseProj(params.str("output_type", "latlong"));
-        auto r = params.vec<3>("rotate", f, {0, 0, 0});
-        // rotation (degrees about X, Y, Z), applied to the output directions to find the input's
-        const double rx = r[0] * M_PI / 180, ry = r[1] * M_PI / 180, rz = r[2] * M_PI / 180;
-        const double cx = std::cos(rx), sx = std::sin(rx), cy = std::cos(ry), sy = std::sin(ry), cz = std::cos(rz), sz = std::sin(rz);
+        const Mapper M = mapper(f);
         std::vector<int> map(out.nch());
         for (int c = 0; c < out.nch(); ++c) map[c] = src->ch(out.channels[c]);
         const Filter flt = parseFilter(params.str("filter", "cubic"));
         for (int y = out.bounds.y1; y < out.bounds.y2; ++y)
             for (int x = out.bounds.x1; x < out.bounds.x2; ++x) {
-                double d[3];
-                if (!toDir(po, (x + 0.5) / fo.width, (y + 0.5) / fo.height, d)) continue;
-                // Y (pan), then X (tilt), then Z (roll)
-                double x1 = cy * d[0] + sy * d[2], z1 = -sy * d[0] + cy * d[2], y1 = d[1];
-                double y2 = cx * y1 - sx * z1, z2 = sx * y1 + cx * z1;
-                double x3 = cz * x1 - sz * y2, y3 = sz * x1 + cz * y2;
-                const double q[3] = {x3, y3, z2};
-                double u, v;
-                if (!fromDir(pi, q, u, v)) continue;
-                double sxp = u * fi.width, syp = v * fi.height;
-                if (pi == Proj::LatLong) sxp = std::fmod(std::fmod(sxp, (double)fi.width) + fi.width, (double)fi.width);
+                double sxp, syp;
+                if (!M.source(po, pi, x + 0.5, y + 0.5, fo, fi, sxp, syp)) continue;
                 SampleOpts so;
                 so.blackOutside = pi != Proj::LatLong;
                 sample(*src, sxp, syp, flt, out.px(x, y), map, so);

@@ -368,8 +368,15 @@ std::vector<NodeDef> build() {
                            Col4("color", "color", json::array({1, 1, 1, 1})), F("opacity", "opacity", 1, 0, 1),
                            Div("Transform"), XY("translate", "translate", json::array({0, 0}), -1000, 1000), F("rotate", "rotate", 0, -180, 180),
                            XY("scale", "scale", json::array({1, 1}), 0.1, 10), PickXY(XY("center", "center", "$center", 0, 4096)),
-                           C("operation", "operation", "over", {"over", "plus", "replace"})}),
-                 "Text over the background input (any TrueType font, Arial by default)."});
+                           Div("Outline"), F("outline", "outline width", 0, 0, 50, "Pixels around the letters (0: none)"),
+                           Col4("outline_color", "outline color", json::array({0, 0, 0, 1})),
+                           Div("Drop shadow"), B("shadow", "drop shadow", false), XY("shadow_offset", "offset", json::array({6, -6}), -100, 100),
+                           F("shadow_softness", "softness", 4, 0, 100), Col4("shadow_color", "shadow color", json::array({0, 0, 0, 0.6})),
+                           Div("Box"), B("box_bg", "box behind the text", false), F("box_margin", "margin", 12, 0, 200),
+                           Col4("box_color", "box color", json::array({0, 0, 0, 0.5})),
+                           Div("Output"), C("operation", "operation", "over", {"over", "under", "plus", "screen", "multiply", "replace"}),
+                           B("text_only", "text only (no background)", false, "Just the text, outline, shadow and box on transparent black, for compositing later")}),
+                 "Text over the background input (any TrueType font, Arial by default), with an outline, a drop shadow and a box behind it."});
     d.push_back({"Markup", "Draw",
                  {F("opacity", "opacity", 1, 0, 1)},
                  "Review notes over the picture: paint strokes, boxes, circles and text, drawn in the viewer while its panel is "
@@ -1432,7 +1439,8 @@ std::vector<NodeDef> build() {
                  {Txt("set", "set", "One \"key = value\" a line, e.g. shot = sh010 or exr/lens = 35. A value that reads as JSON "
                                     "(a number, [1, 2], \"text\") keeps its type; anything else is text"),
                   Txt("remove", "remove", "One key a line; a trailing * removes every key starting with what comes before it")},
-                 "Sets or removes metadata on the frames passing through. Write puts it in EXR headers "
+                 "Sets or removes metadata on the frames passing through: one key = value a line (the viewer's Metadata "
+                 "window copies rows in that form: right-click or Ctrl+C). Write puts it in EXR headers "
                  "(exr/<name> as <name>); the viewer's Metadata window lists it."});
     d.push_back({"CopyMetadata", "Time",
                  {C("mode", "mode", "merge, meta wins", {"merge, meta wins", "merge, keep image's", "replace", "remove all"})},

@@ -318,3 +318,51 @@ void separator() {
 }
 
 }  // namespace strata::ui::kit
+
+namespace strata::ui::kit {
+bool textMenu(std::string& text) {
+    // The field's selection, kept from the moment of the right-click: opening the menu takes the
+    // keyboard from the field (which then applies what was typed), but its text state stays.
+    static ImGuiID menuFor = 0;
+    static int selA = 0, selB = 0;
+    const ImGuiID id = ImGui::GetItemID();
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+        selA = selB = (int)text.size();
+        if (ImGuiInputTextState* st = ImGui::GetInputTextState(id); st && st->ID == id) {
+            if (st->HasSelection()) {
+                selA = std::min(st->GetSelectionStart(), st->GetSelectionEnd());
+                selB = std::max(st->GetSelectionStart(), st->GetSelectionEnd());
+            } else {
+                selA = selB = st->GetCursorPos();
+            }
+        }
+        menuFor = id;
+        ImGui::OpenPopup("##textmenu");
+    }
+    bool changed = false;
+    if (menuFor == id && ImGui::BeginPopup("##textmenu")) {
+        selA = std::clamp(selA, 0, (int)text.size());
+        selB = std::clamp(selB, selA, (int)text.size());
+        const bool sel = selB > selA;
+        if (ImGui::MenuItem("Cut", "Ctrl+X", false, sel)) {
+            ImGui::SetClipboardText(text.substr(selA, selB - selA).c_str());
+            text.erase(selA, selB - selA);
+            changed = true;
+        }
+        if (ImGui::MenuItem("Copy", "Ctrl+C", false, sel)) ImGui::SetClipboardText(text.substr(selA, selB - selA).c_str());
+        const char* clip = ImGui::GetClipboardText();
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, clip && *clip)) {
+            text.replace(selA, selB - selA, clip);
+            changed = true;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Copy all", nullptr, false, !text.empty())) ImGui::SetClipboardText(text.c_str());
+        if (ImGui::MenuItem("Clear", nullptr, false, !text.empty())) {
+            text.clear();
+            changed = true;
+        }
+        ImGui::EndPopup();
+    }
+    return changed;
+}
+}  // namespace strata::ui::kit

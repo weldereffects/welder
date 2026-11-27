@@ -191,6 +191,8 @@ struct MatR {
     double pw = 0, ph = 0;  // projector image size (render scale)
     bool crop = true;
     bool wrapU = false;  // the mesh closes around u (Mesh::wrapU)
+    Node* texImg = nullptr;  // a Texture's image, read after the triangles: only the part they show (#125)
+    double u0 = 1e300, u1 = -1e300, v0 = 1e300, v1 = -1e300;  // the uv range the triangles on screen cover
 };
 
 struct Prepared {
@@ -541,12 +543,15 @@ private:
         // Textures: one per image, shared between frames while the image doesn't change (a held
         // frame, a still), rendered on all threads. (Kept per frame they took ~180 MB each at 4K,
         // for every cached frame.)
-        auto texOf = [&](Node* img) -> std::shared_ptr<const Tex> {
+        // `part`: the texels needed (empty: all of the image)
+        auto texOf = [&](Node* img, Box part) -> std::shared_ptr<const Tex> {
             const double tf0 = texFrame;
             uint64_t key = hashCombine(e.hash(img, tf0), 0x7e7);
+            if (!part.empty()) key = hashCombine(key, hashBytes(&part, sizeof part, 0x9a27));
             return texCache_.get(key, [&]() -> std::shared_ptr<const Tex> {
                 Format tf = img->format(e, tf0);
                 Box b = tf.box().intersect(e.dod(img, tf0));
+                if (!part.empty()) b = b.intersect(part);
                 if (b.empty()) return std::make_shared<Tex>();
                 ImagePtr im = e.renderRegion(img, tf0, b);
                 return makeTex(*im, tf.width, tf.height);
@@ -570,7 +575,8 @@ private:
                 MatR m;
                 m.kind = o.mat.kind;
                 m.wrapU = wrapU;
-                if (o.mat.image) m.tex = texOf(o.mat.image);
+                if (o.mat.image && m.kind == geo::Material::Texture) m.texImg = o.mat.image;  // (read below)
+                else if (o.mat.image) m.tex = texOf(o.mat.image, Box());
                 if (m.kind == geo::Material::Projection) {
                     m.cam = o.mat.camera;
                     Format pf = o.mat.image->format(e, texFrame);
@@ -678,9 +684,39 @@ private:
                         plane(py[0] * s3[0]->iz, py[1] * s3[1]->iz, py[2] * s3[2]->iz, t.py);
                     } else
                         for (int q = 0; q < 3; ++q) t.nx[q] = t.ny[q] = t.px[q] = t.py[q] = 0;
+                    MatR& tm = P->mats[mi];
+                    if (tm.texImg)
+                        for (int q = 0; q < 3; ++q) {
+                            tm.u0 = std::min(tm.u0, s3[q]->v->u), tm.u1 = std::max(tm.u1, s3[q]->v->u);
+                            tm.v0 = std::min(tm.v0, s3[q]->v->v), tm.v1 = std::max(tm.v1, s3[q]->v->v);
+                        }
                     P->tris.push_back(t);
                 }
             }
+        }
+        // Textures: only the texels the triangles on screen use (a big lat-long on a sphere seen
+        // through a camera is mostly behind it: rendering all of it at full size took minutes, #125).
+        // Snapped to a coarse grid so a moving camera mostly reuses the texture.
+        for (MatR& m : P->mats) {
+            if (!m.texImg) continue;
+            if (m.u1 < m.u0) {  // nothing of it on screen
+                m.tex = std::make_shared<Tex>();
+                continue;
+            }
+            Box part;  // empty: the whole image
+            {
+                const Format tf = m.texImg->format(e, texFrame);
+                const double tw = tf.width, th = tf.height;
+                const double padU = 64.0 / std::max(1.0, tw), padV = 64.0 / std::max(1.0, th);
+                double a = m.u0 - padU, b = m.u1 + padU, c = m.v0 - padV, d = m.v1 + padV;
+                if (m.wrapU && (a <= 0 || b >= 1)) a = -1, b = 2;  // across the seam: it wraps, so all of it
+                const int g = 256;
+                auto lo = [&](double t, double size) { return (int)std::floor(t * size / g) * g; };
+                auto hi = [&](double t, double size) { return (int)std::ceil(t * size / g) * g; };
+                part = Box(lo(a, tw), lo(c, th), hi(b, tw), hi(d, th));
+                if (part.intersect(tf.box()) == tf.box()) part = Box();  // all of it anyway: share it with every frame
+            }
+            m.tex = texOf(m.texImg, part);
         }
         return P;
     }
